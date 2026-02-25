@@ -169,8 +169,8 @@ static qboolean GI_AreasConnected(int area1, int area2)
     return qtrue;
 }
 
-/* Player movement stub */
-static void GI_Pmove(void *pmove) { (void)pmove; }
+/* Player movement — forward to engine Pmove */
+static void GI_Pmove(void *pmove) { Pmove((pmove_t *)pmove); }
 
 /* Network message buffer — accumulates game's Write* calls until multicast/unicast */
 #define SV_MSG_SIZE     2048

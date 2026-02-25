@@ -45,6 +45,7 @@ find_package(OpenGL REQUIRED)
 add_executable(sof
     # Common (shared utilities, math, types)
     src/common/q_shared.c
+    src/common/pmove.c
 
     # Engine core
     src/engine/main.c

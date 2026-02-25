@@ -223,6 +223,17 @@ typedef struct {
 #define CONTENTS_TRANSLUCENT    0x10000000
 #define CONTENTS_LADDER         0x20000000
 
+/* Content masks */
+#define MASK_ALL            (-1)
+#define MASK_SOLID          (CONTENTS_SOLID | CONTENTS_WINDOW)
+#define MASK_PLAYERSOLID    (CONTENTS_SOLID | CONTENTS_PLAYERCLIP | CONTENTS_WINDOW | CONTENTS_MONSTER)
+#define MASK_DEADSOLID      (CONTENTS_SOLID | CONTENTS_PLAYERCLIP | CONTENTS_WINDOW)
+#define MASK_MONSTERSOLID   (CONTENTS_SOLID | CONTENTS_MONSTERCLIP | CONTENTS_WINDOW | CONTENTS_MONSTER)
+#define MASK_WATER          (CONTENTS_WATER | CONTENTS_LAVA | CONTENTS_SLIME)
+#define MASK_OPAQUE         (CONTENTS_SOLID | CONTENTS_SLIME | CONTENTS_LAVA)
+#define MASK_SHOT           (CONTENTS_SOLID | CONTENTS_MONSTER | CONTENTS_WINDOW | CONTENTS_DEADMONSTER)
+#define MASK_CURRENT        (CONTENTS_CURRENT_0 | CONTENTS_CURRENT_90 | CONTENTS_CURRENT_180 | CONTENTS_CURRENT_270 | CONTENTS_CURRENT_UP | CONTENTS_CURRENT_DOWN)
+
 /* Surface flags (BSP) */
 #define SURF_LIGHT      0x1
 #define SURF_SLICK      0x2
@@ -245,6 +256,69 @@ typedef struct usercmd_s {
     byte    impulse;
     byte    lightlevel;     /* light level the player is standing on */
 } usercmd_t;
+
+/* ==========================================================================
+   Player Movement
+   ========================================================================== */
+
+/* pmove types */
+#define PM_NORMAL       0       /* walking, running */
+#define PM_SPECTATOR    1       /* no clipping */
+#define PM_DEAD         2       /* no movement, view only */
+#define PM_GIB          3       /* gibs */
+#define PM_FREEZE       4       /* frozen in place */
+
+/* pmove flags */
+#define PMF_DUCKED          1
+#define PMF_JUMP_HELD       2
+#define PMF_ON_GROUND       4
+#define PMF_TIME_WATERJUMP  8
+#define PMF_TIME_LAND       16
+#define PMF_TIME_TELEPORT   32
+#define PMF_NO_PREDICTION   64
+
+/* buttons */
+#define BUTTON_ATTACK       1
+#define BUTTON_USE          2
+#define BUTTON_ANY          128
+
+typedef struct {
+    vec3_t      origin;
+    vec3_t      velocity;
+    int         pm_type;
+    int         pm_flags;
+    int         pm_time;
+    short       gravity;
+    short       delta_angles[3];
+} pmove_state_t;
+
+/* Complete pmove structure passed to Pmove() */
+typedef struct {
+    /* State (in/out) */
+    pmove_state_t   s;
+
+    /* Command (input) */
+    usercmd_t       cmd;
+    qboolean        snapinitial;    /* if true, first snap */
+
+    /* Results (output) */
+    int             numtouch;
+    struct edict_s  *touchents[32]; /* MAX_TOUCH */
+    vec3_t          viewangles;
+    float           viewheight;
+    vec3_t          mins, maxs;     /* bounding box */
+
+    struct edict_s  *groundentity;
+    int             watertype;
+    int             waterlevel;
+
+    /* Callbacks */
+    trace_t (*trace)(vec3_t start, vec3_t mins, vec3_t maxs, vec3_t end);
+    int     (*pointcontents)(vec3_t point);
+} pmove_t;
+
+/* Player movement function */
+void    Pmove(pmove_t *pmove);
 
 /* ==========================================================================
    Entity State — communicated by server to clients

@@ -191,19 +191,7 @@ typedef struct {
     int         max_edicts;
 } game_export_t;
 
-/* ==========================================================================
-   Player Movement State
-   ========================================================================== */
-
-typedef struct {
-    vec3_t      origin;
-    vec3_t      velocity;
-    int         pm_type;
-    int         pm_flags;
-    int         pm_time;
-    short       gravity;
-    short       delta_angles[3];
-} pmove_state_t;
+/* pmove_state_t is defined in q_shared.h */
 
 /* ==========================================================================
    gclient_s — Per-client game state
