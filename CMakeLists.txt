@@ -55,6 +55,7 @@ add_executable(sof
     src/engine/files.c
     src/engine/sys_sdl.c
     src/engine/cm_trace.c
+    src/engine/net_msg.c
 
     # Client / Input / Console
     src/client/keys.c

@@ -172,18 +172,43 @@ static qboolean GI_AreasConnected(int area1, int area2)
 /* Player movement stub */
 static void GI_Pmove(void *pmove) { (void)pmove; }
 
-/* Network message stubs */
-static void GI_multicast(vec3_t origin, multicast_t to) { (void)origin; (void)to; }
-static void GI_unicast(edict_t *ent, qboolean reliable) { (void)ent; (void)reliable; }
-static void GI_WriteChar(int c) { (void)c; }
-static void GI_WriteByte(int c) { (void)c; }
-static void GI_WriteShort(int c) { (void)c; }
-static void GI_WriteLong(int c) { (void)c; }
-static void GI_WriteFloat(float f) { (void)f; }
-static void GI_WriteString(const char *s) { (void)s; }
-static void GI_WritePosition(vec3_t pos) { (void)pos; }
-static void GI_WriteDir(vec3_t dir) { (void)dir; }
-static void GI_WriteAngle(float f) { (void)f; }
+/* Network message buffer — accumulates game's Write* calls until multicast/unicast */
+#define SV_MSG_SIZE     2048
+static byte     sv_msg_data[SV_MSG_SIZE];
+static sizebuf_t sv_msg_buf;
+static qboolean sv_msg_initialized = qfalse;
+
+static void SV_EnsureMsgBuf(void)
+{
+    if (!sv_msg_initialized) {
+        SZ_Init(&sv_msg_buf, sv_msg_data, SV_MSG_SIZE);
+        sv_msg_initialized = qtrue;
+    }
+}
+
+static void GI_multicast(vec3_t origin, multicast_t to)
+{
+    (void)origin; (void)to;
+    /* In full implementation, this would send sv_msg_buf to
+     * appropriate clients based on multicast type (PVS/PHS/all) */
+    SZ_Clear(&sv_msg_buf);
+}
+
+static void GI_unicast(edict_t *ent, qboolean reliable)
+{
+    (void)ent; (void)reliable;
+    SZ_Clear(&sv_msg_buf);
+}
+
+static void GI_WriteChar(int c)     { SV_EnsureMsgBuf(); MSG_WriteChar(&sv_msg_buf, c); }
+static void GI_WriteByte(int c)     { SV_EnsureMsgBuf(); MSG_WriteByte(&sv_msg_buf, c); }
+static void GI_WriteShort(int c)    { SV_EnsureMsgBuf(); MSG_WriteShort(&sv_msg_buf, c); }
+static void GI_WriteLong(int c)     { SV_EnsureMsgBuf(); MSG_WriteLong(&sv_msg_buf, c); }
+static void GI_WriteFloat(float f)  { SV_EnsureMsgBuf(); MSG_WriteFloat(&sv_msg_buf, f); }
+static void GI_WriteString(const char *s) { SV_EnsureMsgBuf(); MSG_WriteString(&sv_msg_buf, s); }
+static void GI_WritePosition(vec3_t pos) { SV_EnsureMsgBuf(); MSG_WritePos(&sv_msg_buf, pos); }
+static void GI_WriteDir(vec3_t dir) { SV_EnsureMsgBuf(); MSG_WriteDir(&sv_msg_buf, dir); }
+static void GI_WriteAngle(float f)  { SV_EnsureMsgBuf(); MSG_WriteAngle(&sv_msg_buf, f); }
 
 /* Memory management — route to engine zone allocator */
 static void *GI_TagMalloc(int size, int tag) { return Z_TagMalloc(size, tag); }
