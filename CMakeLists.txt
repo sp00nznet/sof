@@ -62,6 +62,7 @@ add_executable(sof
     src/client/keys.c
     src/client/in_sdl.c
     src/client/console.c
+    src/client/cl_input.c
 
     # Renderer (OpenGL)
     src/renderer/r_main.c

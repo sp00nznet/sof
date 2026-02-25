@@ -25,6 +25,10 @@ extern void IN_Init(void);
 extern void IN_Shutdown(void);
 extern void IN_GetMouseDelta(int *dx, int *dy);
 
+/* Forward declarations — client input (client/cl_input.c) */
+extern void CL_InitInput(void);
+extern void CL_CreateCmd(usercmd_t *cmd, int msec);
+
 /* Forward declarations — server frame (server/sv_game.c) */
 extern void SV_RunGameFrame(void);
 
@@ -214,6 +218,7 @@ void Qcommon_Init(int argc, char **argv)
 
     /* Initialize input */
     IN_Init();
+    CL_InitInput();
 
     /* Initialize renderer */
     if (!dedicated->value) {
