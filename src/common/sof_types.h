@@ -360,4 +360,51 @@ typedef struct {
 /* player_client_api_t* GetPlayerClientAPI(void); */
 /* player_server_api_t* GetPlayerServerAPI(void); */
 
+/* ==========================================================================
+   Sound DLL Plugin Interface
+   20 common exports across Defsnd.dll / EAXSnd.dll / A3Dsnd.dll
+   All share image base 0x60000000 (mutually exclusive)
+   ========================================================================== */
+
+typedef struct {
+    /* Lifecycle */
+    qboolean    (*S_Init)(void);
+    void        (*S_Shutdown)(void);
+    void        (*S_Activate)(qboolean active);
+    void        (*S_Update)(void);
+
+    /* Registration (level load) */
+    void        (*S_BeginRegistration)(void);
+    void        (*S_EndRegistration)(void);
+    int         (*S_RegisterSound)(char *name);
+    void        (*S_RegisterAmbientSet)(char *name);
+    void        (*S_RegisterMusicSet)(char *name);
+    int         (*S_FindName)(char *name);
+    void        (*S_FreeSound)(int handle);
+    void        (*S_Touch)(int handle);
+
+    /* Playback */
+    void        (*S_StartSound)(vec3_t origin, edict_t *ent, int channel,
+                                int soundindex, float volume,
+                                float attenuation, float timeofs);
+    void        (*S_StartLocalSound)(char *name);
+    void        (*S_StopAllSounds)(void);
+
+    /* Engine integration */
+    void        (*S_SetSoundStruct)(void *sound_data);
+    void        (*S_SetSoundProcType)(int type);
+
+    /* Dynamic audio */
+    void        (*S_SetGeneralAmbientSet)(char *name);
+    void        (*S_SetMusicIntensity)(float intensity);
+    void        (*S_SetMusicDesignerInfo)(void *info);
+} sound_export_t;
+
+/* EAX-specific extensions */
+/* void SNDEAX_SetEnvironment(int env_type); */
+/* void SNDEAX_SetEnvironmentLevel(float level); */
+
+/* A3D-specific extensions */
+/* void S_A3D_ExportRenderGeom(void *geom); */
+
 #endif /* SOF_TYPES_H */
