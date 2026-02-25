@@ -1,0 +1,43 @@
+# Game assets - DO NOT commit original game files
+*.zip
+*.pak
+*.pk3
+*.iso
+*.bin
+*.cue
+*.img
+*.nrg
+
+# Build artifacts
+build/
+out/
+cmake-build-*/
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.dylib
+*.a
+*.lib
+*.pdb
+*.ilk
+*.exp
+
+# IDE files
+.vs/
+.vscode/
+*.vcxproj*
+*.sln
+*.suo
+*.user
+.idea/
+
+# OS junk
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Original game installation
+sof/
+game_data/
