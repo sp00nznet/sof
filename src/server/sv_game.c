@@ -147,20 +147,26 @@ static qboolean GI_inPHS(vec3_t p1, vec3_t p2)
     return qtrue;
 }
 
-/* Entity linking stubs */
+/* Entity linking — forward to sv_world.c */
+extern void SV_LinkEdict(edict_t *ent);
+extern void SV_UnlinkEdict(edict_t *ent);
+extern int  SV_AreaEdicts(vec3_t mins, vec3_t maxs, edict_t **list,
+                          int maxcount, int areatype);
+extern void SV_ClearWorld(void);
+
 static void GI_setorigin(edict_t *ent, vec3_t origin)
 {
     VectorCopy(origin, ent->s.origin);
+    SV_LinkEdict(ent);
 }
 
-static void GI_linkentity(edict_t *ent) { (void)ent; }
-static void GI_unlinkentity(edict_t *ent) { (void)ent; }
+static void GI_linkentity(edict_t *ent) { SV_LinkEdict(ent); }
+static void GI_unlinkentity(edict_t *ent) { SV_UnlinkEdict(ent); }
 
 static int GI_BoxEdicts(vec3_t mins, vec3_t maxs, edict_t **list,
                         int maxcount, int areatype)
 {
-    (void)mins; (void)maxs; (void)list; (void)maxcount; (void)areatype;
-    return 0;
+    return SV_AreaEdicts(mins, maxs, list, maxcount, areatype);
 }
 
 static qboolean GI_AreasConnected(int area1, int area2)
@@ -299,6 +305,9 @@ static void GI_entity_set_flags(edict_t *ent, int flags)
 
 void SV_InitGameProgs(void)
 {
+    /* Initialize world spatial structure */
+    SV_ClearWorld();
+
     /* Populate engine function table */
     memset(&gi_impl, 0, sizeof(gi_impl));
 

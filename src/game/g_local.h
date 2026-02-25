@@ -265,6 +265,7 @@ struct edict_s {
     /* Shared between game and server */
     qboolean        inuse;
     int             linkcount;
+    qboolean        linked;
 
     /* Area linking for efficient collision */
     int             areanum;

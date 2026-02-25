@@ -76,6 +76,7 @@ add_executable(sof
 
     # Server
     src/server/sv_game.c
+    src/server/sv_world.c
 
     # Sound (replaces Defsnd/EAXSnd/A3Dsnd DLLs)
     src/sound/snd_sdl.c
