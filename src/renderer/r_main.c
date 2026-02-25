@@ -286,11 +286,25 @@ void R_BeginFrame(float camera_separation)
     qglClearColor(0.1f, 0.1f, 0.15f, 1.0f);
     qglClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    /* Render 3D world if loaded */
+    /* Render 3D world if loaded — build refdef from freecam state */
     if (R_WorldLoaded()) {
-        qglEnable(GL_TEXTURE_2D);
-        R_RenderWorldView();
-        qglDisable(GL_DEPTH_TEST);
+        refdef_t rd;
+        vec3_t cam_org, cam_ang;
+
+        memset(&rd, 0, sizeof(rd));
+        R_GetCameraOrigin(cam_org);
+        R_GetCameraAngles(cam_ang);
+
+        rd.x = 0;
+        rd.y = 0;
+        rd.width = g_display.width;
+        rd.height = g_display.height;
+        rd.fov_x = 90.0f;
+        rd.fov_y = 73.74f;  /* CalcFovY(90, 1024, 768) */
+        VectorCopy(cam_org, rd.vieworg);
+        VectorCopy(cam_ang, rd.viewangles);
+
+        R_RenderFrame(&rd);
     }
 
     /* Switch to 2D mode for HUD/console overlay */
@@ -304,18 +318,114 @@ void R_BeginFrame(float camera_separation)
     qglDisable(GL_CULL_FACE);
 }
 
+/*
+ * R_Setup3DProjection - Set perspective projection from refdef
+ */
+static void R_Setup3DProjection(refdef_t *fd)
+{
+    float xmin, xmax, ymin, ymax;
+    float znear = 4.0f, zfar = 8192.0f;
+
+    ymax = znear * (float)tan(fd->fov_y * 3.14159265 / 360.0);
+    ymin = -ymax;
+    xmax = znear * (float)tan(fd->fov_x * 3.14159265 / 360.0);
+    xmin = -xmax;
+
+    qglViewport(fd->x, g_display.height - (fd->y + fd->height),
+                fd->width, fd->height);
+
+    qglMatrixMode(GL_PROJECTION);
+    qglLoadIdentity();
+    qglFrustum(xmin, xmax, ymin, ymax, znear, zfar);
+}
+
+/*
+ * R_Setup3DModelview - Set modelview matrix from refdef vieworg/viewangles
+ */
+static void R_Setup3DModelview(refdef_t *fd)
+{
+    qglMatrixMode(GL_MODELVIEW);
+    qglLoadIdentity();
+
+    /* Q2 coordinate conversion: Z-up → GL Y-up */
+    qglRotatef(-90, 1, 0, 0);
+    qglRotatef(90, 0, 0, 1);
+
+    /* Apply view rotation */
+    qglRotatef(-fd->viewangles[2], 1, 0, 0);  /* roll */
+    qglRotatef(-fd->viewangles[0], 0, 1, 0);  /* pitch */
+    qglRotatef(-fd->viewangles[1], 0, 0, 1);  /* yaw */
+
+    /* Translate to view origin (inverted) */
+    qglTranslatef(-fd->vieworg[0], -fd->vieworg[1], -fd->vieworg[2]);
+}
+
+/*
+ * R_RenderFrame - Render a 3D scene from a refdef_t
+ *
+ * This is the Q2-standard rendering entry point. The engine fills a
+ * refdef_t with the view parameters, entity list, particle list, etc.
+ * and calls this to render the full 3D scene.
+ */
 void R_RenderFrame(refdef_t *fd)
 {
-    (void)fd;
+    if (!fd || !qglClear)
+        return;
 
-    /* TODO: Full 3D rendering pipeline:
-     * 1. Set up 3D projection from refdef
-     * 2. R_DrawWorld (BSP rendering)
-     * 3. R_DrawEntities (GHOUL models, brush models)
-     * 4. R_DrawParticles
-     * 5. R_DrawAlphaSurfaces
-     * 6. R_Flash (damage flash, underwater tint)
-     */
+    /* Update camera state to match refdef (so R_DrawWorld uses correct PVS) */
+    R_SetCameraOrigin(fd->vieworg);
+    R_SetCameraAngles(fd->viewangles);
+
+    /* Set up 3D projection and modelview */
+    R_Setup3DProjection(fd);
+    R_Setup3DModelview(fd);
+
+    /* Enable 3D rendering state */
+    qglEnable(GL_DEPTH_TEST);
+    qglDepthFunc(GL_LEQUAL);
+    qglDepthMask(GL_TRUE);
+    qglEnable(GL_TEXTURE_2D);
+    qglClear(GL_DEPTH_BUFFER_BIT);
+
+    /* Draw BSP world */
+    if (R_WorldLoaded() && r_drawworld->value)
+        R_DrawWorld();
+
+    /* TODO: R_DrawEntities (entity_t list from refdef) */
+    /* TODO: R_DrawParticles (particle_t list from refdef) */
+
+    /* Full-screen blend (damage flash, underwater tint) */
+    if (fd->blend[3] > 0) {
+        qglDisable(GL_TEXTURE_2D);
+        qglDisable(GL_DEPTH_TEST);
+        qglEnable(GL_BLEND);
+        qglBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+        qglMatrixMode(GL_PROJECTION);
+        qglPushMatrix();
+        qglLoadIdentity();
+        qglOrtho(0, 1, 1, 0, -99999, 99999);
+        qglMatrixMode(GL_MODELVIEW);
+        qglPushMatrix();
+        qglLoadIdentity();
+
+        qglColor4f(fd->blend[0], fd->blend[1], fd->blend[2], fd->blend[3]);
+        qglBegin(GL_QUADS);
+        qglVertex3f(0, 0, 0);
+        qglVertex3f(1, 0, 0);
+        qglVertex3f(1, 1, 0);
+        qglVertex3f(0, 1, 0);
+        qglEnd();
+
+        qglMatrixMode(GL_PROJECTION);
+        qglPopMatrix();
+        qglMatrixMode(GL_MODELVIEW);
+        qglPopMatrix();
+
+        qglDisable(GL_BLEND);
+        qglEnable(GL_TEXTURE_2D);
+        qglColor4f(1, 1, 1, 1);
+    }
 }
 
 void R_EndFrame(void)

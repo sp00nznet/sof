@@ -252,7 +252,7 @@ void Qcommon_Frame(int msec)
     /* Run server frame */
     SV_Frame(msec);
 
-    /* Run client frame (includes rendering) */
+    /* Run client frame (input, view setup) */
     if (!dedicated || !dedicated->value) {
         CL_Frame(msec);
 
@@ -268,24 +268,6 @@ void Qcommon_Frame(int msec)
                 if (con.current_frac < con.dest_frac)
                     con.current_frac = con.dest_frac;
             }
-        }
-
-        /* Update freecam from input when console is not visible */
-        if (R_WorldLoaded() && !Con_IsVisible()) {
-            extern qboolean key_down[];
-            float fwd = 0, side = 0, up = 0;
-            int mx, my;
-
-            if (key_down['w']) fwd += 1;
-            if (key_down['s']) fwd -= 1;
-            if (key_down['d']) side += 1;
-            if (key_down['a']) side -= 1;
-            if (key_down[' ']) up += 200.0f * msec / 1000.0f;
-            if (key_down[133]) up -= 200.0f * msec / 1000.0f;  /* K_CTRL */
-
-            IN_GetMouseDelta(&mx, &my);
-            R_UpdateCamera(fwd, side, up, (float)mx, (float)my,
-                           msec / 1000.0f);
         }
 
         /* Render frame */
@@ -317,18 +299,91 @@ void Qcommon_Shutdown(void)
 }
 
 /* ==========================================================================
-   Stub Client/Server (until properly implemented)
+   Client State
    ========================================================================== */
 
-void CL_Init(void) {}
-void CL_Drop(void) {}
+typedef enum {
+    CA_DISCONNECTED,    /* not connected to a server */
+    CA_CONNECTING,      /* awaiting connection response */
+    CA_CONNECTED,       /* connection established, loading map */
+    CA_ACTIVE           /* fully in-game, rendering world */
+} connstate_t;
+
+static connstate_t  cl_state = CA_DISCONNECTED;
+static refdef_t     cl_refdef;          /* current frame's render view */
+static float        cl_time;            /* accumulated time */
+
+void CL_Init(void)
+{
+    memset(&cl_refdef, 0, sizeof(cl_refdef));
+    cl_state = CA_DISCONNECTED;
+    cl_time = 0;
+}
+
+void CL_Drop(void)
+{
+    cl_state = CA_DISCONNECTED;
+}
+
 void CL_Shutdown(void)
 {
     S_Shutdown();
     IN_Shutdown();
     R_Shutdown();
 }
-void CL_Frame(int msec) { (void)msec; }
+
+/*
+ * CL_Frame — Client frame processing
+ *
+ * Runs every frame. Handles input, updates the view, builds refdef_t.
+ * In the original Q2, this also handled network parsing and prediction.
+ * For our unified binary, the server runs in-process.
+ */
+void CL_Frame(int msec)
+{
+    float frametime = msec / 1000.0f;
+    cl_time += frametime;
+
+    /* If world is loaded and we're disconnected, go active
+     * (in the unified binary, loading a map means we're ready) */
+    if (R_WorldLoaded() && cl_state < CA_ACTIVE)
+        cl_state = CA_ACTIVE;
+
+    /* Process freecam input when active and console is closed */
+    if (cl_state == CA_ACTIVE && !Con_IsVisible()) {
+        extern qboolean key_down[];
+        float fwd = 0, side = 0, up = 0;
+        int mx, my;
+
+        if (key_down['w']) fwd += 1;
+        if (key_down['s']) fwd -= 1;
+        if (key_down['d']) side += 1;
+        if (key_down['a']) side -= 1;
+        if (key_down[' ']) up += 200.0f * frametime;
+        if (key_down[133]) up -= 200.0f * frametime;  /* K_CTRL */
+
+        IN_GetMouseDelta(&mx, &my);
+        R_UpdateCamera(fwd, side, up, (float)mx, (float)my, frametime);
+    }
+
+    /* Build refdef from camera state */
+    if (cl_state == CA_ACTIVE) {
+        vec3_t org, ang;
+        R_GetCameraOrigin(org);
+        R_GetCameraAngles(ang);
+
+        memset(&cl_refdef, 0, sizeof(cl_refdef));
+        cl_refdef.x = 0;
+        cl_refdef.y = 0;
+        cl_refdef.width = g_display.width;
+        cl_refdef.height = g_display.height;
+        cl_refdef.fov_x = 90.0f;
+        cl_refdef.fov_y = 73.74f;
+        cl_refdef.time = cl_time;
+        VectorCopy(org, cl_refdef.vieworg);
+        VectorCopy(ang, cl_refdef.viewangles);
+    }
+}
 
 void SV_Init(void) {}
 void SV_Shutdown(const char *finalmsg, qboolean reconnect)
