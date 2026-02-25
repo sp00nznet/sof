@@ -259,12 +259,8 @@ static void RunFrame(void)
                 continue;
         }
 
-        /* TODO: Run physics based on movetype
-         * MOVETYPE_PUSH: doors, platforms
-         * MOVETYPE_STEP: monsters (gravity + stepping)
-         * MOVETYPE_FLY: projectiles
-         * MOVETYPE_TOSS: grenades, gibs (gravity + bounce)
-         */
+        /* Run physics based on movetype */
+        G_RunEntity(ent);
     }
 }
 

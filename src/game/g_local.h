@@ -16,6 +16,26 @@
 #include "../common/qcommon.h"
 
 /* ==========================================================================
+   Movetype / Solid Constants
+   ========================================================================== */
+
+#define MOVETYPE_NONE       0       /* never moves */
+#define MOVETYPE_NOCLIP     1       /* no collision */
+#define MOVETYPE_PUSH       6       /* doors, platforms — no gravity, push other ents */
+#define MOVETYPE_STOP       7       /* stop when hitting anything */
+#define MOVETYPE_WALK       3       /* gravity, player movement */
+#define MOVETYPE_STEP       4       /* gravity, monsters (stair stepping) */
+#define MOVETYPE_FLY        5       /* no gravity (projectiles) */
+#define MOVETYPE_TOSS       8       /* gravity, bounce on contact */
+#define MOVETYPE_FLYMISSILE 9       /* like fly, but solid to everything */
+#define MOVETYPE_BOUNCE     10      /* like toss, but bounces off surfaces */
+
+#define SOLID_NOT       0       /* no interaction with other objects */
+#define SOLID_TRIGGER   1       /* only touch when inside */
+#define SOLID_BBOX      2       /* touch on edge */
+#define SOLID_BSP       3       /* BSP clip, touch on edge */
+
+/* ==========================================================================
    Game API Version
    ========================================================================== */
 
@@ -416,5 +436,8 @@ extern game_import_t gi;
 /* Entity spawning (g_spawn.c) */
 void G_SpawnEntities(const char *mapname, const char *entstring,
                      const char *spawnpoint);
+
+/* Entity physics (g_phys.c) */
+void G_RunEntity(edict_t *ent);
 
 #endif /* G_LOCAL_H */
