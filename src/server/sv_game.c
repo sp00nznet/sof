@@ -11,6 +11,7 @@
 #include "../common/qcommon.h"
 #include "../game/g_local.h"
 #include "../renderer/r_bsp.h"
+#include "../sound/snd_local.h"
 
 /* ==========================================================================
    Game Module State
@@ -88,17 +89,55 @@ static void GI_centerprintf(edict_t *ent, const char *fmt, ...)
 static void GI_sound(edict_t *ent, int channel, int soundindex,
                      float volume, float attenuation, float timeofs)
 {
-    (void)ent; (void)channel; (void)soundindex;
-    (void)volume; (void)attenuation; (void)timeofs;
-    /* TODO: route to sound system */
+    const char *name;
+    sfx_t *sfx;
+    vec3_t origin;
+    int entnum = 0;
+
+    if (soundindex <= 0 || soundindex >= MAX_SOUNDS)
+        return;
+
+    name = sv_configstrings[CS_SOUNDS + soundindex];
+    if (!name[0])
+        return;
+
+    sfx = S_RegisterSound(name);
+    if (!sfx)
+        return;
+
+    if (ent) {
+        entnum = ent->s.number;
+        VectorCopy(ent->s.origin, origin);
+    } else {
+        VectorClear(origin);
+    }
+
+    S_StartSound(origin, entnum, channel, sfx, volume, attenuation, timeofs);
 }
 
 static void GI_positioned_sound(vec3_t origin, edict_t *ent, int channel,
                      int soundindex, float volume, float attenuation,
                      float timeofs)
 {
-    (void)origin; (void)ent; (void)channel; (void)soundindex;
-    (void)volume; (void)attenuation; (void)timeofs;
+    const char *name;
+    sfx_t *sfx;
+    int entnum = 0;
+
+    if (soundindex <= 0 || soundindex >= MAX_SOUNDS)
+        return;
+
+    name = sv_configstrings[CS_SOUNDS + soundindex];
+    if (!name[0])
+        return;
+
+    sfx = S_RegisterSound(name);
+    if (!sfx)
+        return;
+
+    if (ent)
+        entnum = ent->s.number;
+
+    S_StartSound(origin, entnum, channel, sfx, volume, attenuation, timeofs);
 }
 
 static void GI_configstring(int num, const char *string)
@@ -328,13 +367,13 @@ static void GI_AddCommandString(const char *text)
 
 static void GI_DebugGraph(float value, int color) { (void)value; (void)color; }
 
-/* SoF extended sound */
+/* SoF extended sound — routes to standard sound with extra flags */
 static void GI_sound_extended(edict_t *ent, int channel, int soundindex,
                      float volume, float attenuation, float timeofs,
                      int flags)
 {
-    (void)ent; (void)channel; (void)soundindex;
-    (void)volume; (void)attenuation; (void)timeofs; (void)flags;
+    (void)flags;  /* TODO: handle SoF-specific sound flags */
+    GI_sound(ent, channel, soundindex, volume, attenuation, timeofs);
 }
 
 /* GHOUL stubs */
