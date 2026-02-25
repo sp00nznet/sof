@@ -76,9 +76,9 @@ void Sys_PlatformShutdown(void)
    Timer
    ========================================================================== */
 
-uint32_t Sys_Milliseconds(void)
+int Sys_Milliseconds(void)
 {
-    return SDL_GetTicks();
+    return (int)SDL_GetTicks();
 }
 
 /* ==========================================================================

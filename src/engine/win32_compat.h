@@ -23,7 +23,9 @@
 #include <stdbool.h>
 
 #ifdef _WIN32
-  #define WIN32_LEAN_AND_MEAN
+  #ifndef WIN32_LEAN_AND_MEAN
+    #define WIN32_LEAN_AND_MEAN
+  #endif
   #include <windows.h>
 #endif
 
@@ -492,8 +494,8 @@ void    Sys_GetOSVersion(sof_osversion_t *ver);
 
 /* --- Timer --- */
 
-/* High-resolution timer using SDL2 */
-uint32_t    Sys_Milliseconds(void);     /* Replaces timeGetTime */
+/* High-resolution timer using SDL2 — declared in qcommon.h as int */
+/* uint32_t Sys_Milliseconds(void); — see qcommon.h */
 
 /* --- Window Management (wraps SDL2) --- */
 

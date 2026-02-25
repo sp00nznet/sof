@@ -39,74 +39,56 @@ find_package(SDL2 REQUIRED)
 # OpenGL (required for renderer)
 find_package(OpenGL REQUIRED)
 
-# --- Platform Abstraction Library ---
-# SDL2-based replacement for all Win32 platform calls
+# --- Main Executable ---
+# Unified binary: engine + game + renderer + sound (no DLL boundaries)
 
-add_library(sof_platform STATIC
+add_executable(sof
+    # Common (shared utilities, math, types)
+    src/common/q_shared.c
+
+    # Engine core
+    src/engine/main.c
+    src/engine/common.c
+    src/engine/cmd.c
+    src/engine/cvar.c
+    src/engine/z_zone.c
+    src/engine/files.c
     src/engine/sys_sdl.c
 )
 
-target_include_directories(sof_platform PUBLIC
+target_include_directories(sof PRIVATE
     src/common
     src/engine
     ${SDL2_INCLUDE_DIRS}
 )
 
-target_link_libraries(sof_platform PUBLIC
+target_link_libraries(sof PRIVATE
     ${SDL2_LIBRARIES}
     OpenGL::GL
 )
 
 if(WIN32)
-    # On Windows, we still link a few native APIs for compatibility
-    target_link_libraries(sof_platform PUBLIC
-        ws2_32      # Modern Winsock2 (replaces WSOCK32)
-        winmm       # timeGetTime fallback
+    target_link_libraries(sof PRIVATE
+        ws2_32      # Modern Winsock2
+        winmm       # Timer
     )
 elseif(UNIX)
-    target_link_libraries(sof_platform PUBLIC
+    target_link_libraries(sof PRIVATE
         m           # Math library
         pthread     # Threading
     )
 endif()
 
-# --- Main Executable (placeholder — will contain all recomp'd code) ---
-
-# add_executable(sof
-#     src/engine/main.c
-# )
-# target_link_libraries(sof PRIVATE sof_platform)
-
-# --- Subdirectories (to be enabled as code is recompiled) ---
-
-# Common sources (shared types, math, containers)
-# add_subdirectory(src/common)
-
-# Core engine
-# add_subdirectory(src/engine)
+# --- Subdirectories (to be enabled as subsystems are implemented) ---
 
 # GHOUL damage model system
 # add_subdirectory(src/ghoul)
-
-# Game logic
-# add_subdirectory(src/game)
 
 # Renderer
 # add_subdirectory(src/renderer)
 
 # Sound system
 # add_subdirectory(src/sound)
-
-# Client
-# add_subdirectory(src/client)
-
-# Server
-# add_subdirectory(src/server)
-
-# Tools
-# if(SOF_BUILD_TOOLS)
-#     add_subdirectory(tools)
-# endif()
 
 message(STATUS "")
 message(STATUS "=== Soldier of Fortune: Static Recompilation ===")
