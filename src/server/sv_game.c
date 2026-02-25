@@ -19,6 +19,14 @@ static game_export_t    *ge;        /* game functions */
 static game_import_t    gi_impl;    /* engine functions for game */
 
 /* ==========================================================================
+   Configstring Table
+   Q2 configstrings: indexed string table sent to clients.
+   Ranges: CS_MODELS (32..287), CS_SOUNDS (288..543), CS_IMAGES (544..799)
+   ========================================================================== */
+
+static char sv_configstrings[MAX_CONFIGSTRINGS][MAX_QPATH];
+
+/* ==========================================================================
    game_import_t implementations
    Bridge engine subsystems to the game_import_t function pointer table
    ========================================================================== */
@@ -94,8 +102,12 @@ static void GI_positioned_sound(vec3_t origin, edict_t *ent, int channel,
 
 static void GI_configstring(int num, const char *string)
 {
-    (void)num; (void)string;
-    /* TODO: send configstring to clients */
+    if (num < 0 || num >= MAX_CONFIGSTRINGS) {
+        Com_Error(ERR_DROP, "GI_configstring: bad index %d", num);
+        return;
+    }
+
+    Q_strncpyz(sv_configstrings[num], string ? string : "", MAX_QPATH);
 }
 
 static void GI_error(const char *fmt, ...)
@@ -110,11 +122,64 @@ static void GI_error(const char *fmt, ...)
     Com_Error(ERR_DROP, "Game Error: %s", msg);
 }
 
-/* Model/image/sound index stubs */
-static int GI_modelindex(const char *name) { (void)name; return 0; }
-static int GI_soundindex(const char *name) { (void)name; return 0; }
-static int GI_imageindex(const char *name) { (void)name; return 0; }
-static void GI_setmodel(edict_t *ent, const char *name) { (void)ent; (void)name; }
+/*
+ * SV_FindIndex — generic configstring index lookup/allocation
+ * Searches the range [start, start+max) for an existing match or
+ * allocates the next empty slot. Returns offset from start (1-based).
+ */
+static int SV_FindIndex(const char *name, int start, int max)
+{
+    int i;
+
+    if (!name || !name[0])
+        return 0;
+
+    /* Search for existing */
+    for (i = 1; i < max; i++) {
+        if (sv_configstrings[start + i][0] == '\0')
+            break;  /* hit empty slot — not found, allocate here */
+        if (Q_stricmp(sv_configstrings[start + i], name) == 0)
+            return i;
+    }
+
+    if (i >= max) {
+        Com_Error(ERR_DROP, "SV_FindIndex: overflow (start=%d max=%d) for '%s'",
+                  start, max, name);
+        return 0;
+    }
+
+    /* Allocate new slot */
+    Q_strncpyz(sv_configstrings[start + i], name, MAX_QPATH);
+    return i;
+}
+
+static int GI_modelindex(const char *name)
+{
+    return SV_FindIndex(name, CS_MODELS, MAX_MODELS);
+}
+
+static int GI_soundindex(const char *name)
+{
+    return SV_FindIndex(name, CS_SOUNDS, MAX_SOUNDS);
+}
+
+static int GI_imageindex(const char *name)
+{
+    return SV_FindIndex(name, CS_IMAGES, MAX_IMAGES);
+}
+
+static void GI_setmodel(edict_t *ent, const char *name)
+{
+    if (!ent || !name)
+        return;
+
+    ent->s.modelindex = SV_FindIndex(name, CS_MODELS, MAX_MODELS);
+
+    /* Inline BSP models (*1, *2, etc.) — set bounding box from submodel */
+    if (name[0] == '*') {
+        /* TODO: look up submodel bounds from BSP and set ent->mins/maxs */
+    }
+}
 
 /* Collision stubs */
 static trace_t GI_trace(vec3_t start, vec3_t mins, vec3_t maxs,
@@ -305,6 +370,9 @@ static void GI_entity_set_flags(edict_t *ent, int flags)
 
 void SV_InitGameProgs(void)
 {
+    /* Clear configstring table */
+    memset(sv_configstrings, 0, sizeof(sv_configstrings));
+
     /* Initialize world spatial structure */
     SV_ClearWorld();
 
@@ -405,6 +473,24 @@ void SV_ShutdownGameProgs(void)
 game_export_t *SV_GetGameExport(void)
 {
     return ge;
+}
+
+/* ==========================================================================
+   Configstring Accessors (for engine/renderer use)
+   ========================================================================== */
+
+const char *SV_GetConfigstring(int index)
+{
+    if (index < 0 || index >= MAX_CONFIGSTRINGS)
+        return "";
+    return sv_configstrings[index];
+}
+
+void SV_SetConfigstring(int index, const char *val)
+{
+    if (index < 0 || index >= MAX_CONFIGSTRINGS)
+        return;
+    Q_strncpyz(sv_configstrings[index], val ? val : "", MAX_QPATH);
 }
 
 /*

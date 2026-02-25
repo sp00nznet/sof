@@ -220,6 +220,10 @@ void    SV_Frame(int msec);
 void    SV_InitGameProgs(void);
 void    SV_ShutdownGameProgs(void);
 
+/* Configstring access */
+const char *SV_GetConfigstring(int index);
+void    SV_SetConfigstring(int index, const char *val);
+
 /* Collision model — declared in r_bsp.h with full bsp_world_t type.
  * cm_trace.c includes r_bsp.h directly. */
 
