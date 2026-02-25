@@ -168,4 +168,8 @@ void    SV_Init(void);
 void    SV_Shutdown(const char *finalmsg, qboolean reconnect);
 void    SV_Frame(int msec);
 
+/* Game module interface */
+void    SV_InitGameProgs(void);
+void    SV_ShutdownGameProgs(void);
+
 #endif /* QCOMMON_H */

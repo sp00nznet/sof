@@ -63,6 +63,12 @@ add_executable(sof
     src/renderer/r_main.c
     src/renderer/r_bsp.c
 
+    # Game module (was gamex86.dll)
+    src/game/g_main.c
+
+    # Server
+    src/server/sv_game.c
+
     # GHOUL model/gore system
     src/ghoul/ghoul_main.c
 )

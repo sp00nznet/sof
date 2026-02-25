@@ -200,6 +200,9 @@ void Qcommon_Init(int argc, char **argv)
     /* Initialize GHOUL model system */
     GHOUL_Init();
 
+    /* Initialize game module (was gamex86.dll in original) */
+    SV_InitGameProgs();
+
     /* Initialize input */
     IN_Init();
 
@@ -286,5 +289,6 @@ void SV_Shutdown(const char *finalmsg, qboolean reconnect)
 {
     (void)finalmsg;
     (void)reconnect;
+    SV_ShutdownGameProgs();
 }
 void SV_Frame(int msec) { (void)msec; }
