@@ -231,6 +231,7 @@ void QGL_Shutdown(void);
 void        R_InitImages(void);
 void        R_ShutdownImages(void);
 image_t    *R_FindImage(const char *name);
+image_t    *R_FindPic(const char *name);
 GLuint      R_GetNoTexture(void);
 void        R_ImageBeginRegistration(void);
 void        R_ImageEndRegistration(void);

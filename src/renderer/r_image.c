@@ -291,6 +291,260 @@ static image_t *R_LoadM32(const char *name, byte *raw, int rawlen)
 }
 
 /* ==========================================================================
+   PCX Image Loader (Q2 standard for 2D pics)
+   ========================================================================== */
+
+typedef struct {
+    byte    manufacturer;
+    byte    version;
+    byte    encoding;
+    byte    bits_per_pixel;
+    unsigned short  xmin, ymin, xmax, ymax;
+    unsigned short  hres, vres;
+    byte    palette[48];
+    byte    reserved;
+    byte    color_planes;
+    unsigned short  bytes_per_line;
+    unsigned short  palette_type;
+    byte    filler[58];
+} pcx_header_t;
+
+static image_t *R_LoadPCX(const char *name, byte *raw, int rawlen, imagetype_t type)
+{
+    pcx_header_t    *pcx;
+    image_t         *img;
+    byte            *rgba, *out;
+    byte            *pix, *end;
+    byte            pal[768];
+    int             width, height, size;
+    int             x, y;
+
+    if (rawlen < (int)sizeof(pcx_header_t))
+        return NULL;
+
+    pcx = (pcx_header_t *)raw;
+
+    if (pcx->manufacturer != 0x0A || pcx->version != 5 ||
+        pcx->encoding != 1 || pcx->bits_per_pixel != 8)
+        return NULL;
+
+    width = pcx->xmax - pcx->xmin + 1;
+    height = pcx->ymax - pcx->ymin + 1;
+
+    if (width <= 0 || height <= 0 || width > 2048 || height > 2048)
+        return NULL;
+
+    /* Palette is last 768 bytes of file (preceded by 0x0C marker) */
+    if (rawlen < 769 || raw[rawlen - 769] != 0x0C) {
+        /* No embedded palette — use Q2 palette */
+        memcpy(pal, q2_palette, 768);
+    } else {
+        memcpy(pal, raw + rawlen - 768, 768);
+    }
+
+    size = width * height;
+    rgba = (byte *)Z_Malloc(size * 4);
+    out = rgba;
+
+    pix = raw + sizeof(pcx_header_t);
+    end = raw + rawlen - 769;  /* before palette */
+
+    for (y = 0; y < height; y++) {
+        for (x = 0; x < width; ) {
+            if (pix >= end) break;
+            byte data = *pix++;
+            int run;
+            if ((data & 0xC0) == 0xC0) {
+                run = data & 0x3F;
+                if (pix >= end) break;
+                data = *pix++;
+            } else {
+                run = 1;
+            }
+            while (run-- > 0 && x < width) {
+                int ofs = (y * width + x) * 4;
+                /* Index 255 is transparent in Q2 pics */
+                if (data == 255 && type == it_pic) {
+                    out[ofs + 0] = 0;
+                    out[ofs + 1] = 0;
+                    out[ofs + 2] = 0;
+                    out[ofs + 3] = 0;
+                } else {
+                    out[ofs + 0] = pal[data * 3 + 0];
+                    out[ofs + 1] = pal[data * 3 + 1];
+                    out[ofs + 2] = pal[data * 3 + 2];
+                    out[ofs + 3] = 255;
+                }
+                x++;
+            }
+        }
+    }
+
+    if (r_numimages >= MAX_R_IMAGES) {
+        Z_Free(rgba);
+        return NULL;
+    }
+
+    img = &r_images[r_numimages++];
+    memset(img, 0, sizeof(*img));
+    Q_strncpyz(img->name, name, sizeof(img->name));
+    img->width = width;
+    img->height = height;
+    img->type = type;
+    img->has_alpha = (type == it_pic) ? qtrue : qfalse;
+    img->texnum = R_UploadTexture(rgba, width, height, qfalse, img->has_alpha);
+
+    Z_Free(rgba);
+    return img;
+}
+
+/* ==========================================================================
+   TGA Image Loader (used by some SoF content)
+   ========================================================================== */
+
+static image_t *R_LoadTGA(const char *name, byte *raw, int rawlen, imagetype_t type)
+{
+    image_t *img;
+    int     width, height;
+    int     pixel_size;
+    byte    *rgba, *src;
+    int     i, size;
+
+    if (rawlen < 18)
+        return NULL;
+
+    /* Parse TGA header (uncompressed only) */
+    byte image_type = raw[2];
+    if (image_type != 2 && image_type != 3)  /* only uncompressed RGB/grey */
+        return NULL;
+
+    width = raw[12] | (raw[13] << 8);
+    height = raw[14] | (raw[15] << 8);
+    pixel_size = raw[16];
+
+    if (width <= 0 || height <= 0 || width > 2048 || height > 2048)
+        return NULL;
+
+    int bpp = pixel_size / 8;
+    if (bpp != 3 && bpp != 4)
+        return NULL;
+
+    size = width * height;
+    int data_start = 18 + raw[0];  /* skip id field */
+    if (data_start + size * bpp > rawlen)
+        return NULL;
+
+    rgba = (byte *)Z_Malloc(size * 4);
+    src = raw + data_start;
+
+    /* TGA is stored bottom-up by default */
+    qboolean top_origin = (raw[17] & 0x20) != 0;
+    qboolean has_alpha = (bpp == 4);
+
+    for (i = 0; i < size; i++) {
+        int sx = i % width;
+        int sy = i / width;
+        int dy = top_origin ? sy : (height - 1 - sy);
+        int dst = (dy * width + sx) * 4;
+        int sidx = i * bpp;
+
+        rgba[dst + 0] = src[sidx + 2];  /* TGA is BGR */
+        rgba[dst + 1] = src[sidx + 1];
+        rgba[dst + 2] = src[sidx + 0];
+        rgba[dst + 3] = has_alpha ? src[sidx + 3] : 255;
+    }
+
+    if (r_numimages >= MAX_R_IMAGES) {
+        Z_Free(rgba);
+        return NULL;
+    }
+
+    img = &r_images[r_numimages++];
+    memset(img, 0, sizeof(*img));
+    Q_strncpyz(img->name, name, sizeof(img->name));
+    img->width = width;
+    img->height = height;
+    img->type = type;
+    img->has_alpha = has_alpha;
+    img->texnum = R_UploadTexture(rgba, width, height, (type == it_wall), has_alpha);
+
+    Z_Free(rgba);
+    return img;
+}
+
+/* ==========================================================================
+   2D Pic Loading (for HUD, menus, crosshairs)
+   ========================================================================== */
+
+/*
+ * R_FindPic - Find or load a 2D image from pics/ directory
+ *
+ * Q2 convention: pics are loaded from "pics/name.pcx"
+ * SoF also uses "pics/name.m32" and "pics/name.tga"
+ */
+image_t *R_FindPic(const char *name)
+{
+    image_t *img;
+    byte    *raw;
+    int     len;
+    char    fullname[MAX_QPATH];
+    int     i;
+
+    if (!name || !name[0])
+        return NULL;
+
+    /* Search existing images */
+    for (i = 0; i < r_numimages; i++) {
+        if (Q_stricmp(r_images[i].name, name) == 0) {
+            r_images[i].registration_sequence = r_registration_sequence;
+            return &r_images[i];
+        }
+    }
+
+    if (r_numimages >= MAX_R_IMAGES)
+        return NULL;
+
+    /* Try M32 */
+    Com_sprintf(fullname, sizeof(fullname), "pics/%s.m32", name);
+    len = FS_LoadFile(fullname, (void **)&raw);
+    if (raw) {
+        img = R_LoadM32(name, raw, len);
+        FS_FreeFile(raw);
+        if (img) {
+            img->type = it_pic;
+            img->registration_sequence = r_registration_sequence;
+            return img;
+        }
+    }
+
+    /* Try TGA */
+    Com_sprintf(fullname, sizeof(fullname), "pics/%s.tga", name);
+    len = FS_LoadFile(fullname, (void **)&raw);
+    if (raw) {
+        img = R_LoadTGA(name, raw, len, it_pic);
+        FS_FreeFile(raw);
+        if (img) {
+            img->registration_sequence = r_registration_sequence;
+            return img;
+        }
+    }
+
+    /* Try PCX (Q2 standard) */
+    Com_sprintf(fullname, sizeof(fullname), "pics/%s.pcx", name);
+    len = FS_LoadFile(fullname, (void **)&raw);
+    if (raw) {
+        img = R_LoadPCX(name, raw, len, it_pic);
+        FS_FreeFile(raw);
+        if (img) {
+            img->registration_sequence = r_registration_sequence;
+            return img;
+        }
+    }
+
+    return NULL;
+}
+
+/* ==========================================================================
    Texture Lookup
    ========================================================================== */
 

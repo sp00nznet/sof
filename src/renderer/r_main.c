@@ -460,9 +460,7 @@ struct image_s *R_RegisterSkin(const char *name)
 
 image_t *R_RegisterPic(const char *name)
 {
-    Com_DPrintf("R_RegisterPic: %s\n", name);
-    /* TODO: Load 2D pic for HUD/menus */
-    return NULL;
+    return R_FindPic(name);
 }
 
 void R_SetSky(const char *name, float rotate, vec3_t axis)
@@ -482,19 +480,58 @@ void R_EndRegistration(void)
 
 void R_DrawGetPicSize(int *w, int *h, const char *name)
 {
-    (void)name;
-    *w = 0;
-    *h = 0;
+    image_t *pic = R_FindPic(name);
+    if (pic) {
+        *w = pic->width;
+        *h = pic->height;
+    } else {
+        *w = 0;
+        *h = 0;
+    }
 }
 
 void R_DrawPic(int x, int y, const char *name)
 {
-    (void)x; (void)y; (void)name;
+    image_t *pic = R_FindPic(name);
+    if (!pic || !pic->texnum || !qglBegin)
+        return;
+
+    qglEnable(GL_TEXTURE_2D);
+    qglEnable(GL_BLEND);
+    qglBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    qglBindTexture(GL_TEXTURE_2D, pic->texnum);
+    qglColor4f(1, 1, 1, 1);
+
+    qglBegin(GL_QUADS);
+    qglTexCoord2f(0, 0); qglVertex3f((float)x, (float)y, 0);
+    qglTexCoord2f(1, 0); qglVertex3f((float)(x + pic->width), (float)y, 0);
+    qglTexCoord2f(1, 1); qglVertex3f((float)(x + pic->width), (float)(y + pic->height), 0);
+    qglTexCoord2f(0, 1); qglVertex3f((float)x, (float)(y + pic->height), 0);
+    qglEnd();
+
+    qglDisable(GL_BLEND);
 }
 
 void R_DrawStretchPic(int x, int y, int w, int h, const char *name)
 {
-    (void)x; (void)y; (void)w; (void)h; (void)name;
+    image_t *pic = R_FindPic(name);
+    if (!pic || !pic->texnum || !qglBegin)
+        return;
+
+    qglEnable(GL_TEXTURE_2D);
+    qglEnable(GL_BLEND);
+    qglBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    qglBindTexture(GL_TEXTURE_2D, pic->texnum);
+    qglColor4f(1, 1, 1, 1);
+
+    qglBegin(GL_QUADS);
+    qglTexCoord2f(0, 0); qglVertex3f((float)x, (float)y, 0);
+    qglTexCoord2f(1, 0); qglVertex3f((float)(x + w), (float)y, 0);
+    qglTexCoord2f(1, 1); qglVertex3f((float)(x + w), (float)(y + h), 0);
+    qglTexCoord2f(0, 1); qglVertex3f((float)x, (float)(y + h), 0);
+    qglEnd();
+
+    qglDisable(GL_BLEND);
 }
 
 /*
