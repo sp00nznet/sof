@@ -227,58 +227,15 @@ void Sys_ShowCursor(int show)
     g_input.cursor_visible = show;
 }
 
+/* Forward declaration — implemented in client/in_sdl.c */
+extern void IN_ProcessSDLEvent(SDL_Event *event);
+
 void Sys_PumpEvents(void)
 {
     SDL_Event event;
 
     while (SDL_PollEvent(&event)) {
-        switch (event.type) {
-        case SDL_QUIT:
-            /* TODO: Hook into Com_Quit */
-            break;
-
-        case SDL_KEYDOWN:
-        case SDL_KEYUP:
-            /* TODO: Map SDL scancodes to Quake II key_t values */
-            /* Key_Event(sdl_to_q2_key(event.key.keysym.scancode),
-             *           event.type == SDL_KEYDOWN); */
-            break;
-
-        case SDL_MOUSEMOTION:
-            /* TODO: Feed relative motion to CL_MouseMove */
-            /* if (g_input.mouse_grabbed) {
-             *     CL_MouseMove(event.motion.xrel, event.motion.yrel);
-             * } */
-            break;
-
-        case SDL_MOUSEBUTTONDOWN:
-        case SDL_MOUSEBUTTONUP:
-            /* TODO: Map SDL mouse buttons to Quake II K_MOUSEx */
-            break;
-
-        case SDL_MOUSEWHEEL:
-            /* TODO: Map to K_MWHEELUP / K_MWHEELDOWN */
-            break;
-
-        case SDL_WINDOWEVENT:
-            switch (event.window.event) {
-            case SDL_WINDOWEVENT_FOCUS_GAINED:
-                /* TODO: IN_Activate(true) */
-                break;
-            case SDL_WINDOWEVENT_FOCUS_LOST:
-                /* TODO: IN_Activate(false) */
-                break;
-            case SDL_WINDOWEVENT_RESIZED:
-                /* TODO: Update viewport */
-                break;
-            }
-            break;
-
-        case SDL_CONTROLLERDEVICEADDED:
-        case SDL_CONTROLLERDEVICEREMOVED:
-            /* TODO: Joystick hotplug */
-            break;
-        }
+        IN_ProcessSDLEvent(&event);
     }
 }
 

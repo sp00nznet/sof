@@ -13,8 +13,13 @@
 
 #include "../common/qcommon.h"
 #include "win32_compat.h"
+#include "../renderer/r_local.h"
 
 #include <time.h>
+
+/* Forward declarations — input system (client/in_sdl.c) */
+extern void IN_Init(void);
+extern void IN_Shutdown(void);
 
 /* ==========================================================================
    Global Cvars
@@ -140,6 +145,10 @@ void Qcommon_Init(int argc, char **argv)
     Cmd_Init();
     Cvar_Init();
 
+    /* Register core commands */
+    Cmd_AddCommand("quit", Sys_Quit);
+    Cmd_AddCommand("error", NULL);  /* placeholder */
+
     /* Register core cvars */
     developer = Cvar_Get("developer", "0", 0);
     timescale = Cvar_Get("timescale", "1", 0);
@@ -187,14 +196,13 @@ void Qcommon_Init(int argc, char **argv)
 
     Com_Printf("====== Soldier of Fortune Initialized ======\n\n");
 
-    /* Initialize client or dedicated server */
-    if (!dedicated->value) {
-        /* CL_Init(); */
-        Com_Printf("Client initialization pending...\n");
-    }
+    /* Initialize input */
+    IN_Init();
 
-    /* SV_Init(); */
-    Com_Printf("Server initialization pending...\n");
+    /* Initialize renderer */
+    if (!dedicated->value) {
+        R_Init(NULL, NULL);
+    }
 }
 
 /* ==========================================================================
@@ -225,9 +233,15 @@ void Qcommon_Frame(int msec)
     /* Run server frame */
     SV_Frame(msec);
 
-    /* Run client frame */
-    if (!dedicated || !dedicated->value)
+    /* Run client frame (includes rendering) */
+    if (!dedicated || !dedicated->value) {
         CL_Frame(msec);
+
+        /* Render frame */
+        R_BeginFrame(0.0f);
+        /* TODO: R_RenderFrame(&cl.refdef) when client is implemented */
+        R_EndFrame();
+    }
 
     if (com_speeds && com_speeds->value) {
         time_after = Sys_Milliseconds();
@@ -256,7 +270,11 @@ void Qcommon_Shutdown(void)
 
 void CL_Init(void) {}
 void CL_Drop(void) {}
-void CL_Shutdown(void) {}
+void CL_Shutdown(void)
+{
+    IN_Shutdown();
+    R_Shutdown();
+}
 void CL_Frame(int msec) { (void)msec; }
 
 void SV_Init(void) {}

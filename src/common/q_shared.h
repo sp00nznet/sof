@@ -266,4 +266,69 @@ typedef struct entity_state_s {
     int     event;
 } entity_state_t;
 
+/* ==========================================================================
+   Renderer View Definition
+   Passed to R_RenderFrame to describe the current view
+   ========================================================================== */
+
+#define MAX_DLIGHTS_DEF     32
+#define MAX_ENTITIES_DEF    128
+#define MAX_PARTICLES_DEF   4096
+
+typedef struct entity_s {
+    struct model_s  *model;
+    float           angles[3];
+    float           origin[3];
+    int             frame;
+    float           oldorigin[3];
+    int             oldframe;
+    float           backlerp;
+    int             skinnum;
+    int             lightstyle;
+    float           alpha;
+    struct image_s  *skin;
+    int             flags;
+} entity_t;
+
+typedef struct dlight_s {
+    vec3_t  origin;
+    vec3_t  color;
+    float   intensity;
+} dlight_t;
+
+typedef struct particle_s {
+    vec3_t  origin;
+    int     color;
+    float   alpha;
+} particle_t;
+
+typedef struct refdef_s {
+    int         x, y, width, height;    /* viewport on screen */
+    float       fov_x, fov_y;
+    vec3_t      vieworg;
+    vec3_t      viewangles;
+    float       blend[4];               /* rgba full-screen blend */
+    float       time;                   /* time in seconds for shader effects */
+
+    int         rdflags;                /* RDF_UNDERWATER, etc */
+
+    byte        *areabits;              /* if not NULL, only areas with set bits will be drawn */
+
+    int         num_entities;
+    entity_t    *entities;
+
+    int         num_dlights;
+    dlight_t    *dlights;
+
+    int         num_particles;
+    particle_t  *particles;
+
+    byte        *lightstyles;           /* [MAX_LIGHTSTYLES] */
+} refdef_t;
+
+/* Refdef flags */
+#define RDF_UNDERWATER      1
+#define RDF_NOWORLDMODEL    2
+#define RDF_IRGOGGLES       4   /* SoF: infrared goggles */
+
 #endif /* Q_SHARED_H */

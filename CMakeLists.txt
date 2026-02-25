@@ -54,6 +54,13 @@ add_executable(sof
     src/engine/z_zone.c
     src/engine/files.c
     src/engine/sys_sdl.c
+
+    # Client / Input
+    src/client/keys.c
+    src/client/in_sdl.c
+
+    # Renderer (OpenGL)
+    src/renderer/r_main.c
 )
 
 target_include_directories(sof PRIVATE
