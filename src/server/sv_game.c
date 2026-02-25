@@ -10,6 +10,7 @@
 
 #include "../common/qcommon.h"
 #include "../game/g_local.h"
+#include "../renderer/r_bsp.h"
 
 /* ==========================================================================
    Game Module State
@@ -181,22 +182,34 @@ static void GI_setmodel(edict_t *ent, const char *name)
     }
 }
 
-/* Collision stubs */
+/* Collision — forward to CM_BoxTrace / CM_PointContents with loaded BSP */
+extern bsp_world_t *R_GetWorldModel(void);
+
 static trace_t GI_trace(vec3_t start, vec3_t mins, vec3_t maxs,
                         vec3_t end, edict_t *passent, int contentmask)
 {
     trace_t tr;
-    (void)mins; (void)maxs; (void)passent; (void)contentmask;
+    bsp_world_t *world = R_GetWorldModel();
 
-    memset(&tr, 0, sizeof(tr));
-    tr.fraction = 1.0f;
-    VectorCopy(end, tr.endpos);
+    (void)passent;  /* TODO: skip passent in entity-vs-entity traces */
+
+    if (world && world->loaded) {
+        tr = CM_BoxTrace(world, start, mins, maxs, end, contentmask);
+    } else {
+        memset(&tr, 0, sizeof(tr));
+        tr.fraction = 1.0f;
+        VectorCopy(end, tr.endpos);
+    }
+
     return tr;
 }
 
 static int GI_pointcontents(vec3_t point)
 {
-    (void)point;
+    bsp_world_t *world = R_GetWorldModel();
+
+    if (world && world->loaded)
+        return CM_PointContents(world, point);
     return 0;
 }
 

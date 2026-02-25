@@ -174,32 +174,42 @@ static void CM_TestInLeaf(trace_work_t *tw, bsp_leaf_t *leaf)
     if (!(leaf->contents & tw->contents))
         return;
 
-    /* Test each brush in this leaf */
-    for (i = 0; i < leaf->numleafbrushes; i++) {
-        int brushnum;
-        unsigned short *leafbrushes;
+    /* Use leafbrushes array for proper per-leaf brush lookup */
+    if (tw->world->leafbrushes && leaf->numleafbrushes > 0) {
+        for (i = 0; i < leaf->numleafbrushes; i++) {
+            int lb_idx = leaf->firstleafbrush + i;
+            int brushnum;
 
-        /* Leaf brushes are stored as unsigned shorts */
-        leafbrushes = (unsigned short *)((byte *)tw->world->brushsides);
+            if (lb_idx >= tw->world->num_leafbrushes)
+                break;
 
-        /* Actually, we need leafbrushes data which we haven't loaded yet.
-         * For now, iterate all brushes in the world. This is a TODO
-         * to add LUMP_LEAFBRUSHES loading to the BSP loader. */
-        (void)leafbrushes;
-        break;
-    }
+            brushnum = tw->world->leafbrushes[lb_idx];
+            if (brushnum >= tw->world->num_brushes)
+                continue;
 
-    /* Fallback: test against all world brushes (slow but correct) */
-    for (i = 0; i < tw->world->num_brushes; i++) {
-        brush = &tw->world->brushes[i];
+            brush = &tw->world->brushes[brushnum];
 
-        if (!(brush->contents & tw->contents))
-            continue;
+            if (!(brush->contents & tw->contents))
+                continue;
 
-        CM_TestBrush(tw, brush);
+            CM_TestBrush(tw, brush);
 
-        if (tw->trace.allsolid)
-            return;
+            if (tw->trace.allsolid)
+                return;
+        }
+    } else {
+        /* Fallback: test against all world brushes */
+        for (i = 0; i < tw->world->num_brushes; i++) {
+            brush = &tw->world->brushes[i];
+
+            if (!(brush->contents & tw->contents))
+                continue;
+
+            CM_TestBrush(tw, brush);
+
+            if (tw->trace.allsolid)
+                return;
+        }
     }
 }
 
