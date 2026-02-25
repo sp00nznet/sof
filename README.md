@@ -1,6 +1,8 @@
 # Soldier of Fortune: Static Recompilation
 
-> *"The most violent game ever made"* — Everyone, circa 2000
+> *"Consider this Bad Boy and play on an empty stomach"* — **Playboy**
+>
+> Yes, that quote was on the box. Yes, it was from *that* Playboy.
 
 A static recompilation project to bring **Soldier of Fortune** (2000) back to life on modern systems. Because no one should be denied the experience of watching a guy's arm fly off in 26 individually modeled zones of dismemberment.
 
