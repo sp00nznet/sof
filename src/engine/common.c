@@ -23,6 +23,7 @@
 /* Forward declarations — input system (client/in_sdl.c) */
 extern void IN_Init(void);
 extern void IN_Shutdown(void);
+extern void IN_GetMouseDelta(int *dx, int *dy);
 
 /* ==========================================================================
    Global Cvars
@@ -266,9 +267,26 @@ void Qcommon_Frame(int msec)
             }
         }
 
+        /* Update freecam from input when console is not visible */
+        if (R_WorldLoaded() && !Con_IsVisible()) {
+            extern qboolean key_down[];
+            float fwd = 0, side = 0, up = 0;
+            int mx, my;
+
+            if (key_down['w']) fwd += 1;
+            if (key_down['s']) fwd -= 1;
+            if (key_down['d']) side += 1;
+            if (key_down['a']) side -= 1;
+            if (key_down[' ']) up += 200.0f * msec / 1000.0f;
+            if (key_down[133]) up -= 200.0f * msec / 1000.0f;  /* K_CTRL */
+
+            IN_GetMouseDelta(&mx, &my);
+            R_UpdateCamera(fwd, side, up, (float)mx, (float)my,
+                           msec / 1000.0f);
+        }
+
         /* Render frame */
         R_BeginFrame(0.0f);
-        /* TODO: R_RenderFrame(&cl.refdef) when client is implemented */
         Con_DrawNotify();
         Con_DrawConsole(con.current_frac);
         R_EndFrame();

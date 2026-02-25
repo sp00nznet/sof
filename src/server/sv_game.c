@@ -372,3 +372,13 @@ game_export_t *SV_GetGameExport(void)
 {
     return ge;
 }
+
+/*
+ * SV_SpawnMapEntities — Called by map command to spawn BSP entities
+ */
+void SV_SpawnMapEntities(const char *mapname, const char *entstring)
+{
+    if (ge && ge->SpawnEntities) {
+        ge->SpawnEntities(mapname, entstring, "");
+    }
+}

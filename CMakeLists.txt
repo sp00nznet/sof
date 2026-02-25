@@ -64,6 +64,7 @@ add_executable(sof
     # Renderer (OpenGL)
     src/renderer/r_main.c
     src/renderer/r_bsp.c
+    src/renderer/r_surf.c
 
     # Game module (was gamex86.dll)
     src/game/g_main.c

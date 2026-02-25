@@ -219,4 +219,19 @@ extern PFNGLCLIENTACTIVETEXTUREARBPROC  qglClientActiveTextureARB;
 qboolean QGL_Init(void);
 void QGL_Shutdown(void);
 
+/* BSP surface rendering (r_surf.c) */
+void        R_LoadWorldMap(const char *name);
+qboolean    R_WorldLoaded(void);
+void        R_DrawWorld(void);
+void        R_RenderWorldView(void);
+void        R_InitSurfCommands(void);
+
+/* Camera */
+void        R_GetCameraOrigin(vec3_t out);
+void        R_SetCameraOrigin(vec3_t origin);
+void        R_GetCameraAngles(vec3_t out);
+void        R_SetCameraAngles(vec3_t angles);
+void        R_UpdateCamera(float forward, float right, float up,
+                           float mouse_dx, float mouse_dy, float frametime);
+
 #endif /* R_LOCAL_H */
