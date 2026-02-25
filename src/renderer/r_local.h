@@ -219,6 +219,14 @@ extern PFNGLCLIENTACTIVETEXTUREARBPROC  qglClientActiveTextureARB;
 qboolean QGL_Init(void);
 void QGL_Shutdown(void);
 
+/* Image/Texture system (r_image.c) */
+void        R_InitImages(void);
+void        R_ShutdownImages(void);
+image_t    *R_FindImage(const char *name);
+GLuint      R_GetNoTexture(void);
+void        R_ImageBeginRegistration(void);
+void        R_ImageEndRegistration(void);
+
 /* BSP surface rendering (r_surf.c) */
 void        R_LoadWorldMap(const char *name);
 qboolean    R_WorldLoaded(void);

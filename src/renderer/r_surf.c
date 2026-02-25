@@ -34,6 +34,10 @@ static float    r_camera_speed = 400.0f;
 static int  c_brush_polys;
 static int  c_visible_faces;
 
+/* Per-texinfo cached texture lookups (populated on map load) */
+#define MAX_TEXINFO_CACHE   4096
+static image_t  *r_texinfo_images[MAX_TEXINFO_CACHE];
+
 /* ==========================================================================
    Map Loading
    ========================================================================== */
@@ -59,6 +63,30 @@ void R_LoadWorldMap(const char *name)
     }
 
     r_worldloaded = qtrue;
+
+    /* Load textures for all texinfo entries */
+    {
+        int ti;
+        int loaded = 0, missed = 0;
+
+        memset(r_texinfo_images, 0, sizeof(r_texinfo_images));
+        R_ImageBeginRegistration();
+
+        for (ti = 0; ti < r_worldmodel.num_texinfo && ti < MAX_TEXINFO_CACHE; ti++) {
+            const char *texname = r_worldmodel.texinfo[ti].texture;
+            if (texname[0]) {
+                r_texinfo_images[ti] = R_FindImage(texname);
+                if (r_texinfo_images[ti])
+                    loaded++;
+                else
+                    missed++;
+            }
+        }
+
+        R_ImageEndRegistration();
+        Com_Printf("Textures: %d loaded, %d missing (of %d texinfo)\n",
+                   loaded, missed, r_worldmodel.num_texinfo);
+    }
 
     /* Reset camera to origin */
     VectorClear(r_camera_origin);
@@ -201,9 +229,16 @@ static void R_DrawFace(bsp_world_t *world, bsp_face_t *face)
             bsp_texinfo_t *ti = &world->texinfo[face->texinfo];
             float s = DotProduct(v, ti->vecs[0]) + ti->vecs[0][3];
             float t = DotProduct(v, ti->vecs[1]) + ti->vecs[1][3];
-            /* Normalize to [0,1] roughly (64 pixels per unit typical) */
-            s /= 64.0f;
-            t /= 64.0f;
+            /* Normalize by actual texture dimensions if loaded */
+            image_t *img = (face->texinfo < MAX_TEXINFO_CACHE) ?
+                            r_texinfo_images[face->texinfo] : NULL;
+            if (img && img->width > 0 && img->height > 0) {
+                s /= (float)img->width;
+                t /= (float)img->height;
+            } else {
+                s /= 64.0f;
+                t /= 64.0f;
+            }
             qglTexCoord2f(s, t);
         }
 
@@ -275,9 +310,12 @@ void R_DrawWorld(void)
     qglDepthMask(GL_TRUE);
     qglEnable(GL_CULL_FACE);
 
-    /* Draw all faces with flat shading (no textures yet) */
+    /* Draw all faces with textures where available */
+    qglEnable(GL_TEXTURE_2D);
+
     for (i = 0; i < world->num_faces; i++) {
         bsp_face_t *face = &world->faces[i];
+        image_t *img = NULL;
 
         /* Skip faces with NODRAW flag */
         if (face->texinfo >= 0 && face->texinfo < world->num_texinfo) {
@@ -285,10 +323,33 @@ void R_DrawWorld(void)
                 continue;
             if (world->texinfo[face->texinfo].flags & SURF_SKY)
                 continue;  /* TODO: sky rendering */
+
+            /* Look up cached texture */
+            if (face->texinfo < MAX_TEXINFO_CACHE)
+                img = r_texinfo_images[face->texinfo];
         }
 
-        R_SetFaceColor(world, face);
+        if (img && img->texnum) {
+            /* Textured face — bind texture, use white modulation */
+            qglEnable(GL_TEXTURE_2D);
+            qglBindTexture(GL_TEXTURE_2D, img->texnum);
+            if (img->has_alpha) {
+                qglEnable(GL_BLEND);
+                qglBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            }
+            qglColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+        } else {
+            /* No texture — use flat color from texture name hash */
+            qglDisable(GL_TEXTURE_2D);
+            qglBindTexture(GL_TEXTURE_2D, R_GetNoTexture());
+            R_SetFaceColor(world, face);
+        }
+
         R_DrawFace(world, face);
+
+        if (img && img->has_alpha)
+            qglDisable(GL_BLEND);
+
         c_visible_faces++;
     }
 

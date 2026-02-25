@@ -247,6 +247,9 @@ int R_Init(void *hinstance, void *hWnd)
     qglEnable(GL_CULL_FACE);
     qglEnable(GL_TEXTURE_2D);
 
+    /* Initialize texture system */
+    R_InitImages();
+
     /* Register map/camera commands */
     R_InitSurfCommands();
 
@@ -261,6 +264,7 @@ int R_Init(void *hinstance, void *hWnd)
 
 void R_Shutdown(void)
 {
+    R_ShutdownImages();
     QGL_Shutdown();
     Sys_DestroyWindow();
 }
@@ -282,7 +286,7 @@ void R_BeginFrame(float camera_separation)
 
     /* Render 3D world if loaded */
     if (R_WorldLoaded()) {
-        qglDisable(GL_TEXTURE_2D);
+        qglEnable(GL_TEXTURE_2D);
         R_RenderWorldView();
         qglDisable(GL_DEPTH_TEST);
     }
