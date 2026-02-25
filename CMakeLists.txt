@@ -67,6 +67,7 @@ add_executable(sof
 
     # Game module (was gamex86.dll)
     src/game/g_main.c
+    src/game/g_spawn.c
 
     # Server
     src/server/sv_game.c

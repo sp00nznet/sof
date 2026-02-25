@@ -424,4 +424,8 @@ game_export_t *GetGameAPI(game_import_t *import);
 /* Global game import interface (filled by GetGameAPI) */
 extern game_import_t gi;
 
+/* Entity spawning (g_spawn.c) */
+void G_SpawnEntities(const char *mapname, const char *entstring,
+                     const char *spawnpoint);
+
 #endif /* G_LOCAL_H */

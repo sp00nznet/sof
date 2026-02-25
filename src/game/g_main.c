@@ -208,12 +208,6 @@ static void ShutdownGame(void)
 static void SpawnEntities(const char *mapname, const char *entstring,
                           const char *spawnpoint)
 {
-    int         entity_count = 0;
-    const char  *p;
-    int         in_entity;
-
-    gi.dprintf("SpawnEntities: %s\n", mapname);
-
     /* Clear existing entities (except world + clients) */
     {
         int i;
@@ -225,40 +219,8 @@ static void SpawnEntities(const char *mapname, const char *entstring,
         globals.num_edicts = game_maxclients + 1;
     }
 
-    if (!entstring || !entstring[0])
-        return;
-
-    /* Count entities in BSP entity string */
-    p = entstring;
-    in_entity = 0;
-    while (*p) {
-        if (*p == '{') {
-            in_entity = 1;
-            entity_count++;
-        } else if (*p == '}') {
-            in_entity = 0;
-        }
-        p++;
-    }
-    (void)in_entity;
-
-    gi.dprintf("  %d entities in BSP entity string\n", entity_count);
-
-    /* TODO: Full entity string parsing
-     * Each entity block looks like:
-     * {
-     * "classname" "worldspawn"
-     * "message" "Map Title"
-     * "origin" "0 0 0"
-     * ...
-     * }
-     *
-     * For each entity:
-     * 1. Parse key/value pairs
-     * 2. Look up classname in spawn function table
-     * 3. Call spawn function (e.g., SP_worldspawn, SP_info_player_start)
-     * 4. Set entity fields from key/values
-     */
+    /* Parse entity string and spawn entities */
+    G_SpawnEntities(mapname, entstring, spawnpoint);
 }
 
 /* ==========================================================================
