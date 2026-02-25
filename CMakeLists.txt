@@ -31,6 +31,54 @@ elseif(APPLE)
     add_definitions(-DPLATFORM_MACOS)
 endif()
 
+# --- Dependencies ---
+
+# SDL2 (required — replaces Win32 windowing, input, timers)
+find_package(SDL2 REQUIRED)
+
+# OpenGL (required for renderer)
+find_package(OpenGL REQUIRED)
+
+# --- Platform Abstraction Library ---
+# SDL2-based replacement for all Win32 platform calls
+
+add_library(sof_platform STATIC
+    src/engine/sys_sdl.c
+)
+
+target_include_directories(sof_platform PUBLIC
+    src/common
+    src/engine
+    ${SDL2_INCLUDE_DIRS}
+)
+
+target_link_libraries(sof_platform PUBLIC
+    ${SDL2_LIBRARIES}
+    OpenGL::GL
+)
+
+if(WIN32)
+    # On Windows, we still link a few native APIs for compatibility
+    target_link_libraries(sof_platform PUBLIC
+        ws2_32      # Modern Winsock2 (replaces WSOCK32)
+        winmm       # timeGetTime fallback
+    )
+elseif(UNIX)
+    target_link_libraries(sof_platform PUBLIC
+        m           # Math library
+        pthread     # Threading
+    )
+endif()
+
+# --- Main Executable (placeholder — will contain all recomp'd code) ---
+
+# add_executable(sof
+#     src/engine/main.c
+# )
+# target_link_libraries(sof PRIVATE sof_platform)
+
+# --- Subdirectories (to be enabled as code is recompiled) ---
+
 # Common sources (shared types, math, containers)
 # add_subdirectory(src/common)
 
