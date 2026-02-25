@@ -15,6 +15,7 @@
 #include "win32_compat.h"
 #include "../renderer/r_local.h"
 #include "../ghoul/ghoul.h"
+#include "../sound/snd_local.h"
 
 #include <time.h>
 
@@ -210,6 +211,9 @@ void Qcommon_Init(int argc, char **argv)
     if (!dedicated->value) {
         R_Init(NULL, NULL);
     }
+
+    /* Initialize sound (replaces Defsnd.dll/EAXSnd.dll/A3Dsnd.dll) */
+    S_Init();
 }
 
 /* ==========================================================================
@@ -279,6 +283,7 @@ void CL_Init(void) {}
 void CL_Drop(void) {}
 void CL_Shutdown(void)
 {
+    S_Shutdown();
     IN_Shutdown();
     R_Shutdown();
 }

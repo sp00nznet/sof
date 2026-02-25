@@ -69,6 +69,9 @@ add_executable(sof
     # Server
     src/server/sv_game.c
 
+    # Sound (replaces Defsnd/EAXSnd/A3Dsnd DLLs)
+    src/sound/snd_sdl.c
+
     # GHOUL model/gore system
     src/ghoul/ghoul_main.c
 )
