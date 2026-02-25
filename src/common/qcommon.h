@@ -172,4 +172,7 @@ void    SV_Frame(int msec);
 void    SV_InitGameProgs(void);
 void    SV_ShutdownGameProgs(void);
 
+/* Collision model — declared in r_bsp.h with full bsp_world_t type.
+ * cm_trace.c includes r_bsp.h directly. */
+
 #endif /* QCOMMON_H */

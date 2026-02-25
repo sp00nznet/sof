@@ -199,6 +199,15 @@ typedef struct {
     int             num_brushsides;
     bsp_brushside_t *brushsides;
 
+    int             num_leafbrushes;
+    unsigned short  *leafbrushes;
+
+    int             num_areas;
+    bsp_area_t      *areas;
+
+    int             num_areaportals;
+    bsp_areaportal_t *areaportals;
+
     /* Lightmap data */
     int             lightdata_size;
     byte            *lightdata;
@@ -224,5 +233,15 @@ int         BSP_PointLeaf(bsp_world_t *world, vec3_t p);
 
 /* PVS cluster check */
 qboolean    BSP_ClusterVisible(bsp_world_t *world, int cluster1, int cluster2);
+
+/* Collision model (cm_trace.c) */
+trace_t     CM_BoxTrace(bsp_world_t *world,
+                        vec3_t start, vec3_t mins, vec3_t maxs,
+                        vec3_t end, int brushmask);
+int         CM_PointContents(bsp_world_t *world, vec3_t p);
+trace_t     CM_TransformedBoxTrace(bsp_world_t *world,
+                                   vec3_t start, vec3_t mins, vec3_t maxs,
+                                   vec3_t end, int headnode,
+                                   int brushmask, vec3_t origin, vec3_t angles);
 
 #endif /* R_BSP_H */

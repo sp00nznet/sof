@@ -54,6 +54,7 @@ add_executable(sof
     src/engine/z_zone.c
     src/engine/files.c
     src/engine/sys_sdl.c
+    src/engine/cm_trace.c
 
     # Client / Input
     src/client/keys.c

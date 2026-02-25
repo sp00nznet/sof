@@ -143,6 +143,18 @@ qboolean BSP_Load(const char *name, bsp_world_t *world)
     world->brushsides = (bsp_brushside_t *)BSP_LoadLump(raw, &header->lumps[LUMP_BRUSHSIDES],
         sizeof(bsp_brushside_t), &world->num_brushsides, "brushsides");
 
+    /* Load leaf brushes (for collision) */
+    world->leafbrushes = (unsigned short *)BSP_LoadLump(raw, &header->lumps[LUMP_LEAFBRUSHES],
+        sizeof(unsigned short), &world->num_leafbrushes, "leafbrushes");
+
+    /* Load areas */
+    world->areas = (bsp_area_t *)BSP_LoadLump(raw, &header->lumps[LUMP_AREAS],
+        sizeof(bsp_area_t), &world->num_areas, "areas");
+
+    /* Load area portals */
+    world->areaportals = (bsp_areaportal_t *)BSP_LoadLump(raw, &header->lumps[LUMP_AREAPORTALS],
+        sizeof(bsp_areaportal_t), &world->num_areaportals, "areaportals");
+
     /* Load lightmap data (raw, variable element size) */
     if (header->lumps[LUMP_LIGHTING].length > 0) {
         world->lightdata_size = header->lumps[LUMP_LIGHTING].length;
