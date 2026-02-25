@@ -61,6 +61,9 @@ add_executable(sof
 
     # Renderer (OpenGL)
     src/renderer/r_main.c
+
+    # GHOUL model/gore system
+    src/ghoul/ghoul_main.c
 )
 
 target_include_directories(sof PRIVATE

@@ -14,6 +14,7 @@
 #include "../common/qcommon.h"
 #include "win32_compat.h"
 #include "../renderer/r_local.h"
+#include "../ghoul/ghoul.h"
 
 #include <time.h>
 
@@ -195,6 +196,9 @@ void Qcommon_Init(int argc, char **argv)
     /* TODO: NET_Init(), Netchan_Init() */
 
     Com_Printf("====== Soldier of Fortune Initialized ======\n\n");
+
+    /* Initialize GHOUL model system */
+    GHOUL_Init();
 
     /* Initialize input */
     IN_Init();
