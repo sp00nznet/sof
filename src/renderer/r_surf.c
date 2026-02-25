@@ -309,10 +309,72 @@ static void R_SetFaceColor(bsp_world_t *world, bsp_face_t *face)
    ========================================================================== */
 
 /*
- * R_DrawWorld - Render all BSP world faces
+ * R_DrawSingleFace - Draw one face with texture and lightmap binding
+ */
+static void R_DrawSingleFace(bsp_world_t *world, int face_idx)
+{
+    bsp_face_t *face = &world->faces[face_idx];
+    image_t *img = NULL;
+    qboolean use_lm = qfalse;
+    GLuint lm_tex;
+
+    /* Skip faces with NODRAW/SKY flags */
+    if (face->texinfo >= 0 && face->texinfo < world->num_texinfo) {
+        if (world->texinfo[face->texinfo].flags & SURF_NODRAW)
+            return;
+        if (world->texinfo[face->texinfo].flags & SURF_SKY)
+            return;
+
+        /* Look up cached texture */
+        if (face->texinfo < MAX_TEXINFO_CACHE)
+            img = r_texinfo_images[face->texinfo];
+    }
+
+    if (img && img->texnum) {
+        qglEnable(GL_TEXTURE_2D);
+        qglBindTexture(GL_TEXTURE_2D, img->texnum);
+        if (img->has_alpha) {
+            qglEnable(GL_BLEND);
+            qglBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        }
+        qglColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+    } else {
+        qglDisable(GL_TEXTURE_2D);
+        qglBindTexture(GL_TEXTURE_2D, R_GetNoTexture());
+        R_SetFaceColor(world, face);
+    }
+
+    /* Set up lightmap on TMU1 if available */
+    lm_tex = R_GetFaceLightmapTexture(face_idx);
+    if (lm_tex && gl_state.have_multitexture && qglActiveTextureARB) {
+        qglActiveTextureARB(GL_TEXTURE1_ARB);
+        qglEnable(GL_TEXTURE_2D);
+        qglBindTexture(GL_TEXTURE_2D, lm_tex);
+        qglTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+        qglActiveTextureARB(GL_TEXTURE0_ARB);
+        use_lm = qtrue;
+    }
+
+    R_DrawFace(world, face, face_idx, use_lm);
+
+    if (use_lm) {
+        qglActiveTextureARB(GL_TEXTURE1_ARB);
+        qglDisable(GL_TEXTURE_2D);
+        qglActiveTextureARB(GL_TEXTURE0_ARB);
+    }
+
+    if (img && img->has_alpha)
+        qglDisable(GL_BLEND);
+
+    c_visible_faces++;
+}
+
+/*
+ * R_DrawWorld - Render BSP world with PVS culling
  *
- * For now, renders all faces without PVS culling (TODO: add PVS).
- * Faces are colored by texture name hash for visual distinction.
+ * Uses the Potentially Visible Set to only render faces in leafs
+ * visible from the camera's current leaf/cluster. Falls back to
+ * rendering all faces if PVS data is unavailable.
  */
 void R_DrawWorld(void)
 {
@@ -330,69 +392,60 @@ void R_DrawWorld(void)
     qglDepthFunc(GL_LEQUAL);
     qglDepthMask(GL_TRUE);
     qglEnable(GL_CULL_FACE);
-
-    /* Draw all faces with textures and lightmaps */
     qglEnable(GL_TEXTURE_2D);
 
-    for (i = 0; i < world->num_faces; i++) {
-        bsp_face_t *face = &world->faces[i];
-        image_t *img = NULL;
-        qboolean use_lm = qfalse;
-        GLuint lm_tex;
+    /* PVS culling: find camera leaf/cluster */
+    if (world->vis && world->leafs && world->leaffaces &&
+        world->num_leafs > 0 && !(r_novis && r_novis->value)) {
+        int cam_leaf = BSP_PointLeaf(world, r_camera_origin);
+        int cam_cluster = -1;
+        byte *face_drawn;  /* prevent drawing same face twice */
 
-        /* Skip faces with NODRAW flag */
-        if (face->texinfo >= 0 && face->texinfo < world->num_texinfo) {
-            if (world->texinfo[face->texinfo].flags & SURF_NODRAW)
-                continue;
-            if (world->texinfo[face->texinfo].flags & SURF_SKY)
-                continue;  /* TODO: sky rendering */
+        if (cam_leaf >= 0 && cam_leaf < world->num_leafs)
+            cam_cluster = world->leafs[cam_leaf].cluster;
 
-            /* Look up cached texture */
-            if (face->texinfo < MAX_TEXINFO_CACHE)
-                img = r_texinfo_images[face->texinfo];
-        }
+        /* Bitfield to track already-drawn faces */
+        face_drawn = (byte *)Z_Malloc((world->num_faces + 7) / 8);
+        memset(face_drawn, 0, (world->num_faces + 7) / 8);
 
-        if (img && img->texnum) {
-            /* Textured face — bind diffuse texture on TMU0 */
-            qglEnable(GL_TEXTURE_2D);
-            qglBindTexture(GL_TEXTURE_2D, img->texnum);
-            if (img->has_alpha) {
-                qglEnable(GL_BLEND);
-                qglBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        /* Walk all leafs, check PVS visibility */
+        for (i = 0; i < world->num_leafs; i++) {
+            bsp_leaf_t *leaf = &world->leafs[i];
+            int j;
+
+            /* Skip if not visible from camera cluster */
+            if (cam_cluster >= 0 && leaf->cluster >= 0) {
+                if (!BSP_ClusterVisible(world, cam_cluster, leaf->cluster))
+                    continue;
             }
-            qglColor4f(1.0f, 1.0f, 1.0f, 1.0f);
-        } else {
-            /* No texture — use flat color from texture name hash */
-            qglDisable(GL_TEXTURE_2D);
-            qglBindTexture(GL_TEXTURE_2D, R_GetNoTexture());
-            R_SetFaceColor(world, face);
+
+            /* Render all faces in this leaf */
+            for (j = 0; j < leaf->numleaffaces; j++) {
+                int lf_idx = leaf->firstleafface + j;
+                int face_idx;
+
+                if (lf_idx >= world->num_leaffaces)
+                    break;
+
+                face_idx = world->leaffaces[lf_idx];
+                if (face_idx < 0 || face_idx >= world->num_faces)
+                    continue;
+
+                /* Skip already-drawn faces (shared between leafs) */
+                if (face_drawn[face_idx >> 3] & (1 << (face_idx & 7)))
+                    continue;
+                face_drawn[face_idx >> 3] |= (1 << (face_idx & 7));
+
+                R_DrawSingleFace(world, face_idx);
+            }
         }
 
-        /* Set up lightmap on TMU1 if available */
-        lm_tex = R_GetFaceLightmapTexture(i);
-        if (lm_tex && gl_state.have_multitexture && qglActiveTextureARB) {
-            qglActiveTextureARB(GL_TEXTURE1_ARB);
-            qglEnable(GL_TEXTURE_2D);
-            qglBindTexture(GL_TEXTURE_2D, lm_tex);
-            /* Modulate: diffuse * lightmap */
-            qglTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
-            qglActiveTextureARB(GL_TEXTURE0_ARB);
-            use_lm = qtrue;
+        Z_Free(face_drawn);
+    } else {
+        /* No PVS — draw all faces (fallback) */
+        for (i = 0; i < world->num_faces; i++) {
+            R_DrawSingleFace(world, i);
         }
-
-        R_DrawFace(world, face, i, use_lm);
-
-        /* Clean up lightmap TMU */
-        if (use_lm) {
-            qglActiveTextureARB(GL_TEXTURE1_ARB);
-            qglDisable(GL_TEXTURE_2D);
-            qglActiveTextureARB(GL_TEXTURE0_ARB);
-        }
-
-        if (img && img->has_alpha)
-            qglDisable(GL_BLEND);
-
-        c_visible_faces++;
     }
 
     qglDisable(GL_CULL_FACE);

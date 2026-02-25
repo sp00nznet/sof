@@ -243,12 +243,20 @@ qboolean BSP_ClusterVisible(bsp_world_t *world, int cluster1, int cluster2)
 {
     byte *vis_data;
     int  ofs;
+    int  numclusters;
+    int  *bitofs_array;
 
     if (!world->vis || cluster1 < 0 || cluster2 < 0)
         return qtrue;   /* No PVS = everything visible */
 
-    /* PVS offset for cluster1 */
-    ofs = LittleLong(world->vis->bitofs[cluster1 % 8][0]);
+    numclusters = LittleLong(world->vis->numclusters);
+    if (cluster1 >= numclusters || cluster2 >= numclusters)
+        return qtrue;
+
+    /* bitofs is a variable-length array: int[numclusters][2]
+     * Starts at offset 4 in the vis structure (after numclusters) */
+    bitofs_array = (int *)((byte *)world->vis + 4);
+    ofs = LittleLong(bitofs_array[cluster1 * 2 + 0]); /* [0] = PVS offset */
     vis_data = (byte *)world->vis + ofs;
 
     /* Check if cluster2's bit is set */
