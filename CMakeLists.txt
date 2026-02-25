@@ -61,6 +61,7 @@ add_executable(sof
 
     # Renderer (OpenGL)
     src/renderer/r_main.c
+    src/renderer/r_bsp.c
 
     # GHOUL model/gore system
     src/ghoul/ghoul_main.c
