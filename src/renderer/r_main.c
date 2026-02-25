@@ -79,6 +79,7 @@ void (APIENTRY *qglDeleteTextures)(GLsizei n, const GLuint *textures);
 void (APIENTRY *qglTexImage2D)(GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, GLint border, GLenum format, GLenum type, const void *pixels);
 void (APIENTRY *qglTexSubImage2D)(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLsizei width, GLsizei height, GLenum format, GLenum type, const void *pixels);
 void (APIENTRY *qglTexParameteri)(GLenum target, GLenum pname, GLint param);
+void (APIENTRY *qglTexEnvi)(GLenum target, GLenum pname, GLint param);
 
 void (APIENTRY *qglDrawArrays)(GLenum mode, GLint first, GLsizei count);
 void (APIENTRY *qglDrawElements)(GLenum mode, GLsizei count, GLenum type, const void *indices);
@@ -139,6 +140,7 @@ qboolean QGL_Init(void)
     QGL_LOAD(TexImage2D);
     QGL_LOAD(TexSubImage2D);
     QGL_LOAD(TexParameteri);
+    QGL_LOAD(TexEnvi);
     QGL_LOAD(DrawArrays);
     QGL_LOAD(DrawElements);
     QGL_LOAD(VertexPointer);

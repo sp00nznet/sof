@@ -51,6 +51,7 @@ void R_LoadWorldMap(const char *name)
 
     /* Free previous map */
     if (r_worldloaded) {
+        R_FreeLightmaps();
         BSP_Free(&r_worldmodel);
         r_worldloaded = qfalse;
     }
@@ -87,6 +88,9 @@ void R_LoadWorldMap(const char *name)
         Com_Printf("Textures: %d loaded, %d missing (of %d texinfo)\n",
                    loaded, missed, r_worldmodel.num_texinfo);
     }
+
+    /* Build lightmap atlas textures */
+    R_BuildLightmaps(&r_worldmodel);
 
     /* Reset camera to origin */
     VectorClear(r_camera_origin);
@@ -200,16 +204,22 @@ void R_UpdateCamera(float forward, float right, float up,
 
 /*
  * Draw a single BSP face as a triangle fan
+ * face_idx is needed for lightmap TC lookup
  */
-static void R_DrawFace(bsp_world_t *world, bsp_face_t *face)
+static void R_DrawFace(bsp_world_t *world, bsp_face_t *face,
+                        int face_idx, qboolean use_lightmap)
 {
     int         i;
     int         edge_idx;
     bsp_edge_t  *edge;
     float       *v;
+    bsp_texinfo_t *ti = NULL;
 
     if (face->numedges < 3)
         return;
+
+    if (face->texinfo >= 0 && face->texinfo < world->num_texinfo)
+        ti = &world->texinfo[face->texinfo];
 
     qglBegin(GL_TRIANGLE_FAN);
 
@@ -225,8 +235,7 @@ static void R_DrawFace(bsp_world_t *world, bsp_face_t *face)
         }
 
         /* Compute texture coordinates from texinfo */
-        if (face->texinfo >= 0 && face->texinfo < world->num_texinfo) {
-            bsp_texinfo_t *ti = &world->texinfo[face->texinfo];
+        if (ti) {
             float s = DotProduct(v, ti->vecs[0]) + ti->vecs[0][3];
             float t = DotProduct(v, ti->vecs[1]) + ti->vecs[1][3];
             /* Normalize by actual texture dimensions if loaded */
@@ -240,6 +249,18 @@ static void R_DrawFace(bsp_world_t *world, bsp_face_t *face)
                 t /= 64.0f;
             }
             qglTexCoord2f(s, t);
+
+            /* Lightmap TC on TMU1 */
+            if (use_lightmap && qglActiveTextureARB) {
+                float lm_s, lm_t;
+                GLuint lm_tex;
+                if (R_GetFaceLightmapTC(face_idx, v, ti,
+                                         &lm_s, &lm_t, &lm_tex)) {
+                    qglActiveTextureARB(GL_TEXTURE1_ARB);
+                    qglTexCoord2f(lm_s, lm_t);
+                    qglActiveTextureARB(GL_TEXTURE0_ARB);
+                }
+            }
         }
 
         qglVertex3f(v[0], v[1], v[2]);
@@ -310,12 +331,14 @@ void R_DrawWorld(void)
     qglDepthMask(GL_TRUE);
     qglEnable(GL_CULL_FACE);
 
-    /* Draw all faces with textures where available */
+    /* Draw all faces with textures and lightmaps */
     qglEnable(GL_TEXTURE_2D);
 
     for (i = 0; i < world->num_faces; i++) {
         bsp_face_t *face = &world->faces[i];
         image_t *img = NULL;
+        qboolean use_lm = qfalse;
+        GLuint lm_tex;
 
         /* Skip faces with NODRAW flag */
         if (face->texinfo >= 0 && face->texinfo < world->num_texinfo) {
@@ -330,7 +353,7 @@ void R_DrawWorld(void)
         }
 
         if (img && img->texnum) {
-            /* Textured face — bind texture, use white modulation */
+            /* Textured face — bind diffuse texture on TMU0 */
             qglEnable(GL_TEXTURE_2D);
             qglBindTexture(GL_TEXTURE_2D, img->texnum);
             if (img->has_alpha) {
@@ -345,7 +368,26 @@ void R_DrawWorld(void)
             R_SetFaceColor(world, face);
         }
 
-        R_DrawFace(world, face);
+        /* Set up lightmap on TMU1 if available */
+        lm_tex = R_GetFaceLightmapTexture(i);
+        if (lm_tex && gl_state.have_multitexture && qglActiveTextureARB) {
+            qglActiveTextureARB(GL_TEXTURE1_ARB);
+            qglEnable(GL_TEXTURE_2D);
+            qglBindTexture(GL_TEXTURE_2D, lm_tex);
+            /* Modulate: diffuse * lightmap */
+            qglTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+            qglActiveTextureARB(GL_TEXTURE0_ARB);
+            use_lm = qtrue;
+        }
+
+        R_DrawFace(world, face, i, use_lm);
+
+        /* Clean up lightmap TMU */
+        if (use_lm) {
+            qglActiveTextureARB(GL_TEXTURE1_ARB);
+            qglDisable(GL_TEXTURE_2D);
+            qglActiveTextureARB(GL_TEXTURE0_ARB);
+        }
 
         if (img && img->has_alpha)
             qglDisable(GL_BLEND);

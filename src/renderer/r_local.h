@@ -16,6 +16,7 @@
 #include "../common/q_shared.h"
 #include "../common/qcommon.h"
 #include "../engine/win32_compat.h"
+#include "r_bsp.h"
 
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_opengl.h>
@@ -193,6 +194,7 @@ extern void (APIENTRY *qglDeleteTextures)(GLsizei n, const GLuint *textures);
 extern void (APIENTRY *qglTexImage2D)(GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, GLint border, GLenum format, GLenum type, const void *pixels);
 extern void (APIENTRY *qglTexSubImage2D)(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLsizei width, GLsizei height, GLenum format, GLenum type, const void *pixels);
 extern void (APIENTRY *qglTexParameteri)(GLenum target, GLenum pname, GLint param);
+extern void (APIENTRY *qglTexEnvi)(GLenum target, GLenum pname, GLint param);
 
 extern void (APIENTRY *qglDrawArrays)(GLenum mode, GLint first, GLsizei count);
 extern void (APIENTRY *qglDrawElements)(GLenum mode, GLsizei count, GLenum type, const void *indices);
@@ -208,6 +210,12 @@ extern void (APIENTRY *qglGetIntegerv)(GLenum pname, GLint *params);
 extern void (APIENTRY *qglGetFloatv)(GLenum pname, GLfloat *params);
 extern void (APIENTRY *qglFinish)(void);
 extern void (APIENTRY *qglFlush)(void);
+
+/* ARB_multitexture constants */
+#ifndef GL_TEXTURE0_ARB
+#define GL_TEXTURE0_ARB     0x84C0
+#define GL_TEXTURE1_ARB     0x84C1
+#endif
 
 /* Multitexture extension (ARB_multitexture) */
 typedef void (APIENTRY *PFNGLACTIVETEXTUREARBPROC)(GLenum texture);
@@ -226,6 +234,15 @@ image_t    *R_FindImage(const char *name);
 GLuint      R_GetNoTexture(void);
 void        R_ImageBeginRegistration(void);
 void        R_ImageEndRegistration(void);
+
+/* Lightmap system (r_light.c) */
+void        R_BuildLightmaps(bsp_world_t *world);
+void        R_FreeLightmaps(void);
+qboolean    R_GetFaceLightmapTC(int face_idx, float *vertex,
+                                 bsp_texinfo_t *ti,
+                                 float *out_s, float *out_t,
+                                 GLuint *out_texnum);
+GLuint      R_GetFaceLightmapTexture(int face_idx);
 
 /* BSP surface rendering (r_surf.c) */
 void        R_LoadWorldMap(const char *name);

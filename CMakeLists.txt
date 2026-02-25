@@ -66,6 +66,7 @@ add_executable(sof
     src/renderer/r_bsp.c
     src/renderer/r_surf.c
     src/renderer/r_image.c
+    src/renderer/r_light.c
 
     # Game module (was gamex86.dll)
     src/game/g_main.c
