@@ -25,6 +25,9 @@ extern void IN_Init(void);
 extern void IN_Shutdown(void);
 extern void IN_GetMouseDelta(int *dx, int *dy);
 
+/* Forward declarations — server frame (server/sv_game.c) */
+extern void SV_RunGameFrame(void);
+
 /* ==========================================================================
    Global Cvars
    ========================================================================== */
@@ -334,4 +337,16 @@ void SV_Shutdown(const char *finalmsg, qboolean reconnect)
     (void)reconnect;
     SV_ShutdownGameProgs();
 }
-void SV_Frame(int msec) { (void)msec; }
+/* Server frame — runs game at 10Hz tick rate */
+static int sv_frame_residual = 0;
+
+void SV_Frame(int msec)
+{
+    sv_frame_residual += msec;
+
+    /* Run game frames at 100ms intervals (10 Hz) */
+    while (sv_frame_residual >= 100) {
+        sv_frame_residual -= 100;
+        SV_RunGameFrame();
+    }
+}

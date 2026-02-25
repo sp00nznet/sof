@@ -230,15 +230,42 @@ static void SpawnEntities(const char *mapname, const char *entstring,
 
 static void RunFrame(void)
 {
-    game_framenum++;
+    int i;
+    edict_t *ent;
+    float level_time;
 
-    /* TODO: For each active entity:
-     * 1. Run think function if nextthink <= time
-     * 2. Run physics (moveType dependent)
-     * 3. Check triggers
-     * 4. Run AI for monsters
-     * 5. Update GHOUL damage states
-     */
+    game_framenum++;
+    level_time = game_framenum * game_frametime;
+
+    /* Run think functions for all active entities */
+    for (i = 0; i < globals.max_edicts; i++) {
+        ent = &g_edicts[i];
+
+        if (!ent->inuse)
+            continue;
+
+        VectorCopy(ent->s.origin, ent->s.old_origin);
+
+        /* Run prethink (player entities) */
+        if (ent->prethink)
+            ent->prethink(ent);
+
+        /* Run think function if time has come */
+        if (ent->nextthink > 0 && ent->nextthink <= level_time) {
+            ent->nextthink = 0;
+            if (ent->think)
+                ent->think(ent);
+            if (!ent->inuse)
+                continue;
+        }
+
+        /* TODO: Run physics based on movetype
+         * MOVETYPE_PUSH: doors, platforms
+         * MOVETYPE_STEP: monsters (gravity + stepping)
+         * MOVETYPE_FLY: projectiles
+         * MOVETYPE_TOSS: grenades, gibs (gravity + bounce)
+         */
+    }
 }
 
 /* ==========================================================================

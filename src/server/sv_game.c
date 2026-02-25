@@ -408,6 +408,17 @@ game_export_t *SV_GetGameExport(void)
 }
 
 /*
+ * SV_RunGameFrame — Called from SV_Frame at 10Hz
+ * Drives the game module's RunFrame which iterates all entities.
+ */
+void SV_RunGameFrame(void)
+{
+    if (ge && ge->RunFrame) {
+        ge->RunFrame();
+    }
+}
+
+/*
  * SV_SpawnMapEntities — Called by map command to spawn BSP entities
  */
 void SV_SpawnMapEntities(const char *mapname, const char *entstring)
