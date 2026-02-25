@@ -56,9 +56,10 @@ add_executable(sof
     src/engine/sys_sdl.c
     src/engine/cm_trace.c
 
-    # Client / Input
+    # Client / Input / Console
     src/client/keys.c
     src/client/in_sdl.c
+    src/client/console.c
 
     # Renderer (OpenGL)
     src/renderer/r_main.c

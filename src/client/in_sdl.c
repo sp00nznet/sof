@@ -9,6 +9,7 @@
 #include "../common/qcommon.h"
 #include "../engine/win32_compat.h"
 #include "keys.h"
+#include "console.h"
 
 #include <SDL2/SDL.h>
 
@@ -233,8 +234,32 @@ void IN_ProcessSDLEvent(SDL_Event *event)
     case SDL_KEYDOWN:
     case SDL_KEYUP:
         key = SDL_ScancodeToQ2(event->key.keysym.scancode);
-        if (key)
+        if (key) {
+            /* Tilde toggles console */
+            if (key == '`' && event->type == SDL_KEYDOWN) {
+                Con_ToggleConsole();
+                break;
+            }
+
+            /* Route keys to console when visible */
+            if (Con_IsVisible() && event->type == SDL_KEYDOWN) {
+                Con_KeyEvent(key);
+                break;
+            }
+
             Key_Event(key, event->type == SDL_KEYDOWN, time);
+        }
+        break;
+
+    case SDL_TEXTINPUT:
+        /* Character input for console typing */
+        if (Con_IsVisible()) {
+            const char *text = event->text.text;
+            while (*text) {
+                Con_CharEvent((unsigned char)*text);
+                text++;
+            }
+        }
         break;
 
     case SDL_MOUSEBUTTONDOWN:

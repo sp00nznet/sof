@@ -16,6 +16,7 @@
 #include "../renderer/r_local.h"
 #include "../ghoul/ghoul.h"
 #include "../sound/snd_local.h"
+#include "../client/console.h"
 
 #include <time.h>
 
@@ -67,8 +68,8 @@ void Com_Printf(const char *fmt, ...)
         fflush(logfile);
     }
 
-    /* TODO: Print to in-game console when implemented */
-    /* Con_Print(msg); */
+    /* Route to in-game console */
+    Con_Print(msg);
 }
 
 void Com_DPrintf(const char *fmt, ...)
@@ -204,6 +205,9 @@ void Qcommon_Init(int argc, char **argv)
     /* Initialize game module (was gamex86.dll in original) */
     SV_InitGameProgs();
 
+    /* Initialize console */
+    Con_Init();
+
     /* Initialize input */
     IN_Init();
 
@@ -248,9 +252,25 @@ void Qcommon_Frame(int msec)
     if (!dedicated || !dedicated->value) {
         CL_Frame(msec);
 
+        /* Animate console slide */
+        {
+            float speed = msec * 0.004f;  /* ~4 units per ms */
+            if (con.current_frac < con.dest_frac) {
+                con.current_frac += speed;
+                if (con.current_frac > con.dest_frac)
+                    con.current_frac = con.dest_frac;
+            } else if (con.current_frac > con.dest_frac) {
+                con.current_frac -= speed;
+                if (con.current_frac < con.dest_frac)
+                    con.current_frac = con.dest_frac;
+            }
+        }
+
         /* Render frame */
         R_BeginFrame(0.0f);
         /* TODO: R_RenderFrame(&cl.refdef) when client is implemented */
+        Con_DrawNotify();
+        Con_DrawConsole(con.current_frac);
         R_EndFrame();
     }
 
