@@ -342,6 +342,9 @@ struct gclient_s {
     /* Lean */
     int             lean_state;             /* -1=left, 0=none, 1=right */
     float           lean_offset;            /* current lateral offset */
+
+    /* Flashlight */
+    qboolean        flashlight_on;          /* flashlight toggle */
 };
 
 /* ==========================================================================

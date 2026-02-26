@@ -36,6 +36,7 @@ extern qboolean SV_GetPlayerState(vec3_t origin, vec3_t angles, float *viewheigh
 extern qboolean SV_GetPlayerHealth(int *health, int *max_health);
 extern const char *SV_GetPlayerWeapon(void);
 extern qboolean SV_GetPlayerAmmo(int *ammo, int *ammo_max);
+extern qboolean SV_GetPlayerMagazine(int *magazine, int *mag_max, int *reserve);
 extern void SV_GetPlayerBlend(float *blend);
 extern qboolean SV_GetPlayerArmor(int *armor, int *armor_max);
 extern void SV_GetPlayerScore(int *kills, int *deaths, int *score);
@@ -601,20 +602,30 @@ static void SCR_DrawHUD(float frametime)
             R_DrawString(x, g_display.height - 40, wname);
         }
 
-        /* Ammo display - below weapon name */
+        /* Ammo/magazine display - below weapon name */
         {
+            int mag = 0, mag_max = 0, reserve = 0;
             int ammo = 0, ammo_max = 0;
-            if (SV_GetPlayerAmmo(&ammo, &ammo_max)) {
-                char abuf[32];
-                int alen, ax;
+            char abuf[48];
+            int alen, ax;
 
-                if (ammo_max > 0) {
+            if (SV_GetPlayerMagazine(&mag, &mag_max, &reserve) && mag_max > 0) {
+                /* Magazine weapon: show mag / mag_max + reserve */
+                snprintf(abuf, sizeof(abuf), "%d/%d  +%d", mag, mag_max, reserve);
+
+                /* Color based on magazine fullness */
+                if (mag > mag_max / 4)
+                    R_SetDrawColor(1.0f, 1.0f, 1.0f, 1.0f);
+                else if (mag > 0)
+                    R_SetDrawColor(1.0f, 1.0f, 0.0f, 1.0f);  /* yellow = low */
+                else
+                    R_SetDrawColor(1.0f, 0.2f, 0.2f, 1.0f);  /* red = empty */
+            } else if (SV_GetPlayerAmmo(&ammo, &ammo_max)) {
+                /* Non-magazine weapon */
+                if (ammo_max > 0)
                     snprintf(abuf, sizeof(abuf), "%d / %d", ammo, ammo_max);
-                } else {
+                else
                     snprintf(abuf, sizeof(abuf), "%d", ammo);
-                }
-                alen = (int)strlen(abuf);
-                ax = g_display.width - 16 - alen * 8;
 
                 if (ammo > 10)
                     R_SetDrawColor(1.0f, 1.0f, 1.0f, 1.0f);
@@ -622,7 +633,13 @@ static void SCR_DrawHUD(float frametime)
                     R_SetDrawColor(1.0f, 1.0f, 0.0f, 1.0f);
                 else
                     R_SetDrawColor(1.0f, 0.2f, 0.2f, 1.0f);
+            } else {
+                abuf[0] = '\0';
+            }
 
+            if (abuf[0]) {
+                alen = (int)strlen(abuf);
+                ax = g_display.width - 16 - alen * 8;
                 R_DrawString(ax, g_display.height - 28, abuf);
             }
         }

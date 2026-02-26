@@ -206,6 +206,7 @@ static void SP_trigger_secret(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_ladder(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_glass(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_info_npc(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_conveyor_real(edict_t *ent, epair_t *pairs, int num_pairs);
 
 /*
  * Spawn function dispatch table
@@ -245,7 +246,7 @@ static spawn_func_t spawn_funcs[] = {
     { "func_train",                 SP_func_train },
     { "func_ladder",                SP_func_ladder },
     { "func_glass",                 SP_func_glass },
-    { "func_conveyor",              SP_misc_model },
+    { "func_conveyor",              SP_func_conveyor_real },
     { "func_group",                 SP_misc_model },
     { "path_corner",                SP_path_corner },
 
@@ -1211,6 +1212,9 @@ static void SP_misc_teleport_dest(edict_t *ent, epair_t *pairs, int num_pairs)
    Level Transition
    ========================================================================== */
 
+/* Forward declaration for level transition */
+extern void G_SaveTransitionState(void);
+
 static void changelevel_touch(edict_t *self, edict_t *other, void *plane, csurface_t *surf)
 {
     (void)plane; (void)surf;
@@ -1224,6 +1228,9 @@ static void changelevel_touch(edict_t *self, edict_t *other, void *plane, csurfa
     if (self->message) {
         gi.bprintf(PRINT_ALL, "%s\n", self->message);
     }
+
+    /* Save player state for level transition */
+    G_SaveTransitionState();
 
     /* Queue the map change via console command (deferred to avoid re-entrant issues) */
     if (self->target) {
@@ -1432,6 +1439,9 @@ static void target_changelevel_use(edict_t *self, edict_t *other, edict_t *activ
     if (self->message) {
         gi.bprintf(PRINT_ALL, "%s\n", self->message);
     }
+
+    /* Save player state for level transition */
+    G_SaveTransitionState();
 
     if (self->target) {
         gi.dprintf("target_changelevel: loading %s\n", self->target);
@@ -1786,6 +1796,54 @@ static void SP_func_glass(edict_t *ent, epair_t *pairs, int num_pairs)
     ent->health = health_str ? atoi(health_str) : 10;
     ent->max_health = ent->health;
     ent->die = glass_die;
+
+    gi.linkentity(ent);
+}
+
+/* ==========================================================================
+   func_conveyor — BSP brush that pushes touching entities
+   speed = conveyor speed (default 100)
+   angle = push direction
+   Spawnflags: 1 = start off (toggleable via use)
+   ========================================================================== */
+
+static void conveyor_touch(edict_t *self, edict_t *other,
+                            void *plane, csurface_t *surf)
+{
+    float angle, push_speed;
+    (void)plane; (void)surf;
+
+    if (!other) return;
+    if (self->count == 0) return;  /* currently off */
+
+    angle = self->s.angles[1] * (3.14159265f / 180.0f);
+    push_speed = self->speed;
+
+    other->velocity[0] += (float)cos(angle) * push_speed * 0.1f;
+    other->velocity[1] += (float)sin(angle) * push_speed * 0.1f;
+}
+
+static void conveyor_use(edict_t *self, edict_t *other, edict_t *activator)
+{
+    (void)other; (void)activator;
+    self->count = !self->count;  /* toggle on/off */
+}
+
+static void SP_func_conveyor_real(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *sf_str = ED_FindValue(pairs, num_pairs, "spawnflags");
+    int sf = sf_str ? atoi(sf_str) : 0;
+
+    ent->movetype = MOVETYPE_PUSH;
+    ent->solid = SOLID_BSP;
+    ent->touch = conveyor_touch;
+    ent->use = conveyor_use;
+
+    if (!ent->speed)
+        ent->speed = 100;
+
+    /* Spawnflag 1 = start off */
+    ent->count = (sf & 1) ? 0 : 1;
 
     gi.linkentity(ent);
 }

@@ -48,6 +48,22 @@ static qboolean cheats_enabled;
 
 level_t level;
 
+/* Level transition state — preserves player state across map changes */
+static struct {
+    qboolean    valid;
+    int         health;
+    int         max_health;
+    int         weapon;
+    int         armor;
+    int         armor_max;
+    int         ammo[WEAP_COUNT];
+    int         ammo_max[WEAP_COUNT];
+    int         magazine[WEAP_COUNT];
+    int         kills;
+    int         deaths;
+    int         score;
+} level_transition;
+
 /* ==========================================================================
    Game CVars (85 total registered in original InitGame)
    ========================================================================== */
@@ -293,6 +309,31 @@ static void ShutdownGame(void)
    Original at 0x500A59A0
    ========================================================================== */
 
+/*
+ * G_SaveTransitionState — Save player state before level change
+ * Called from changelevel handlers before map switch.
+ */
+void G_SaveTransitionState(void)
+{
+    edict_t *player = &globals.edicts[1];
+    if (!player->inuse || !player->client) return;
+
+    level_transition.valid = qtrue;
+    level_transition.health = player->health;
+    level_transition.max_health = player->max_health;
+    level_transition.weapon = player->client->pers_weapon;
+    level_transition.armor = player->client->armor;
+    level_transition.armor_max = player->client->armor_max;
+    memcpy(level_transition.ammo, player->client->ammo, sizeof(level_transition.ammo));
+    memcpy(level_transition.ammo_max, player->client->ammo_max, sizeof(level_transition.ammo_max));
+    memcpy(level_transition.magazine, player->client->magazine, sizeof(level_transition.magazine));
+    level_transition.kills = player->client->kills;
+    level_transition.deaths = player->client->deaths;
+    level_transition.score = player->client->score;
+
+    gi.dprintf("Transition state saved\n");
+}
+
 static void SpawnEntities(const char *mapname, const char *entstring,
                           const char *spawnpoint)
 {
@@ -424,6 +465,27 @@ static void ClientBegin(edict_t *ent)
     ent->takedamage = DAMAGE_AIM;
     ent->entity_type = ET_PLAYER;
     ent->inuse = qtrue;
+
+    /* Restore transition state if coming from a level change */
+    if (level_transition.valid && ent->client) {
+        ent->health = level_transition.health;
+        ent->max_health = level_transition.max_health;
+        ent->client->pers_health = level_transition.health;
+        ent->client->pers_max_health = level_transition.max_health;
+        ent->client->pers_weapon = level_transition.weapon;
+        ent->weapon_index = level_transition.weapon;
+        ent->client->armor = level_transition.armor;
+        ent->client->armor_max = level_transition.armor_max;
+        memcpy(ent->client->ammo, level_transition.ammo, sizeof(level_transition.ammo));
+        memcpy(ent->client->ammo_max, level_transition.ammo_max, sizeof(level_transition.ammo_max));
+        memcpy(ent->client->magazine, level_transition.magazine, sizeof(level_transition.magazine));
+        ent->client->kills = level_transition.kills;
+        ent->client->deaths = level_transition.deaths;
+        ent->client->score = level_transition.score;
+
+        level_transition.valid = qfalse;
+        gi.dprintf("Transition state restored\n");
+    }
 }
 
 static void ClientUserinfoChanged(edict_t *ent, char *userinfo)
@@ -500,6 +562,13 @@ static void ClientCommand(edict_t *ent)
         if (snd_weapon_switch)
             gi.sound(ent, CHAN_ITEM, snd_weapon_switch, 1.0f, ATTN_NORM, 0);
         gi.cprintf(ent, PRINT_ALL, "Weapon: %s\n", weapon_names[w]);
+        return;
+    }
+
+    if (Q_stricmp(cmd, "flashlight") == 0 || Q_stricmp(cmd, "light") == 0) {
+        ent->client->flashlight_on = !ent->client->flashlight_on;
+        gi.cprintf(ent, PRINT_ALL, "Flashlight: %s\n",
+                   ent->client->flashlight_on ? "ON" : "OFF");
         return;
     }
 
@@ -1879,6 +1948,20 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
             if (target->use)
                 target->use(target, ent, ent);
         }
+    }
+
+    /* Flashlight — project dynamic light in view direction */
+    if (client->flashlight_on) {
+        vec3_t fl_start, fl_end, fl_fwd, fl_rt, fl_up;
+        trace_t fl_tr;
+
+        VectorCopy(ent->s.origin, fl_start);
+        fl_start[2] += client->viewheight;
+        G_AngleVectors(client->viewangles, fl_fwd, fl_rt, fl_up);
+        VectorMA(fl_start, 512, fl_fwd, fl_end);
+
+        fl_tr = gi.trace(fl_start, NULL, NULL, fl_end, ent, MASK_SHOT);
+        R_AddDlight(fl_tr.endpos, 1.0f, 1.0f, 0.9f, 300.0f, level.frametime + 0.05f);
     }
 
     gi.linkentity(ent);

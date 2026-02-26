@@ -886,6 +886,44 @@ int SV_GetEntityCount(void)
 }
 
 /*
+ * SV_GetPlayerMagazine — Get current weapon magazine state for HUD
+ */
+qboolean SV_GetPlayerMagazine(int *magazine, int *mag_max, int *reserve)
+{
+    edict_t *player;
+
+    *magazine = *mag_max = *reserve = 0;
+
+    if (!ge || !ge->edicts)
+        return qfalse;
+
+    player = (edict_t *)((byte *)ge->edicts + ge->edict_size);
+    if (!player->inuse || !player->client)
+        return qfalse;
+
+    {
+        int w = player->client->pers_weapon;
+        if (w > 0 && w < WEAP_COUNT) {
+            /* Access magazine_size from the game module */
+            *magazine = player->client->magazine[w];
+            *reserve = player->client->ammo[w];
+
+            /* Magazine max needs to come from somewhere accessible.
+               We'll read it from the magazine field capacity. */
+            /* For now, use a simple lookup mirroring g_main.c values */
+            {
+                static const int mag_sizes[WEAP_COUNT] = {
+                    0, 0, 7, 12, 8, 30, 30, 5, 10, 4, 100, 20, 20, 0, 0, 0, 0, 0
+                };
+                *mag_max = mag_sizes[w];
+            }
+        }
+    }
+
+    return qtrue;
+}
+
+/*
  * SV_GetLevelStats — Get level statistics for HUD
  */
 void SV_GetLevelStats(int *killed_monsters, int *total_monsters,
