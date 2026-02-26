@@ -15,6 +15,7 @@
  */
 
 #include "g_local.h"
+#include "../ghoul/ghoul.h"
 
 /* Particle/light effects from renderer (unified binary) */
 extern void R_ParticleEffect(vec3_t org, vec3_t dir, int type, int count);
@@ -106,8 +107,53 @@ static int snd_footstep1, snd_footstep2, snd_footstep3, snd_footstep4;
 static int snd_player_pain1, snd_player_pain2;
 static int snd_player_die;
 static int snd_drown;
+static int snd_reload;                  /* reload sound */
 
 #define WEAPON_SWITCH_TIME  0.5f        /* 500ms weapon switch delay */
+
+/* Magazine capacity per weapon (0 = no magazine / unlimited) */
+static int weapon_magazine_size[WEAP_COUNT] = {
+    0,      /* WEAP_NONE */
+    0,      /* WEAP_KNIFE (no reload) */
+    7,      /* WEAP_PISTOL1 (.44 Desert Eagle) */
+    12,     /* WEAP_PISTOL2 (Silver Talon) */
+    8,      /* WEAP_SHOTGUN */
+    30,     /* WEAP_MACHINEGUN (MP5) */
+    30,     /* WEAP_ASSAULT (M4) */
+    5,      /* WEAP_SNIPER (MSG90) */
+    10,     /* WEAP_SLUGGER */
+    4,      /* WEAP_ROCKET */
+    100,    /* WEAP_FLAMEGUN */
+    20,     /* WEAP_MPG */
+    20,     /* WEAP_MPISTOL */
+    0,      /* WEAP_GRENADE (no magazine) */
+    0,      /* WEAP_C4 (no magazine) */
+    0,      /* WEAP_MEDKIT */
+    0,      /* WEAP_GOGGLES */
+    0,      /* WEAP_FPAK */
+};
+
+/* Reload time per weapon in seconds */
+static float weapon_reload_time[WEAP_COUNT] = {
+    0,      /* WEAP_NONE */
+    0,      /* WEAP_KNIFE */
+    1.5f,   /* WEAP_PISTOL1 */
+    1.2f,   /* WEAP_PISTOL2 */
+    2.5f,   /* WEAP_SHOTGUN */
+    2.0f,   /* WEAP_MACHINEGUN */
+    2.0f,   /* WEAP_ASSAULT */
+    3.0f,   /* WEAP_SNIPER */
+    2.0f,   /* WEAP_SLUGGER */
+    3.0f,   /* WEAP_ROCKET */
+    3.5f,   /* WEAP_FLAMEGUN */
+    2.5f,   /* WEAP_MPG */
+    1.5f,   /* WEAP_MPISTOL */
+    0,      /* WEAP_GRENADE */
+    0,      /* WEAP_C4 */
+    0,      /* WEAP_MEDKIT */
+    0,      /* WEAP_GOGGLES */
+    0,      /* WEAP_FPAK */
+};
 
 /* ==========================================================================
    SoF Weapon Names (from RegisterWeapons at 0x50095280)
@@ -340,6 +386,15 @@ static void ClientBegin(edict_t *ent)
         ent->client->air_finished = 0;
         ent->client->next_env_damage = 0;
         ent->client->next_pain_sound = 0;
+        ent->client->reloading_weapon = 0;
+        ent->client->reload_finish_time = 0;
+
+        /* Initialize magazines to full for all weapons */
+        {
+            int w;
+            for (w = 0; w < WEAP_COUNT; w++)
+                ent->client->magazine[w] = weapon_magazine_size[w];
+        }
     }
 
     ent->health = 100;
@@ -413,6 +468,35 @@ static void ClientCommand(edict_t *ent)
         if (snd_weapon_switch)
             gi.sound(ent, CHAN_ITEM, snd_weapon_switch, 1.0f, ATTN_NORM, 0);
         gi.cprintf(ent, PRINT_ALL, "Weapon: %s\n", weapon_names[w]);
+        return;
+    }
+
+    if (Q_stricmp(cmd, "reload") == 0) {
+        int w = ent->client->pers_weapon;
+        int mag_size = (w > 0 && w < WEAP_COUNT) ? weapon_magazine_size[w] : 0;
+
+        if (mag_size <= 0) {
+            gi.cprintf(ent, PRINT_ALL, "This weapon doesn't use magazines\n");
+            return;
+        }
+        if (ent->client->reloading_weapon) {
+            gi.cprintf(ent, PRINT_ALL, "Already reloading\n");
+            return;
+        }
+        if (ent->client->magazine[w] >= mag_size) {
+            gi.cprintf(ent, PRINT_ALL, "Magazine full\n");
+            return;
+        }
+        if (ent->client->ammo[w] <= 0) {
+            gi.cprintf(ent, PRINT_ALL, "No ammo\n");
+            return;
+        }
+
+        ent->client->reloading_weapon = w;
+        ent->client->reload_finish_time = level.time + weapon_reload_time[w];
+        if (snd_reload)
+            gi.sound(ent, CHAN_WEAPON, snd_reload, 1.0f, ATTN_NORM, 0);
+        gi.cprintf(ent, PRINT_ALL, "Reloading %s...\n", weapon_names[w]);
         return;
     }
 
@@ -916,6 +1000,219 @@ static void G_FireProjectile(edict_t *ent, qboolean is_grenade)
     gi.linkentity(proj);
 }
 
+/* ==========================================================================
+   Gore Zone Damage System
+   Maps hit location to GHOUL body zone based on Z-offset from target origin
+   and horizontal offset for left/right discrimination.
+   ========================================================================== */
+
+/* Zone damage multipliers — headshots deal 3x, limbs deal less */
+static float gore_zone_dmg_mult[GORE_NUM_ZONES] = {
+    3.0f,   /* HEAD */
+    2.5f,   /* NECK */
+    1.0f,   /* CHEST_UPPER */
+    1.0f,   /* CHEST_LOWER */
+    0.9f,   /* STOMACH */
+    1.2f,   /* GROIN */
+    0.7f,   /* ARM_UPPER_R */
+    0.6f,   /* ARM_LOWER_R */
+    0.5f,   /* HAND_R */
+    0.7f,   /* ARM_UPPER_L */
+    0.6f,   /* ARM_LOWER_L */
+    0.5f,   /* HAND_L */
+    0.7f,   /* LEG_UPPER_R */
+    0.6f,   /* LEG_LOWER_R */
+    0.5f,   /* FOOT_R */
+    0.7f,   /* LEG_UPPER_L */
+    0.6f,   /* LEG_LOWER_L */
+    0.5f,   /* FOOT_L */
+    1.0f,   /* BACK_UPPER */
+    0.9f,   /* BACK_LOWER */
+    0.8f,   /* BUTT */
+    0.8f,   /* SHOULDER_R */
+    0.8f,   /* SHOULDER_L */
+    0.7f,   /* HIP_R */
+    0.7f,   /* HIP_L */
+    3.0f,   /* FACE */
+};
+
+/* Zone sever thresholds — cumulative damage before limb severs */
+static int gore_zone_sever_threshold[GORE_NUM_ZONES] = {
+    150,    /* HEAD */
+    120,    /* NECK */
+    0,      /* CHEST_UPPER (can't sever) */
+    0,      /* CHEST_LOWER */
+    0,      /* STOMACH */
+    0,      /* GROIN */
+    80,     /* ARM_UPPER_R */
+    60,     /* ARM_LOWER_R */
+    40,     /* HAND_R */
+    80,     /* ARM_UPPER_L */
+    60,     /* ARM_LOWER_L */
+    40,     /* HAND_L */
+    100,    /* LEG_UPPER_R */
+    70,     /* LEG_LOWER_R */
+    50,     /* FOOT_R */
+    100,    /* LEG_UPPER_L */
+    70,     /* LEG_LOWER_L */
+    50,     /* FOOT_L */
+    0,      /* BACK_UPPER */
+    0,      /* BACK_LOWER */
+    0,      /* BUTT */
+    80,     /* SHOULDER_R */
+    80,     /* SHOULDER_L */
+    90,     /* HIP_R */
+    90,     /* HIP_L */
+    150,    /* FACE */
+};
+
+/* Per-entity zone damage accumulation (indexed by edict index) */
+#define MAX_GORE_EDICTS 256
+static int gore_zone_damage[MAX_GORE_EDICTS][GORE_NUM_ZONES];
+
+/*
+ * G_HitToGoreZone — Determine gore zone from hit point relative to target
+ *
+ * Uses Z-offset from entity origin (standing model with feet at origin):
+ *   0-8:   feet
+ *   8-24:  lower legs
+ *   24-36: upper legs / hips
+ *   36-40: groin
+ *   40-48: stomach
+ *   48-52: lower chest
+ *   52-60: upper chest / shoulders
+ *   60-64: neck
+ *   64+:   head / face
+ *
+ * Horizontal offset determines left vs right for limbs.
+ */
+static gore_zone_id_t G_HitToGoreZone(edict_t *target, vec3_t hitpoint,
+                                       vec3_t hit_dir)
+{
+    float z_off, x_off;
+    qboolean right_side;
+
+    z_off = hitpoint[2] - target->s.origin[2];
+    x_off = hitpoint[0] - target->s.origin[0];
+
+    /* Use forward direction cross with hit offset for left/right */
+    {
+        float yaw = target->s.angles[1] * (3.14159265f / 180.0f);
+        float fwd_x = (float)cos(yaw);
+        float fwd_y = (float)sin(yaw);
+        float dx = hitpoint[0] - target->s.origin[0];
+        float dy = hitpoint[1] - target->s.origin[1];
+        /* Cross product Z = right-hand side positive */
+        float cross = fwd_x * dy - fwd_y * dx;
+        right_side = (cross >= 0);
+    }
+
+    /* Head region */
+    if (z_off >= 64) {
+        /* Determine face vs back of head using dot product with facing */
+        float yaw = target->s.angles[1] * (3.14159265f / 180.0f);
+        float dot = hit_dir[0] * (float)cos(yaw) + hit_dir[1] * (float)sin(yaw);
+        if (dot > 0)
+            return GORE_ZONE_FACE;  /* shot from front */
+        return GORE_ZONE_HEAD;
+    }
+
+    /* Neck */
+    if (z_off >= 60) return GORE_ZONE_NECK;
+
+    /* Upper chest / shoulders */
+    if (z_off >= 52) {
+        float abs_lateral = (float)fabs(hitpoint[0] - target->s.origin[0]) +
+                           (float)fabs(hitpoint[1] - target->s.origin[1]);
+        if (abs_lateral > 12) {
+            return right_side ? GORE_ZONE_SHOULDER_R : GORE_ZONE_SHOULDER_L;
+        }
+        return GORE_ZONE_CHEST_UPPER;
+    }
+
+    /* Lower chest */
+    if (z_off >= 48) return GORE_ZONE_CHEST_LOWER;
+
+    /* Stomach — check for arms at this height */
+    if (z_off >= 40) {
+        float abs_lateral = (float)fabs(hitpoint[0] - target->s.origin[0]) +
+                           (float)fabs(hitpoint[1] - target->s.origin[1]);
+        if (abs_lateral > 14) {
+            /* Arms hang at stomach level */
+            if (right_side) {
+                return (z_off >= 44) ? GORE_ZONE_ARM_UPPER_R : GORE_ZONE_ARM_LOWER_R;
+            } else {
+                return (z_off >= 44) ? GORE_ZONE_ARM_UPPER_L : GORE_ZONE_ARM_LOWER_L;
+            }
+        }
+        return GORE_ZONE_STOMACH;
+    }
+
+    /* Groin */
+    if (z_off >= 36) return GORE_ZONE_GROIN;
+
+    /* Upper legs / hips */
+    if (z_off >= 24) {
+        if (right_side)
+            return (z_off >= 32) ? GORE_ZONE_HIP_R : GORE_ZONE_LEG_UPPER_R;
+        else
+            return (z_off >= 32) ? GORE_ZONE_HIP_L : GORE_ZONE_LEG_UPPER_L;
+    }
+
+    /* Lower legs */
+    if (z_off >= 8) {
+        return right_side ? GORE_ZONE_LEG_LOWER_R : GORE_ZONE_LEG_LOWER_L;
+    }
+
+    /* Feet */
+    return right_side ? GORE_ZONE_FOOT_R : GORE_ZONE_FOOT_L;
+}
+
+/*
+ * G_ApplyGoreZoneDamage — Apply damage to a specific zone, track accumulation,
+ * trigger severing when threshold exceeded.
+ */
+static void G_ApplyGoreZoneDamage(edict_t *target, edict_t *attacker,
+                                   gore_zone_id_t zone, int damage)
+{
+    int eidx = target->s.number;
+
+    if (eidx < 0 || eidx >= MAX_GORE_EDICTS)
+        return;
+
+    /* Mark zone as damaged in entity bitmask */
+    target->gore_zone_mask |= (1 << zone);
+    if (target->client)
+        target->client->last_damage_zone = zone;
+
+    /* Accumulate zone damage */
+    gore_zone_damage[eidx][zone] += damage;
+
+    /* Call GHOUL damage_zone for visual wound effect */
+    if (gi.ghoul_damage_zone)
+        gi.ghoul_damage_zone(target, zone, damage);
+
+    /* Check for severance */
+    if (gore_zone_sever_threshold[zone] > 0 &&
+        gore_zone_damage[eidx][zone] >= gore_zone_sever_threshold[zone] &&
+        !(target->severed_zone_mask & (1 << zone)))
+    {
+        target->severed_zone_mask |= (1 << zone);
+
+        /* Call GHOUL sever for visual dismemberment */
+        if (gi.ghoul_sever_zone)
+            gi.ghoul_sever_zone(target, zone);
+
+        /* Bonus gore particles on severing */
+        R_ParticleEffect(target->s.origin, target->s.angles, 1, 32);
+
+        if (attacker && attacker->client)
+            attacker->client->gore_kills++;
+
+        gi.dprintf("Zone %d severed on entity %d!\n", zone, eidx);
+    }
+}
+
 /*
  * G_FireHitscan — Fire a hitscan trace from the player's eye
  */
@@ -940,15 +1237,34 @@ static void G_FireHitscan(edict_t *ent)
         return;
     }
 
-    /* Check ammo (knife/melee weapons don't use ammo) */
+    /* Check ammo / magazine (knife/melee weapons don't use ammo) */
     if (weap > 0 && weap < WEAP_COUNT && weap != WEAP_KNIFE) {
-        if (ent->client->ammo[weap] <= 0) {
-            /* Empty click sound */
-            if (snd_noammo)
-                gi.sound(ent, CHAN_WEAPON, snd_noammo, 0.5f, ATTN_NORM, 0);
-            return;
+        int mag_size = weapon_magazine_size[weap];
+
+        if (mag_size > 0) {
+            /* Magazine weapon: consume from magazine */
+            if (ent->client->magazine[weap] <= 0) {
+                /* Auto-reload when magazine empty */
+                if (ent->client->ammo[weap] > 0 && !ent->client->reloading_weapon) {
+                    ent->client->reloading_weapon = weap;
+                    ent->client->reload_finish_time = level.time + weapon_reload_time[weap];
+                    if (snd_reload)
+                        gi.sound(ent, CHAN_WEAPON, snd_reload, 1.0f, ATTN_NORM, 0);
+                } else if (snd_noammo) {
+                    gi.sound(ent, CHAN_WEAPON, snd_noammo, 0.5f, ATTN_NORM, 0);
+                }
+                return;
+            }
+            ent->client->magazine[weap]--;
+        } else {
+            /* Non-magazine weapon: consume from ammo directly */
+            if (ent->client->ammo[weap] <= 0) {
+                if (snd_noammo)
+                    gi.sound(ent, CHAN_WEAPON, snd_noammo, 0.5f, ATTN_NORM, 0);
+                return;
+            }
+            ent->client->ammo[weap]--;
         }
-        ent->client->ammo[weap]--;
     }
 
     damage = (weap > 0 && weap < WEAP_COUNT) ? weapon_damage[weap] : 15;
@@ -1014,19 +1330,37 @@ static void G_FireHitscan(edict_t *ent)
             if (snd_hit_flesh)
                 gi.sound(tr.ent, CHAN_BODY, snd_hit_flesh, 1.0f, ATTN_NORM, 0);
 
-            /* Armor absorbs 66% of damage for players */
-            if (tr.ent->client && tr.ent->client->armor > 0) {
-                int armor_absorb = (int)(damage * 0.66f);
-                if (armor_absorb > tr.ent->client->armor)
-                    armor_absorb = tr.ent->client->armor;
-                tr.ent->client->armor -= armor_absorb;
-                damage -= armor_absorb;
-            }
+            /* Gore zone detection — map hit location to body zone */
+            {
+                vec3_t hit_dir;
+                gore_zone_id_t zone;
+                float zone_mult;
+                int zone_dmg;
 
-            tr.ent->health -= damage;
-            gi.dprintf("Hit %s for %d damage (health: %d)\n",
-                       tr.ent->classname ? tr.ent->classname : "entity",
-                       damage, tr.ent->health);
+                VectorCopy(forward, hit_dir);
+                zone = G_HitToGoreZone(tr.ent, tr.endpos, hit_dir);
+                zone_mult = gore_zone_dmg_mult[zone];
+                zone_dmg = (int)(damage * zone_mult);
+
+                /* Armor absorbs 66% of damage for players */
+                if (tr.ent->client && tr.ent->client->armor > 0) {
+                    int armor_absorb = (int)(zone_dmg * 0.66f);
+                    if (armor_absorb > tr.ent->client->armor)
+                        armor_absorb = tr.ent->client->armor;
+                    tr.ent->client->armor -= armor_absorb;
+                    zone_dmg -= armor_absorb;
+                }
+
+                /* Apply gore zone damage tracking and GHOUL effects */
+                G_ApplyGoreZoneDamage(tr.ent, ent, zone, zone_dmg);
+
+                tr.ent->health -= zone_dmg;
+                damage = zone_dmg;  /* update for death check */
+
+                gi.dprintf("Hit %s zone %d (x%.1f) for %d damage (health: %d)\n",
+                           tr.ent->classname ? tr.ent->classname : "entity",
+                           zone, zone_mult, zone_dmg, tr.ent->health);
+            }
 
             /* Player pain sound + damage flash */
             if (tr.ent->client) {
@@ -1061,6 +1395,12 @@ static void G_FireHitscan(edict_t *ent)
                 }
 
                 tr.ent->die(tr.ent, ent, ent, damage, tr.endpos);
+
+                /* Award kill to attacker */
+                if (ent->client) {
+                    ent->client->kills++;
+                    ent->client->score += 10;
+                }
             }
         } else {
             /* Bullet impact sparks + ricochet sound */
@@ -1136,10 +1476,14 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
     /* Dead — check for respawn on attack press */
     if (ent->deadflag) {
         if (ucmd->buttons & (BUTTON_ATTACK | BUTTON_USE)) {
+            /* Count death on respawn */
+            client->deaths++;
+
             /* Respawn */
             ent->health = 100;
             ent->max_health = 100;
             client->pers_health = 100;
+            client->armor = 0;
             ent->deadflag = 0;
             client->ps.pm_type = PM_NORMAL;
             client->blend[3] = 0;
@@ -1322,9 +1666,27 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
         }
     }
 
-    /* Fire weapon on attack button */
-    if (ucmd->buttons & BUTTON_ATTACK)
-        G_FireHitscan(ent);
+    /* Reload completion check */
+    if (client->reloading_weapon > 0) {
+        if (level.time >= client->reload_finish_time) {
+            int w = client->reloading_weapon;
+            int mag_size = weapon_magazine_size[w];
+            int need = mag_size - client->magazine[w];
+            int avail = client->ammo[w];
+            int load = (need < avail) ? need : avail;
+
+            client->ammo[w] -= load;
+            client->magazine[w] += load;
+            client->reloading_weapon = 0;
+            gi.cprintf(ent, PRINT_ALL, "Reloaded %s (%d/%d)\n",
+                       weapon_names[w], client->magazine[w], mag_size);
+        }
+        /* Can't fire while reloading */
+    } else {
+        /* Fire weapon on attack button */
+        if (ucmd->buttons & BUTTON_ATTACK)
+            G_FireHitscan(ent);
+    }
 
     /* Use interaction — short-range trace to find usable entities */
     if (ucmd->buttons & BUTTON_USE) {
@@ -1394,7 +1756,7 @@ typedef struct {
 } save_entity_t;
 
 /* Saved client/game state */
-#define SAVE_VERSION    2   /* bumped for ammo/armor fields */
+#define SAVE_VERSION    3   /* bumped for magazine fields */
 typedef struct {
     int         health;
     int         max_health;
@@ -1408,6 +1770,7 @@ typedef struct {
     int         armor_max;
     int         ammo[WEAP_COUNT];
     int         ammo_max[WEAP_COUNT];
+    int         magazine[WEAP_COUNT];
 } save_game_t;
 
 static void WriteGame(const char *filename, qboolean autosave)
@@ -1442,6 +1805,7 @@ static void WriteGame(const char *filename, qboolean autosave)
         sg.armor_max = player->client->armor_max;
         memcpy(sg.ammo, player->client->ammo, sizeof(sg.ammo));
         memcpy(sg.ammo_max, player->client->ammo_max, sizeof(sg.ammo_max));
+        memcpy(sg.magazine, player->client->magazine, sizeof(sg.magazine));
     }
     sg.game_time = level.time;
     sg.num_entities = globals.num_edicts;
@@ -1490,6 +1854,7 @@ static void ReadGame(const char *filename)
         player->client->armor_max = sg.armor_max;
         memcpy(player->client->ammo, sg.ammo, sizeof(sg.ammo));
         memcpy(player->client->ammo_max, sg.ammo_max, sizeof(sg.ammo_max));
+        memcpy(player->client->magazine, sg.magazine, sizeof(sg.magazine));
         player->deadflag = 0;
         player->client->ps.pm_type = PM_NORMAL;
     }
@@ -1671,6 +2036,9 @@ static void G_RegisterWeapons(void)
     snd_player_pain2 = gi.soundindex("player/pain50_1.wav");
     snd_player_die = gi.soundindex("player/death1.wav");
     snd_drown = gi.soundindex("player/drown1.wav");
+
+    /* Reload sound */
+    snd_reload = gi.soundindex("weapons/reload.wav");
 }
 
 static const char *G_GetGameVersion(void)

@@ -41,6 +41,10 @@ extern void SP_monster_soldier_ss(edict_t *ent, void *pairs, int num_pairs);
 extern void SP_monster_guard(edict_t *ent, void *pairs, int num_pairs);
 extern void SP_monster_boss(edict_t *ent, void *pairs, int num_pairs);
 
+/* Forward declarations for precache functions */
+static void door_precache_sounds(void);
+static void item_precache_sounds(void);
+
 /* Maximum key/value pairs per entity */
 #define MAX_ENTITY_FIELDS   64
 #define MAX_FIELD_VALUE     256
@@ -196,6 +200,8 @@ static void SP_path_corner(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_train(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_trigger_counter(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_target_earthquake(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_misc_explobox_big(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_target_splash(edict_t *ent, epair_t *pairs, int num_pairs);
 
 /*
  * Spawn function dispatch table
@@ -263,6 +269,10 @@ static spawn_func_t spawn_funcs[] = {
     { "func_breakable",             SP_func_breakable },
     { "func_explosive",             SP_func_explosive },
     { "misc_explobox",              SP_func_explosive },
+    { "misc_explobox_big",          SP_misc_explobox_big },
+
+    /* Splash effects */
+    { "target_splash",              SP_target_splash },
 
     /* Monsters (g_ai.c) */
     { "monster_soldier",            (void (*)(edict_t *, epair_t *, int))SP_monster_soldier },
@@ -483,6 +493,24 @@ static void SP_worldspawn(edict_t *ent, epair_t *pairs, int num_pairs)
     if (val) {
         gi.configstring(CS_SKYAXIS, val);
     }
+
+    /* Ambient music track */
+    val = ED_FindValue(pairs, num_pairs, "music");
+    if (!val) val = ED_FindValue(pairs, num_pairs, "ambient_track");
+    if (val) {
+        gi.dprintf("Ambient track: %s\n", val);
+        gi.configstring(CS_CDTRACK, val);
+    }
+
+    /* Gravity override */
+    val = ED_FindValue(pairs, num_pairs, "gravity");
+    if (val) {
+        gi.cvar_set("sv_gravity", val);
+    }
+
+    /* Precache common sounds */
+    item_precache_sounds();
+    door_precache_sounds();
 }
 
 static void SP_info_player_start(edict_t *ent, epair_t *pairs, int num_pairs)
@@ -1527,6 +1555,68 @@ static void SP_func_explosive(edict_t *ent, epair_t *pairs, int num_pairs)
     ent->die = explosive_die;
 
     gi.linkentity(ent);
+}
+
+/* ==========================================================================
+   misc_explobox_big — Large explosive barrel (freestanding, not BSP brush)
+   Health 200, damage 200, radius 400
+   ========================================================================== */
+
+static void SP_misc_explobox_big(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *health_str = ED_FindValue(pairs, num_pairs, "health");
+    const char *dmg_str = ED_FindValue(pairs, num_pairs, "dmg");
+
+    ent->solid = SOLID_BBOX;
+    ent->movetype = MOVETYPE_NONE;
+    ent->takedamage = DAMAGE_YES;
+    ent->health = health_str ? atoi(health_str) : 200;
+    ent->max_health = ent->health;
+    ent->dmg = dmg_str ? atoi(dmg_str) : 200;
+    ent->dmg_radius = 400;
+    ent->die = explosive_die;
+
+    VectorSet(ent->mins, -16, -16, 0);
+    VectorSet(ent->maxs, 16, 16, 40);
+
+    if (ent->model)
+        ent->s.modelindex = gi.modelindex(ent->model);
+    else
+        ent->s.modelindex = gi.modelindex("models/objects/barrels/tris.md2");
+
+    gi.linkentity(ent);
+}
+
+/* ==========================================================================
+   target_splash — Spawn splash particle effect when triggered
+   Spawnflags control splash type (color), count = particle count
+   ========================================================================== */
+
+static void target_splash_use(edict_t *self, edict_t *other, edict_t *activator)
+{
+    vec3_t up = {0, 0, 1};
+
+    (void)other; (void)activator;
+
+    R_ParticleEffect(self->s.origin, up, self->style, self->count);
+
+    if (self->noise_index)
+        gi.positioned_sound(self->s.origin, NULL, CHAN_AUTO,
+                            self->noise_index, 1.0f, ATTN_NORM, 0);
+}
+
+static void SP_target_splash(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *count_str = ED_FindValue(pairs, num_pairs, "count");
+    const char *style_str = ED_FindValue(pairs, num_pairs, "style");
+    const char *sound_str = ED_FindValue(pairs, num_pairs, "noise");
+
+    ent->use = target_splash_use;
+    ent->count = count_str ? atoi(count_str) : 16;
+    ent->style = style_str ? atoi(style_str) : 2;  /* default: explosion particles */
+
+    if (sound_str)
+        ent->noise_index = gi.soundindex(sound_str);
 }
 
 /* ==========================================================================

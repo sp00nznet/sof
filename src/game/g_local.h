@@ -325,8 +325,15 @@ struct gclient_s {
     float           next_env_damage;        /* debounce for lava/slime damage */
     float           next_pain_sound;        /* debounce for pain sound */
 
-    /* Pad to known alignment */
-    byte            _pad[4];
+    /* Score tracking */
+    int             kills;                  /* monsters/players killed */
+    int             deaths;                 /* times player has died */
+    int             score;                  /* total score */
+
+    /* Magazine/reload system */
+    int             magazine[WEAP_COUNT];    /* current rounds in magazine */
+    float           reload_finish_time;     /* level.time when reload completes */
+    int             reloading_weapon;       /* weapon being reloaded (0=none) */
 };
 
 /* ==========================================================================

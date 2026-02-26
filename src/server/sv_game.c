@@ -848,6 +848,27 @@ qboolean SV_GetPlayerArmor(int *armor, int *armor_max)
 }
 
 /*
+ * SV_GetPlayerScore — Get player score/kills/deaths for HUD
+ */
+void SV_GetPlayerScore(int *kills, int *deaths, int *score)
+{
+    edict_t *player;
+
+    *kills = *deaths = *score = 0;
+
+    if (!ge || !ge->edicts)
+        return;
+
+    player = (edict_t *)((byte *)ge->edicts + ge->edict_size);
+    if (!player->inuse || !player->client)
+        return;
+
+    *kills = player->client->kills;
+    *deaths = player->client->deaths;
+    *score = player->client->score;
+}
+
+/*
  * SV_GetEntityCount — Get active entity count for debug HUD
  */
 int SV_GetEntityCount(void)

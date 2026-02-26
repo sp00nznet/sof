@@ -38,6 +38,7 @@ extern const char *SV_GetPlayerWeapon(void);
 extern qboolean SV_GetPlayerAmmo(int *ammo, int *ammo_max);
 extern void SV_GetPlayerBlend(float *blend);
 extern qboolean SV_GetPlayerArmor(int *armor, int *armor_max);
+extern void SV_GetPlayerScore(int *kills, int *deaths, int *score);
 extern int  SV_GetEntityCount(void);
 
 /* Forward declaration — freecam toggle (defined below in client section) */
@@ -734,6 +735,18 @@ static void SCR_DrawHUD(float frametime)
             elen = (int)strlen(entbuf);
             ex = g_display.width - 8 - elen * 8;
             R_DrawString(ex, 20, entbuf);
+        }
+
+        /* Score — below entity count */
+        {
+            int kills, deaths, score;
+            char scrbuf[48];
+            int slen, sx;
+            SV_GetPlayerScore(&kills, &deaths, &score);
+            snprintf(scrbuf, sizeof(scrbuf), "K:%d D:%d S:%d", kills, deaths, score);
+            slen = (int)strlen(scrbuf);
+            sx = g_display.width - 8 - slen * 8;
+            R_DrawString(sx, 32, scrbuf);
         }
 
         R_SetDrawColor(0.0f, 1.0f, 0.0f, 1.0f);
