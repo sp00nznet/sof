@@ -826,6 +826,31 @@ void R_ParticleEffect(vec3_t org, vec3_t dir, int type, int count)
                           3.0f, 0.5f);
         }
         break;
+
+    case 4: /* flame — orange/red, rises */
+        spread = 20.0f; speed = 40.0f;
+        for (i = 0; i < count; i++) {
+            vel[0] = dir[0] * speed + ((float)(rand()%100) - 50) * spread / 50.0f;
+            vel[1] = dir[1] * speed + ((float)(rand()%100) - 50) * spread / 50.0f;
+            vel[2] = dir[2] * speed + 30.0f + (float)(rand()%40);
+            VectorSet(accel, 0, 0, 40);  /* rises */
+            R_AddParticle(org, vel, accel,
+                          1.0f, 0.3f + (rand()%40)*0.01f, 0.0f, 1.0f,
+                          2.0f, 0.6f);
+        }
+        break;
+
+    case 5: /* shell casing — brass, ejects right and tumbles */
+        for (i = 0; i < count; i++) {
+            vel[0] = dir[0] * 80.0f + ((float)(rand()%60) - 30);
+            vel[1] = dir[1] * 80.0f + ((float)(rand()%60) - 30);
+            vel[2] = 50.0f + (float)(rand()%40);
+            VectorSet(accel, 0, 0, -600);  /* heavy gravity */
+            R_AddParticle(org, vel, accel,
+                          0.85f, 0.7f, 0.3f, 1.0f,
+                          0.5f, 1.5f);
+        }
+        break;
     }
 }
 

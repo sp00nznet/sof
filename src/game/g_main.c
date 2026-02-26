@@ -1692,6 +1692,18 @@ static void G_FireHitscan(edict_t *ent)
         VectorMA(muzzle, 6, right, muzzle);
         R_ParticleEffect(muzzle, forward, 3, 3);
         R_AddDlight(muzzle, 1.0f, 0.8f, 0.4f, 200.0f, 0.1f);
+
+        /* Shell casing ejection for ballistic weapons */
+        if (weap == WEAP_PISTOL1 || weap == WEAP_PISTOL2 ||
+            weap == WEAP_SHOTGUN || weap == WEAP_MACHINEGUN ||
+            weap == WEAP_ASSAULT || weap == WEAP_SNIPER ||
+            weap == WEAP_MPISTOL) {
+            vec3_t eject_pos, eject_dir;
+            VectorMA(muzzle, -8, forward, eject_pos);  /* behind muzzle */
+            VectorMA(eject_pos, 8, right, eject_pos);  /* to the right */
+            VectorCopy(right, eject_dir);
+            R_ParticleEffect(eject_pos, eject_dir, 5, 1);
+        }
     }
 
     /* Weapon fire sound */
