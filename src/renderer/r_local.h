@@ -258,6 +258,11 @@ void        R_DrawBrushModel(int modelindex, vec3_t origin, vec3_t angles);
 void        R_RenderWorldView(void);
 void        R_InitSurfCommands(void);
 
+/* Particle system */
+void        R_ClearParticles(void);
+void        R_ParticleEffect(vec3_t org, vec3_t dir, int type, int count);
+void        R_UpdateParticles(float frametime);
+
 /* Camera */
 void        R_GetCameraOrigin(vec3_t out);
 void        R_SetCameraOrigin(vec3_t origin);

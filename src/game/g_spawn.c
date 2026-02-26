@@ -29,6 +29,9 @@
 
 #include "g_local.h"
 
+/* Particle effects from renderer (unified binary) */
+extern void R_ParticleEffect(vec3_t org, vec3_t dir, int type, int count);
+
 /* Maximum key/value pairs per entity */
 #define MAX_ENTITY_FIELDS   64
 #define MAX_FIELD_VALUE     256
@@ -1060,7 +1063,12 @@ static void SP_func_timer(edict_t *ent, epair_t *pairs, int num_pairs)
 static void breakable_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
                           int damage, vec3_t point)
 {
+    vec3_t up = {0, 0, 1};
+
     (void)inflictor; (void)damage; (void)point;
+
+    /* Debris particles */
+    R_ParticleEffect(self->s.origin, up, 0, 20);
 
     /* Fire targets on destruction */
     if (self->target)
@@ -1092,7 +1100,12 @@ static void SP_func_breakable(edict_t *ent, epair_t *pairs, int num_pairs)
 static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
                           int damage, vec3_t point)
 {
+    vec3_t up = {0, 0, 1};
+
     (void)inflictor; (void)damage; (void)point;
+
+    /* Explosion particles */
+    R_ParticleEffect(self->s.origin, up, 2, 32);
 
     /* Fire targets */
     if (self->target)

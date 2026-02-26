@@ -105,6 +105,7 @@ void (APIENTRY *qglGetIntegerv)(GLenum pname, GLint *params);
 void (APIENTRY *qglGetFloatv)(GLenum pname, GLfloat *params);
 void (APIENTRY *qglFinish)(void);
 void (APIENTRY *qglFlush)(void);
+void (APIENTRY *qglPointSize)(GLfloat size);
 
 /* Extensions */
 PFNGLACTIVETEXTUREARBPROC       qglActiveTextureARB;
@@ -164,6 +165,7 @@ qboolean QGL_Init(void)
     QGL_LOAD(GetFloatv);
     QGL_LOAD(Finish);
     QGL_LOAD(Flush);
+    QGL_LOAD(PointSize);
 
     /* Verify critical functions loaded */
     if (!qglClear || !qglViewport || !qglGetString) {
@@ -287,10 +289,24 @@ void R_Shutdown(void)
 
 void R_BeginFrame(float camera_separation)
 {
+    static int last_frame_time;
+    int now;
+    float frametime;
+
     (void)camera_separation;
 
     if (!qglClear)
         return;
+
+    /* Compute frametime for particle simulation */
+    now = Sys_Milliseconds();
+    frametime = (now - last_frame_time) * 0.001f;
+    if (frametime > 0.1f) frametime = 0.1f;  /* clamp to 100ms */
+    if (frametime < 0.001f) frametime = 0.001f;
+    last_frame_time = now;
+
+    /* Update particles */
+    R_UpdateParticles(frametime);
 
     /* Clear screen */
     qglClearColor(0.1f, 0.1f, 0.15f, 1.0f);
@@ -369,6 +385,9 @@ static void R_Setup3DModelview(refdef_t *fd)
     /* Translate to view origin (inverted) */
     qglTranslatef(-fd->vieworg[0], -fd->vieworg[1], -fd->vieworg[2]);
 }
+
+/* Forward declaration — particle rendering (defined in Particle System section) */
+static void R_DrawParticles(void);
 
 /* ==========================================================================
    Entity Rendering
@@ -510,6 +529,9 @@ void R_RenderFrame(refdef_t *fd)
     if (r_drawentities->value)
         R_DrawBrushEntities();
 
+    /* Draw particles */
+    R_DrawParticles();
+
     /* Full-screen blend (damage flash, underwater tint) */
     if (fd->blend[3] > 0) {
         qglDisable(GL_TEXTURE_2D);
@@ -548,6 +570,179 @@ void R_EndFrame(void)
 {
     /* Swap buffers */
     Sys_SwapBuffers();
+}
+
+/* ==========================================================================
+   Particle System
+   ========================================================================== */
+
+typedef struct {
+    vec3_t  org;
+    vec3_t  vel;
+    vec3_t  accel;
+    float   color[4];       /* RGBA */
+    float   alpha_decay;    /* alpha lost per second */
+    float   time;           /* time remaining */
+} r_particle_t;
+
+#define MAX_R_PARTICLES     2048
+
+static r_particle_t r_particles[MAX_R_PARTICLES];
+static int          r_num_particles;
+
+/*
+ * R_ClearParticles - Remove all active particles
+ */
+void R_ClearParticles(void)
+{
+    r_num_particles = 0;
+}
+
+/*
+ * R_AddParticle - Spawn a single particle
+ */
+static void R_AddParticle(vec3_t org, vec3_t vel, vec3_t accel,
+                           float r, float g, float b, float a,
+                           float alpha_decay, float lifetime)
+{
+    r_particle_t *p;
+
+    if (r_num_particles >= MAX_R_PARTICLES)
+        return;
+
+    p = &r_particles[r_num_particles++];
+    VectorCopy(org, p->org);
+    VectorCopy(vel, p->vel);
+    VectorCopy(accel, p->accel);
+    p->color[0] = r; p->color[1] = g;
+    p->color[2] = b; p->color[3] = a;
+    p->alpha_decay = alpha_decay;
+    p->time = lifetime;
+}
+
+/*
+ * R_ParticleEffect - Spawn a burst of particles at a point
+ * type: 0=bullet impact, 1=blood, 2=explosion, 3=spark
+ */
+void R_ParticleEffect(vec3_t org, vec3_t dir, int type, int count)
+{
+    int i;
+    float spread, speed;
+    vec3_t vel, accel;
+
+    switch (type) {
+    case 0: /* bullet impact — grey/brown dust */
+        spread = 30.0f; speed = 60.0f;
+        for (i = 0; i < count; i++) {
+            vel[0] = dir[0] * speed + ((float)(rand()%100) - 50) * spread / 50.0f;
+            vel[1] = dir[1] * speed + ((float)(rand()%100) - 50) * spread / 50.0f;
+            vel[2] = dir[2] * speed + ((float)(rand()%100) - 50) * spread / 50.0f + 20.0f;
+            VectorSet(accel, 0, 0, -200);
+            R_AddParticle(org, vel, accel, 0.6f, 0.5f, 0.4f, 1.0f, 2.0f, 0.8f);
+        }
+        break;
+
+    case 1: /* blood — red particles */
+        spread = 40.0f; speed = 80.0f;
+        for (i = 0; i < count; i++) {
+            vel[0] = dir[0] * speed + ((float)(rand()%100) - 50) * spread / 50.0f;
+            vel[1] = dir[1] * speed + ((float)(rand()%100) - 50) * spread / 50.0f;
+            vel[2] = dir[2] * speed + ((float)(rand()%100) - 50) * spread / 50.0f + 30.0f;
+            VectorSet(accel, 0, 0, -300);
+            R_AddParticle(org, vel, accel,
+                          0.6f + (rand()%40)*0.01f, 0.0f, 0.0f, 1.0f,
+                          1.5f, 1.0f);
+        }
+        break;
+
+    case 2: /* explosion — orange/yellow burst */
+        spread = 100.0f; speed = 150.0f;
+        for (i = 0; i < count; i++) {
+            vel[0] = ((float)(rand()%100) - 50) * spread / 50.0f;
+            vel[1] = ((float)(rand()%100) - 50) * spread / 50.0f;
+            vel[2] = ((float)(rand()%100) - 50) * spread / 50.0f + 50.0f;
+            VectorSet(accel, 0, 0, -100);
+            R_AddParticle(org, vel, accel,
+                          1.0f, 0.6f + (rand()%40)*0.01f, 0.1f, 1.0f,
+                          1.0f, 1.5f);
+        }
+        break;
+
+    case 3: /* spark — bright yellow/white */
+        spread = 50.0f; speed = 120.0f;
+        for (i = 0; i < count; i++) {
+            vel[0] = dir[0] * speed + ((float)(rand()%100) - 50) * spread / 50.0f;
+            vel[1] = dir[1] * speed + ((float)(rand()%100) - 50) * spread / 50.0f;
+            vel[2] = dir[2] * speed + ((float)(rand()%100) - 50) * spread / 50.0f + 40.0f;
+            VectorSet(accel, 0, 0, -400);
+            R_AddParticle(org, vel, accel,
+                          1.0f, 1.0f, 0.7f, 1.0f,
+                          3.0f, 0.5f);
+        }
+        break;
+    }
+}
+
+/*
+ * R_UpdateParticles - Simulate particle physics
+ */
+void R_UpdateParticles(float frametime)
+{
+    int i;
+    r_particle_t *p;
+
+    for (i = 0; i < r_num_particles; ) {
+        p = &r_particles[i];
+        p->time -= frametime;
+        p->color[3] -= p->alpha_decay * frametime;
+
+        if (p->time <= 0 || p->color[3] <= 0) {
+            /* Remove by swapping with last */
+            r_particles[i] = r_particles[--r_num_particles];
+            continue;
+        }
+
+        /* Euler integration */
+        p->vel[0] += p->accel[0] * frametime;
+        p->vel[1] += p->accel[1] * frametime;
+        p->vel[2] += p->accel[2] * frametime;
+        p->org[0] += p->vel[0] * frametime;
+        p->org[1] += p->vel[1] * frametime;
+        p->org[2] += p->vel[2] * frametime;
+
+        i++;
+    }
+}
+
+/*
+ * R_DrawParticles - Render all active particles as GL_POINTS
+ */
+static void R_DrawParticles(void)
+{
+    int i;
+
+    if (r_num_particles == 0)
+        return;
+
+    qglDisable(GL_TEXTURE_2D);
+    qglEnable(GL_BLEND);
+    qglBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    qglDepthMask(GL_FALSE);
+    if (qglPointSize) qglPointSize(3.0f);
+
+    qglBegin(GL_POINTS);
+    for (i = 0; i < r_num_particles; i++) {
+        r_particle_t *p = &r_particles[i];
+        qglColor4f(p->color[0], p->color[1], p->color[2], p->color[3]);
+        qglVertex3f(p->org[0], p->org[1], p->org[2]);
+    }
+    qglEnd();
+
+    if (qglPointSize) qglPointSize(1.0f);
+    qglDepthMask(GL_TRUE);
+    qglDisable(GL_BLEND);
+    qglEnable(GL_TEXTURE_2D);
+    qglColor4f(1, 1, 1, 1);
 }
 
 /* ==========================================================================

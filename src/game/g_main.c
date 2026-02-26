@@ -16,6 +16,9 @@
 
 #include "g_local.h"
 
+/* Particle effects from renderer (unified binary) */
+extern void R_ParticleEffect(vec3_t org, vec3_t dir, int type, int count);
+
 /* ==========================================================================
    Globals
    ========================================================================== */
@@ -461,21 +464,37 @@ static void G_FireHitscan(edict_t *ent)
     /* Direction from view angles */
     G_AngleVectors(ent->client->viewangles, forward, right, up);
 
+    /* Muzzle flash particles */
+    {
+        vec3_t muzzle;
+        VectorMA(start, 16, forward, muzzle);
+        VectorMA(muzzle, 6, right, muzzle);
+        R_ParticleEffect(muzzle, forward, 3, 3);
+    }
+
     /* Trace 8192 units forward */
     VectorMA(start, 8192, forward, end);
     tr = gi.trace(start, NULL, NULL, end, ent, MASK_SHOT);
 
-    if (tr.fraction < 1.0f && tr.ent) {
-        edict_t *hit = tr.ent;
-        if (hit->takedamage && hit->health > 0) {
-            hit->health -= damage;
-            gi.dprintf("Hit %s for %d damage (health: %d)\n",
-                       hit->classname ? hit->classname : "entity",
-                       damage, hit->health);
+    if (tr.fraction < 1.0f) {
+        /* Spawn impact particles at hit point */
+        if (tr.ent && tr.ent->takedamage && tr.ent->health > 0) {
+            /* Blood effect on damageable entities */
+            R_ParticleEffect(tr.endpos, tr.plane.normal, 1, 8);
 
-            if (hit->health <= 0 && hit->die) {
-                hit->die(hit, ent, ent, damage, tr.endpos);
+            tr.ent->health -= damage;
+            gi.dprintf("Hit %s for %d damage (health: %d)\n",
+                       tr.ent->classname ? tr.ent->classname : "entity",
+                       damage, tr.ent->health);
+
+            if (tr.ent->health <= 0 && tr.ent->die) {
+                /* Explosion particles on kill */
+                R_ParticleEffect(tr.endpos, tr.plane.normal, 2, 16);
+                tr.ent->die(tr.ent, ent, ent, damage, tr.endpos);
             }
+        } else {
+            /* Bullet impact sparks on world/solid surfaces */
+            R_ParticleEffect(tr.endpos, tr.plane.normal, 0, 6);
         }
     }
 }
