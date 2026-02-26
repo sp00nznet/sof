@@ -704,6 +704,56 @@ static void ClientCommand(edict_t *ent)
         return;
     }
 
+    /* Chat: broadcast message to all clients */
+    if (Q_stricmp(cmd, "say") == 0) {
+        const char *msg = gi.args();
+        if (msg && msg[0]) {
+            char chat_buf[256];
+            extern void Chat_AddMessage(const char *text);
+            snprintf(chat_buf, sizeof(chat_buf), "Player: %s", msg);
+            /* Broadcast to all players */
+            gi.bprintf(PRINT_CHAT, "%s\n", chat_buf);
+            /* Add to engine chat overlay */
+            Chat_AddMessage(chat_buf);
+        }
+        return;
+    }
+
+    if (Q_stricmp(cmd, "say_team") == 0) {
+        const char *msg = gi.args();
+        if (msg && msg[0]) {
+            char chat_buf[256];
+            extern void Chat_AddMessage(const char *text);
+            snprintf(chat_buf, sizeof(chat_buf), "[TEAM] Player: %s", msg);
+            gi.bprintf(PRINT_CHAT, "%s\n", chat_buf);
+            Chat_AddMessage(chat_buf);
+        }
+        return;
+    }
+
+    /* Spectator mode toggle */
+    if (Q_stricmp(cmd, "spectate") == 0 || Q_stricmp(cmd, "spectator") == 0) {
+        if (ent->client->ps.pm_type == PM_SPECTATOR) {
+            /* Leave spectator mode */
+            ent->client->ps.pm_type = PM_NORMAL;
+            ent->solid = SOLID_BBOX;
+            ent->health = 100;
+            ent->max_health = 100;
+            ent->client->pers_health = 100;
+            ent->takedamage = DAMAGE_AIM;
+            gi.cprintf(ent, PRINT_ALL, "Spectator mode: OFF\n");
+        } else {
+            /* Enter spectator mode */
+            ent->client->ps.pm_type = PM_SPECTATOR;
+            ent->solid = SOLID_NOT;
+            ent->takedamage = DAMAGE_NO;
+            ent->deadflag = 0;
+            gi.cprintf(ent, PRINT_ALL, "Spectator mode: ON\n");
+        }
+        gi.linkentity(ent);
+        return;
+    }
+
     gi.cprintf(ent, PRINT_ALL, "Unknown command: %s\n", cmd);
 }
 

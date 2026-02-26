@@ -114,6 +114,7 @@ char    *FS_NextPath(char *prevpath);
 #define PRINT_ALL       0
 #define PRINT_DEVELOPER 1
 #define PRINT_ALERT     2
+#define PRINT_CHAT      3
 
 void    Com_Printf(const char *fmt, ...);
 void    Com_DPrintf(const char *fmt, ...);

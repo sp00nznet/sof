@@ -939,6 +939,44 @@ void SV_GetLevelStats(int *killed_monsters, int *total_monsters,
 }
 
 /*
+ * SV_GetScoreboard — Get all connected client scores for scoreboard
+ * Returns number of valid entries written.
+ */
+typedef struct {
+    char    name[32];
+    int     kills;
+    int     deaths;
+    int     score;
+    int     ping;
+} scoreboard_entry_t;
+
+int SV_GetScoreboard(scoreboard_entry_t *entries, int max_entries)
+{
+    int count = 0;
+    int i;
+
+    if (!ge || !ge->edicts)
+        return 0;
+
+    for (i = 0; i < 8 && count < max_entries; i++) {
+        edict_t *e = (edict_t *)((byte *)ge->edicts + (i + 1) * ge->edict_size);
+        if (!e->inuse || !e->client)
+            continue;
+        if (!e->client->pers_connected)
+            continue;
+
+        Com_sprintf(entries[count].name, sizeof(entries[count].name),
+                    "Player %d", i + 1);
+        entries[count].kills = e->client->kills;
+        entries[count].deaths = e->client->deaths;
+        entries[count].score = e->client->score;
+        entries[count].ping = 0;  /* local = 0 ping */
+        count++;
+    }
+    return count;
+}
+
+/*
  * SV_RunGameFrame — Called from SV_Frame at 10Hz
  * Drives the game module's RunFrame which iterates all entities.
  */

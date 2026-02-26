@@ -16,6 +16,7 @@
 #include "../renderer/r_local.h"
 #include "../ghoul/ghoul.h"
 #include "../sound/snd_local.h"
+#include "../client/keys.h"
 #include "../client/console.h"
 
 #include <time.h>
@@ -78,8 +79,11 @@ static void Cmd_ForwardToServer(void)
     }
 }
 
-/* Forward declaration — HUD drawing (defined below in HUD section) */
+/* Forward declarations — HUD, menu, scoreboard, chat drawing (defined below) */
 static void SCR_DrawHUD(float frametime);
+static void SCR_DrawMenu(void);
+static void SCR_DrawScoreboard(void);
+static void SCR_DrawChat(void);
 
 /* ANGLE2SHORT / SHORT2ANGLE for usercmd angle encoding */
 #define ANGLE2SHORT(x)  ((int)((x)*65536.0f/360.0f) & 65535)
@@ -335,6 +339,9 @@ void Qcommon_Frame(int msec)
         /* Render frame */
         R_BeginFrame(0.0f);
         SCR_DrawHUD(msec / 1000.0f);
+        SCR_DrawChat();
+        SCR_DrawScoreboard();
+        SCR_DrawMenu();
         Con_DrawNotify();
         Con_DrawConsole(con.current_frac);
         R_EndFrame();
@@ -531,6 +538,258 @@ void SCR_SetCrosshairSpread(float spread)
 {
     crosshair_spread_extra = spread * 200.0f;  /* scale to pixels */
     if (crosshair_spread_extra > 20) crosshair_spread_extra = 20;
+}
+
+/* ==========================================================================
+   Main Menu System
+   ========================================================================== */
+
+#define MENU_ITEMS  4
+static const char *menu_labels[MENU_ITEMS] = {
+    "NEW GAME", "LOAD GAME", "OPTIONS", "QUIT"
+};
+
+static int  menu_active = 0;    /* 0=hidden, 1=main, 2=options */
+static int  menu_cursor = 0;
+
+/* Exposed to key handler */
+int  M_IsActive(void) { return menu_active; }
+
+void M_Open(void)
+{
+    menu_active = 1;
+    menu_cursor = 0;
+}
+
+void M_Close(void)
+{
+    menu_active = 0;
+}
+
+void M_Keydown(int key)
+{
+    if (menu_active == 2) {
+        /* Options sub-menu — ESC returns to main */
+        if (key == K_ESCAPE) {
+            menu_active = 1;
+            menu_cursor = 2;
+        }
+        return;
+    }
+
+    if (key == K_UPARROW || key == 'k') {
+        menu_cursor--;
+        if (menu_cursor < 0) menu_cursor = MENU_ITEMS - 1;
+    } else if (key == K_DOWNARROW || key == 'j') {
+        menu_cursor++;
+        if (menu_cursor >= MENU_ITEMS) menu_cursor = 0;
+    } else if (key == K_ENTER || key == K_KP_ENTER) {
+        switch (menu_cursor) {
+        case 0: /* NEW GAME */
+            Cbuf_AddText("map sof1\n");
+            menu_active = 0;
+            break;
+        case 1: /* LOAD GAME */
+            Cbuf_AddText("loadgame save0\n");
+            menu_active = 0;
+            break;
+        case 2: /* OPTIONS */
+            menu_active = 2;
+            break;
+        case 3: /* QUIT */
+            Cbuf_AddText("quit\n");
+            break;
+        }
+    } else if (key == K_ESCAPE) {
+        menu_active = 0;
+    }
+}
+
+static void SCR_DrawMenu(void)
+{
+    int w = g_display.width;
+    int h = g_display.height;
+    int menu_w = 320;
+    int menu_h = 280;
+    int x = (w - menu_w) / 2;
+    int y = (h - menu_h) / 2;
+    int i;
+
+    if (!menu_active)
+        return;
+
+    /* Semi-transparent dark overlay */
+    R_DrawFadeScreenColor(0, 0, 0, 0.7f);
+
+    /* Title */
+    R_SetDrawColor(0xFF, 0xCC, 0x00, 0xFF);
+    R_DrawString(x + 40, y + 20, "SOLDIER OF FORTUNE");
+
+    R_SetDrawColor(0x88, 0x88, 0x88, 0xFF);
+    R_DrawString(x + 40, y + 40, "Static Recompilation v0.1");
+
+    if (menu_active == 1) {
+        /* Main menu items */
+        for (i = 0; i < MENU_ITEMS; i++) {
+            int item_y = y + 80 + i * 40;
+
+            if (i == menu_cursor) {
+                /* Highlight bar */
+                R_DrawFill(x + 20, item_y - 2, menu_w - 40, 24, (int)0x40FFFFFF);
+                R_SetDrawColor(0xFF, 0xFF, 0x00, 0xFF);
+                R_DrawString(x + 10, item_y, ">");
+            } else {
+                R_SetDrawColor(0xCC, 0xCC, 0xCC, 0xFF);
+            }
+
+            R_DrawString(x + 30, item_y, menu_labels[i]);
+        }
+    } else if (menu_active == 2) {
+        /* Options sub-menu */
+        char val[64];
+
+        R_SetDrawColor(0xFF, 0xFF, 0x00, 0xFF);
+        R_DrawString(x + 40, y + 80, "OPTIONS");
+
+        R_SetDrawColor(0xCC, 0xCC, 0xCC, 0xFF);
+        Com_sprintf(val, sizeof(val), "Sensitivity: %.1f", Cvar_VariableValue("sensitivity"));
+        R_DrawString(x + 40, y + 120, val);
+
+        Com_sprintf(val, sizeof(val), "Volume: %.1f", Cvar_VariableValue("s_volume"));
+        R_DrawString(x + 40, y + 140, val);
+
+        Com_sprintf(val, sizeof(val), "Gore: %s",
+                    Cvar_VariableValue("gore_detail") >= 2 ? "Full" : "Reduced");
+        R_DrawString(x + 40, y + 160, val);
+
+        R_SetDrawColor(0x88, 0x88, 0x88, 0xFF);
+        R_DrawString(x + 40, y + 200, "Press ESC to return");
+    }
+
+    /* Reset draw color */
+    R_SetDrawColor(0xFF, 0xFF, 0xFF, 0xFF);
+}
+
+/* ==========================================================================
+   Scoreboard Display (TAB key)
+   ========================================================================== */
+
+typedef struct {
+    char    name[32];
+    int     kills;
+    int     deaths;
+    int     score;
+    int     ping;
+} scoreboard_entry_t;
+
+extern int SV_GetScoreboard(scoreboard_entry_t *entries, int max_entries);
+extern qboolean key_down[];  /* from keys.c */
+
+static void SCR_DrawScoreboard(void)
+{
+    scoreboard_entry_t entries[8];
+    int count, i;
+    int w = g_display.width;
+    int h = g_display.height;
+    int sb_w = 400;
+    int x = (w - sb_w) / 2;
+    int y = h / 4;
+    char line[128];
+
+    /* Only show when TAB is held */
+    if (!key_down[K_TAB])
+        return;
+
+    count = SV_GetScoreboard(entries, 8);
+    if (count <= 0)
+        return;
+
+    /* Background */
+    R_DrawFill(x, y, sb_w, 40 + count * 20, (int)0xC0000000);
+
+    /* Header */
+    R_SetDrawColor(0xFF, 0xCC, 0x00, 0xFF);
+    R_DrawString(x + 10, y + 8, "SCOREBOARD");
+
+    R_SetDrawColor(0xAA, 0xAA, 0xAA, 0xFF);
+    R_DrawString(x + 10,  y + 28, "Name");
+    R_DrawString(x + 180, y + 28, "Kills");
+    R_DrawString(x + 240, y + 28, "Deaths");
+    R_DrawString(x + 320, y + 28, "Score");
+
+    /* Entries */
+    for (i = 0; i < count; i++) {
+        int row_y = y + 48 + i * 20;
+
+        R_SetDrawColor(0xFF, 0xFF, 0xFF, 0xFF);
+        R_DrawString(x + 10, row_y, entries[i].name);
+
+        Com_sprintf(line, sizeof(line), "%d", entries[i].kills);
+        R_DrawString(x + 180, row_y, line);
+
+        Com_sprintf(line, sizeof(line), "%d", entries[i].deaths);
+        R_DrawString(x + 240, row_y, line);
+
+        Com_sprintf(line, sizeof(line), "%d", entries[i].score);
+        R_DrawString(x + 320, row_y, line);
+    }
+
+    R_SetDrawColor(0xFF, 0xFF, 0xFF, 0xFF);
+}
+
+/* ==========================================================================
+   Chat Message System
+   ========================================================================== */
+
+#define MAX_CHAT_LINES  5
+#define CHAT_FADE_TIME  5.0f
+
+typedef struct {
+    char    text[128];
+    float   time;       /* timestamp when message was received */
+} chat_line_t;
+
+static chat_line_t chat_lines[MAX_CHAT_LINES];
+static int chat_write_idx;
+
+void Chat_AddMessage(const char *text)
+{
+    chat_line_t *cl = &chat_lines[chat_write_idx % MAX_CHAT_LINES];
+    Com_sprintf(cl->text, sizeof(cl->text), "%s", text);
+    cl->time = (float)Sys_Milliseconds() / 1000.0f;
+    chat_write_idx++;
+}
+
+static void SCR_DrawChat(void)
+{
+    int i;
+    int y = g_display.height - 120;  /* above HUD bar */
+    float now = (float)Sys_Milliseconds() / 1000.0f;
+
+    for (i = 0; i < MAX_CHAT_LINES; i++) {
+        chat_line_t *cl = &chat_lines[i];
+        float age;
+
+        if (cl->text[0] == '\0')
+            continue;
+
+        age = now - cl->time;
+        if (age > CHAT_FADE_TIME)
+            continue;
+
+        /* Fade out in last second */
+        if (age > CHAT_FADE_TIME - 1.0f) {
+            int alpha = (int)(255.0f * (CHAT_FADE_TIME - age));
+            R_SetDrawColor(0xFF, 0xFF, 0xFF, alpha);
+        } else {
+            R_SetDrawColor(0xFF, 0xFF, 0xFF, 0xFF);
+        }
+
+        R_DrawString(10, y, cl->text);
+        y += 12;
+    }
+
+    R_SetDrawColor(0xFF, 0xFF, 0xFF, 0xFF);
 }
 
 static void SCR_DrawCrosshair(void)

@@ -8,6 +8,12 @@
 #include "../common/qcommon.h"
 #include "keys.h"
 
+/* Menu system (common.c) */
+extern int  M_IsActive(void);
+extern void M_Open(void);
+extern void M_Close(void);
+extern void M_Keydown(int key);
+
 /* ==========================================================================
    State
    ========================================================================== */
@@ -203,13 +209,16 @@ void Key_Event(int key, qboolean down, unsigned time)
             key_dest = key_game;
             break;
         case key_menu:
-            /* TODO: M_Keydown(key) */
+            M_Keydown(key);
+            if (!M_IsActive())
+                key_dest = key_game;
             break;
         case key_console:
-            /* TODO: Toggle console */
+            key_dest = key_game;
             break;
         case key_game:
-            /* TODO: M_Menu_Main_f() — open main menu */
+            M_Open();
+            key_dest = key_menu;
             break;
         }
         return;
@@ -232,7 +241,11 @@ void Key_Event(int key, qboolean down, unsigned time)
         break;
 
     case key_menu:
-        /* TODO: M_Keydown(key) for menu navigation */
+        if (down) {
+            M_Keydown(key);
+            if (!M_IsActive())
+                key_dest = key_game;
+        }
         break;
 
     case key_message:
