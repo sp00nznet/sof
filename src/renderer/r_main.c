@@ -228,10 +228,11 @@ int R_Init(void *hinstance, void *hWnd)
 
     /* Create window and GL context */
     {
-        int w = 1024, h = 768;
+        int w, h;
         int fs = (int)r_fullscreen->value;
 
-        /* TODO: Parse r_mode into width/height properly */
+        /* Parse r_mode into width/height (Quake II standard modes) */
+        R_GetModeSize((int)r_mode->value, &w, &h);
         if (!Sys_CreateWindow(w, h, fs)) {
             Com_Error(ERR_FATAL, "R_Init: couldn't create window");
             return -1;
@@ -847,27 +848,95 @@ static void R_DrawDlights(void)
 }
 
 /* ==========================================================================
-   Registration Stubs
+   Model Registration
    ========================================================================== */
+
+static model_t  mod_known[MAX_MOD_KNOWN];
+static int      mod_numknown;
+static int      mod_registration_sequence;
+
+static model_t *R_FindModel(const char *name)
+{
+    int i;
+
+    if (!name || !name[0])
+        return NULL;
+
+    /* Check if already loaded */
+    for (i = 0; i < mod_numknown; i++) {
+        if (!strcmp(mod_known[i].name, name)) {
+            mod_known[i].registration_sequence = mod_registration_sequence;
+            return &mod_known[i];
+        }
+    }
+
+    return NULL;
+}
 
 void R_BeginRegistration(const char *map)
 {
     Com_Printf("R_BeginRegistration: %s\n", map);
-    /* TODO: Load BSP, lightmaps, textures */
+    mod_registration_sequence++;
+
+    /* Load the BSP world map */
+    R_LoadWorldMap(map);
 }
 
 struct model_s *R_RegisterModel(const char *name)
 {
+    model_t *mod;
+
+    if (!name || !name[0])
+        return NULL;
+
     Com_DPrintf("R_RegisterModel: %s\n", name);
-    /* TODO: Load model (BSP inline model, GHOUL model, or sprite) */
-    return NULL;
+
+    /* Check cache first */
+    mod = R_FindModel(name);
+    if (mod)
+        return (struct model_s *)mod;
+
+    /* Allocate new slot */
+    if (mod_numknown >= MAX_MOD_KNOWN) {
+        Com_Printf("R_RegisterModel: MAX_MOD_KNOWN exceeded\n");
+        return NULL;
+    }
+
+    mod = &mod_known[mod_numknown++];
+    memset(mod, 0, sizeof(*mod));
+    Q_strncpyz(mod->name, name, MAX_QPATH);
+    mod->registration_sequence = mod_registration_sequence;
+
+    /* Determine model type from name */
+    if (name[0] == '*') {
+        /* Inline BSP model (*1, *2, etc.) */
+        mod->type = mod_brush;
+        mod->bsp_submodel = atoi(name + 1);
+    } else if (strstr(name, ".sp2") || strstr(name, ".SP2")) {
+        mod->type = mod_sprite;
+    } else if (strstr(name, ".ghoul") || strstr(name, ".glm")) {
+        mod->type = mod_ghoul;
+    } else if (strstr(name, ".md2") || strstr(name, ".mdx")) {
+        mod->type = mod_alias;
+    } else {
+        /* Default to alias for unknown extensions */
+        mod->type = mod_alias;
+    }
+
+    return (struct model_s *)mod;
 }
 
 struct image_s *R_RegisterSkin(const char *name)
 {
+    image_t *img;
+
+    if (!name || !name[0])
+        return NULL;
+
     Com_DPrintf("R_RegisterSkin: %s\n", name);
-    /* TODO: Load skin texture */
-    return NULL;
+
+    img = R_FindImage(name);
+    return (struct image_s *)img;
 }
 
 image_t *R_RegisterPic(const char *name)
@@ -925,7 +994,18 @@ void R_SetSky(const char *name, float rotate, vec3_t axis)
 
 void R_EndRegistration(void)
 {
-    /* TODO: Free any images that weren't touched during registration */
+    int i;
+
+    /* Free models that weren't referenced this registration sequence */
+    for (i = 0; i < mod_numknown; i++) {
+        if (mod_known[i].name[0] &&
+            mod_known[i].registration_sequence != mod_registration_sequence) {
+            memset(&mod_known[i], 0, sizeof(mod_known[i]));
+        }
+    }
+
+    /* Free unused images */
+    R_ImageEndRegistration();
 }
 
 /* ==========================================================================
@@ -1269,7 +1349,70 @@ void R_DrawStretchRaw(int x, int y, int w, int h, int cols, int rows, byte *data
     /* TODO: Used for cinematic playback */
 }
 
+/* Quake II standard video modes + modern additions */
+typedef struct {
+    int     width;
+    int     height;
+} vidmode_t;
+
+static vidmode_t vid_modes[] = {
+    { 320,  240  },     /* 0 */
+    { 400,  300  },     /* 1 */
+    { 512,  384  },     /* 2 */
+    { 640,  480  },     /* 3 */
+    { 800,  600  },     /* 4 */
+    { 960,  720  },     /* 5 */
+    { 1024, 768  },     /* 6 (default) */
+    { 1152, 864  },     /* 7 */
+    { 1280, 960  },     /* 8 */
+    { 1280, 720  },     /* 9 - 720p */
+    { 1280, 1024 },     /* 10 */
+    { 1600, 1200 },     /* 11 */
+    { 1920, 1080 },     /* 12 - 1080p */
+    { 2560, 1440 },     /* 13 - 1440p */
+    { 3840, 2160 },     /* 14 - 4K */
+};
+
+#define NUM_VID_MODES (sizeof(vid_modes) / sizeof(vid_modes[0]))
+
+void R_GetModeSize(int mode, int *w, int *h)
+{
+    if (mode < 0 || mode >= (int)NUM_VID_MODES) {
+        /* Default to 1024x768 */
+        *w = 1024;
+        *h = 768;
+        return;
+    }
+    *w = vid_modes[mode].width;
+    *h = vid_modes[mode].height;
+}
+
 void R_SetMode(void)
 {
-    /* TODO: Mode switching */
+    int w, h;
+    int fs = r_fullscreen ? (int)r_fullscreen->value : 0;
+
+    R_GetModeSize((int)r_mode->value, &w, &h);
+
+    /* Resize window */
+    if (g_display.window) {
+        if (fs) {
+            SDL_SetWindowFullscreen(g_display.window, SDL_WINDOW_FULLSCREEN_DESKTOP);
+        } else {
+            SDL_SetWindowFullscreen(g_display.window, 0);
+            SDL_SetWindowSize(g_display.window, w, h);
+            SDL_SetWindowPosition(g_display.window,
+                SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+        }
+    }
+
+    g_display.width = w;
+    g_display.height = h;
+    g_display.fullscreen = fs;
+
+    /* Update GL viewport */
+    if (qglViewport)
+        qglViewport(0, 0, w, h);
+
+    Com_Printf("Video mode: %dx%d %s\n", w, h, fs ? "fullscreen" : "windowed");
 }

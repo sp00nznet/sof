@@ -15,6 +15,7 @@
 
 #include "../common/qcommon.h"
 #include "../game/g_local.h"
+#include "../renderer/r_bsp.h"
 
 /* ==========================================================================
    Area Node Tree
@@ -258,23 +259,96 @@ int SV_AreaEdicts(vec3_t mins, vec3_t maxs, edict_t **list,
 /*
  * SV_Trace - Trace through world and entities
  *
- * The game module's gi.trace calls this. It first traces against BSP
- * geometry, then checks entity bounding boxes along the trace path.
+ * Legacy entry point. The game module's gi.trace is wired to GI_trace
+ * in sv_game.c which already calls CM_BoxTrace + SV_AreaEdicts.
+ * This function delegates there for any direct callers.
  */
+
+extern bsp_world_t *R_GetWorldModel(void);
+
 trace_t SV_Trace(vec3_t start, vec3_t mins, vec3_t maxs,
                  vec3_t end, edict_t *passedict, int contentmask)
 {
     trace_t trace;
+    bsp_world_t *world = R_GetWorldModel();
 
-    /* Start with full-distance trace */
-    memset(&trace, 0, sizeof(trace));
-    trace.fraction = 1.0f;
-    VectorCopy(end, trace.endpos);
+    /* Trace against BSP world */
+    if (world && world->loaded) {
+        trace = CM_BoxTrace(world, start, mins, maxs, end, contentmask);
+    } else {
+        memset(&trace, 0, sizeof(trace));
+        trace.fraction = 1.0f;
+        VectorCopy(end, trace.endpos);
+    }
 
-    /* TODO: trace against BSP world via CM_BoxTrace */
-    /* TODO: trace against entities via SV_AreaEdicts */
+    /* Trace against solid entities */
+    {
+        edict_t *touch[64];
+        int num_touch, i;
+        vec3_t trace_mins, trace_maxs;
 
-    (void)mins; (void)maxs; (void)passedict; (void)contentmask;
+        for (i = 0; i < 3; i++) {
+            if (start[i] < end[i]) {
+                trace_mins[i] = start[i] + (mins ? mins[i] : 0);
+                trace_maxs[i] = end[i] + (maxs ? maxs[i] : 0);
+            } else {
+                trace_mins[i] = end[i] + (mins ? mins[i] : 0);
+                trace_maxs[i] = start[i] + (maxs ? maxs[i] : 0);
+            }
+        }
+
+        num_touch = SV_AreaEdicts(trace_mins, trace_maxs, touch, 64, AREA_SOLID);
+
+        for (i = 0; i < num_touch; i++) {
+            edict_t *ent = touch[i];
+
+            if (!ent || ent == passedict || !ent->inuse)
+                continue;
+            if (ent->solid == SOLID_NOT || ent->solid == SOLID_TRIGGER)
+                continue;
+            if (passedict && ent->owner == passedict)
+                continue;
+
+            /* Simple AABB clip test */
+            {
+                vec3_t ent_expanded_mins, ent_expanded_maxs;
+                float t_entry = 0.0f, t_exit = 1.0f;
+                vec3_t dir;
+                int j;
+                qboolean hit = qtrue;
+
+                VectorSubtract(end, start, dir);
+
+                for (j = 0; j < 3; j++) {
+                    ent_expanded_mins[j] = ent->absmin[j] - (maxs ? maxs[j] : 0);
+                    ent_expanded_maxs[j] = ent->absmax[j] - (mins ? mins[j] : 0);
+                }
+
+                for (j = 0; j < 3; j++) {
+                    if (dir[j] == 0.0f) {
+                        if (start[j] < ent_expanded_mins[j] || start[j] > ent_expanded_maxs[j]) {
+                            hit = qfalse;
+                            break;
+                        }
+                    } else {
+                        float t1 = (ent_expanded_mins[j] - start[j]) / dir[j];
+                        float t2 = (ent_expanded_maxs[j] - start[j]) / dir[j];
+                        if (t1 > t2) { float tmp = t1; t1 = t2; t2 = tmp; }
+                        if (t1 > t_entry) t_entry = t1;
+                        if (t2 < t_exit) t_exit = t2;
+                        if (t_entry > t_exit) { hit = qfalse; break; }
+                    }
+                }
+
+                if (hit && t_entry >= 0.0f && t_entry < trace.fraction) {
+                    trace.fraction = t_entry;
+                    for (j = 0; j < 3; j++)
+                        trace.endpos[j] = start[j] + dir[j] * t_entry;
+                    trace.ent = ent;
+                }
+            }
+        }
+    }
 
     return trace;
 }

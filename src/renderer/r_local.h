@@ -158,6 +158,7 @@ void    R_DrawStretchRaw(int x, int y, int w, int h, int cols, int rows, byte *d
 
 /* Video mode */
 void    R_SetMode(void);
+void    R_GetModeSize(int mode, int *w, int *h);
 
 /* ==========================================================================
    GL Function Loading
@@ -274,5 +275,34 @@ void        R_GetCameraAngles(vec3_t out);
 void        R_SetCameraAngles(vec3_t angles);
 void        R_UpdateCamera(float forward, float right, float up,
                            float mouse_dx, float mouse_dy, float frametime);
+
+/* ==========================================================================
+   Model Registration
+   ========================================================================== */
+
+#define MAX_MOD_KNOWN   512
+
+typedef enum {
+    mod_bad,
+    mod_brush,      /* BSP inline model (*N) */
+    mod_sprite,     /* 2D sprite */
+    mod_alias,      /* MD2/MDX mesh model */
+    mod_ghoul       /* GHOUL skeletal model */
+} modtype_t;
+
+struct model_s {
+    char        name[MAX_QPATH];
+    modtype_t   type;
+    int         registration_sequence;
+
+    /* For inline BSP models */
+    int         bsp_submodel;   /* index into bsp_world_t.models */
+
+    /* For skins/textures */
+    image_t     *skins[4];      /* model skins (up to 4) */
+    int         num_skins;
+};
+
+typedef struct model_s model_t;
 
 #endif /* R_LOCAL_H */

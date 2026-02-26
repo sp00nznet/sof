@@ -249,6 +249,7 @@ void Qcommon_Init(int argc, char **argv)
     Cmd_AddCommand("savegame", Cmd_SaveGame_f);
     Cmd_AddCommand("loadgame", Cmd_LoadGame_f);
     Cmd_AddCommand("writeconfig", Cmd_WriteConfig_f);
+    Cmd_AddCommand("vid_restart", R_SetMode);
 
     /* Register core cvars */
     developer = Cvar_Get("developer", "0", 0);
