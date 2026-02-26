@@ -33,9 +33,13 @@ extern void CL_CreateCmd(usercmd_t *cmd, int msec);
 extern void SV_RunGameFrame(void);
 extern void SV_ClientThink(usercmd_t *cmd);
 extern qboolean SV_GetPlayerState(vec3_t origin, vec3_t angles, float *viewheight);
+extern qboolean SV_GetPlayerHealth(int *health, int *max_health);
 
 /* Forward declaration — freecam toggle (defined below in client section) */
 static void Cmd_Freecam_f(void);
+
+/* Forward declaration — HUD drawing (defined below in HUD section) */
+static void SCR_DrawHUD(float frametime);
 
 /* ANGLE2SHORT / SHORT2ANGLE for usercmd angle encoding */
 #define ANGLE2SHORT(x)  ((int)((x)*65536.0f/360.0f) & 65535)
@@ -287,6 +291,7 @@ void Qcommon_Frame(int msec)
 
         /* Render frame */
         R_BeginFrame(0.0f);
+        SCR_DrawHUD(msec / 1000.0f);
         Con_DrawNotify();
         Con_DrawConsole(con.current_frac);
         R_EndFrame();
@@ -458,6 +463,84 @@ void CL_Frame(int msec)
                 R_SetCameraAngles(ang);
             }
         }
+    }
+}
+
+/* ==========================================================================
+   HUD Drawing
+   ========================================================================== */
+
+/* Pickup message display */
+static char     hud_pickup_msg[64];
+static float    hud_pickup_time;
+
+void HUD_SetPickupMessage(const char *msg)
+{
+    Q_strncpyz(hud_pickup_msg, msg, sizeof(hud_pickup_msg));
+    hud_pickup_time = 3.0f;  /* display for 3 seconds */
+}
+
+static void SCR_DrawCrosshair(void)
+{
+    int cx = g_display.width / 2;
+    int cy = g_display.height / 2;
+    int size = 2;
+    int gap = 3;
+    int len = 6;
+    /* Pack white color as ARGB for R_DrawFill */
+    int white = (int)(0xFF000000 | 0x00FFFFFF);
+
+    /* Crosshair: four lines forming a + with a gap in the center */
+    R_DrawFill(cx - gap - len, cy - size/2, len, size, white);  /* left */
+    R_DrawFill(cx + gap + 1,  cy - size/2, len, size, white);  /* right */
+    R_DrawFill(cx - size/2, cy - gap - len, size, len, white);  /* top */
+    R_DrawFill(cx - size/2, cy + gap + 1,  size, len, white);  /* bottom */
+}
+
+static void SCR_DrawHUD(float frametime)
+{
+    int health = 0, max_health = 100;
+    char buf[32];
+
+    if (cl_state != CA_ACTIVE)
+        return;
+
+    /* Crosshair */
+    SCR_DrawCrosshair();
+
+    /* Health display - bottom left */
+    if (SV_GetPlayerHealth(&health, &max_health)) {
+        /* Health label */
+        R_SetDrawColor(0.8f, 0.8f, 0.8f, 1.0f);
+        R_DrawString(16, g_display.height - 40, "HEALTH");
+
+        /* Health value - color based on amount */
+        if (health > 60)
+            R_SetDrawColor(1.0f, 1.0f, 1.0f, 1.0f);
+        else if (health > 25)
+            R_SetDrawColor(1.0f, 1.0f, 0.0f, 1.0f);
+        else
+            R_SetDrawColor(1.0f, 0.2f, 0.2f, 1.0f);
+
+        snprintf(buf, sizeof(buf), "%d", health);
+        R_DrawString(16, g_display.height - 28, buf);
+
+        /* Reset to default green for console */
+        R_SetDrawColor(0.0f, 1.0f, 0.0f, 1.0f);
+    }
+
+    /* Pickup message - center screen, fades out */
+    if (hud_pickup_time > 0) {
+        float alpha = hud_pickup_time > 1.0f ? 1.0f : hud_pickup_time;
+        int len = (int)strlen(hud_pickup_msg);
+        int x = (g_display.width - len * 8) / 2;
+        int y = g_display.height / 2 + 40;
+
+        R_SetDrawColor(1.0f, 1.0f, 1.0f, alpha);
+        R_DrawString(x, y, hud_pickup_msg);
+        R_SetDrawColor(0.0f, 1.0f, 0.0f, 1.0f);
+
+        hud_pickup_time -= frametime;
     }
 }
 

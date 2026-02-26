@@ -57,6 +57,8 @@ static void GI_dprintf(const char *fmt, ...)
     Com_Printf("%s", msg);
 }
 
+extern void HUD_SetPickupMessage(const char *msg);
+
 static void GI_cprintf(edict_t *ent, int printlevel, const char *fmt, ...)
 {
     va_list argptr;
@@ -68,6 +70,19 @@ static void GI_cprintf(edict_t *ent, int printlevel, const char *fmt, ...)
     va_start(argptr, fmt);
     vsnprintf(msg, sizeof(msg), fmt, argptr);
     va_end(argptr);
+
+    /* Route pickup messages to HUD */
+    if (strncmp(msg, "Picked up", 9) == 0) {
+        /* Strip trailing newline for display */
+        char clean[64];
+        Q_strncpyz(clean, msg, sizeof(clean));
+        {
+            int len = (int)strlen(clean);
+            if (len > 0 && clean[len - 1] == '\n')
+                clean[len - 1] = '\0';
+        }
+        HUD_SetPickupMessage(clean);
+    }
 
     Com_Printf("%s", msg);
 }
@@ -589,6 +604,25 @@ qboolean SV_GetPlayerState(vec3_t origin, vec3_t angles, float *viewheight)
     VectorCopy(player->s.origin, origin);
     VectorCopy(player->client->viewangles, angles);
     *viewheight = player->client->viewheight;
+    return qtrue;
+}
+
+/*
+ * SV_GetPlayerHealth — Get player health for HUD display
+ */
+qboolean SV_GetPlayerHealth(int *health, int *max_health)
+{
+    edict_t *player;
+
+    if (!ge || !ge->edicts)
+        return qfalse;
+
+    player = (edict_t *)((byte *)ge->edicts + ge->edict_size);
+    if (!player->inuse)
+        return qfalse;
+
+    *health = player->health;
+    *max_health = player->max_health;
     return qtrue;
 }
 

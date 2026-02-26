@@ -717,6 +717,17 @@ static void R_InitCharFont(void)
     qglTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 }
 
+/* Current draw color for text rendering (default green for console) */
+static float r_drawcolor[4] = { 0.0f, 1.0f, 0.0f, 1.0f };
+
+void R_SetDrawColor(float r, float g, float b, float a)
+{
+    r_drawcolor[0] = r;
+    r_drawcolor[1] = g;
+    r_drawcolor[2] = b;
+    r_drawcolor[3] = a;
+}
+
 void R_DrawChar(int x, int y, int ch)
 {
     float s1, t1, s2, t2;
@@ -745,7 +756,7 @@ void R_DrawChar(int x, int y, int ch)
     qglEnable(GL_BLEND);
     qglBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     qglBindTexture(GL_TEXTURE_2D, r_charTexture);
-    qglColor4f(0.0f, 1.0f, 0.0f, 1.0f);  /* green console text */
+    qglColor4f(r_drawcolor[0], r_drawcolor[1], r_drawcolor[2], r_drawcolor[3]);
 
     qglBegin(GL_QUADS);
     qglTexCoord2f(s1, t1); qglVertex3f((float)x,     (float)y,     0);
@@ -756,6 +767,16 @@ void R_DrawChar(int x, int y, int ch)
 
     qglDisable(GL_BLEND);
     qglColor4f(1, 1, 1, 1);
+}
+
+void R_DrawString(int x, int y, const char *str)
+{
+    while (*str) {
+        if (*str != ' ')
+            R_DrawChar(x, y, (unsigned char)*str);
+        x += 8;
+        str++;
+    }
 }
 
 void R_DrawTileClear(int x, int y, int w, int h, const char *name)
