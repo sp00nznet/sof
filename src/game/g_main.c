@@ -534,6 +534,50 @@ static float weapon_firerate[WEAP_COUNT] = {
     0,      /* WEAP_FPAK */
 };
 
+/* Weapon recoil (vertical kick in degrees per shot) */
+static float weapon_recoil[WEAP_COUNT] = {
+    0,      /* WEAP_NONE */
+    0.5f,   /* WEAP_KNIFE */
+    3.0f,   /* WEAP_PISTOL1 */
+    1.5f,   /* WEAP_PISTOL2 */
+    6.0f,   /* WEAP_SHOTGUN */
+    1.2f,   /* WEAP_MACHINEGUN */
+    1.5f,   /* WEAP_ASSAULT */
+    4.0f,   /* WEAP_SNIPER */
+    3.0f,   /* WEAP_SLUGGER */
+    5.0f,   /* WEAP_ROCKET */
+    0.3f,   /* WEAP_FLAMEGUN */
+    2.5f,   /* WEAP_MPG */
+    0.8f,   /* WEAP_MPISTOL */
+    0,      /* WEAP_GRENADE */
+    0,      /* WEAP_C4 */
+    0,      /* WEAP_MEDKIT */
+    0,      /* WEAP_GOGGLES */
+    0,      /* WEAP_FPAK */
+};
+
+/* Weapon spread (base inaccuracy in radians, increases with sustained fire) */
+static float weapon_spread[WEAP_COUNT] = {
+    0,      /* WEAP_NONE */
+    0,      /* WEAP_KNIFE */
+    0.01f,  /* WEAP_PISTOL1 */
+    0.015f, /* WEAP_PISTOL2 */
+    0,      /* WEAP_SHOTGUN (handled by pellet spread) */
+    0.02f,  /* WEAP_MACHINEGUN */
+    0.015f, /* WEAP_ASSAULT */
+    0.002f, /* WEAP_SNIPER */
+    0.01f,  /* WEAP_SLUGGER */
+    0,      /* WEAP_ROCKET */
+    0.03f,  /* WEAP_FLAMEGUN */
+    0.01f,  /* WEAP_MPG */
+    0.025f, /* WEAP_MPISTOL */
+    0,      /* WEAP_GRENADE */
+    0,      /* WEAP_C4 */
+    0,      /* WEAP_MEDKIT */
+    0,      /* WEAP_GOGGLES */
+    0,      /* WEAP_FPAK */
+};
+
 static float player_next_fire;  /* level.time when player can fire again */
 
 /*
@@ -937,6 +981,10 @@ static void G_FireHitscan(edict_t *ent)
         float spread = 0;
         int pellet;
 
+        /* Apply base weapon spread */
+        if (weap > 0 && weap < WEAP_COUNT)
+            spread = weapon_spread[weap];
+
         if (weap == WEAP_SHOTGUN) {
             num_pellets = 8;
             damage = 10;  /* per pellet */
@@ -1032,6 +1080,13 @@ static void G_FireHitscan(edict_t *ent)
 
         } /* end for pellet */
     } /* end weapon-specific block */
+
+    /* Apply weapon recoil kick */
+    if (weap > 0 && weap < WEAP_COUNT && weapon_recoil[weap] > 0) {
+        float recoil = weapon_recoil[weap];
+        ent->client->kick_angles[0] -= recoil;  /* pitch up */
+        ent->client->kick_angles[1] += gi.flrand(-recoil * 0.3f, recoil * 0.3f);  /* slight yaw */
+    }
 }
 
 /* Pmove trace wrapper — uses player entity as passent */
@@ -1062,6 +1117,20 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
         client->blend[3] -= 0.05f;
         if (client->blend[3] < 0)
             client->blend[3] = 0;
+    }
+
+    /* Decay weapon kick/recoil */
+    {
+        int k;
+        for (k = 0; k < 3; k++) {
+            if (client->kick_angles[k] > 0) {
+                client->kick_angles[k] -= 5.0f * level.frametime;
+                if (client->kick_angles[k] < 0) client->kick_angles[k] = 0;
+            } else if (client->kick_angles[k] < 0) {
+                client->kick_angles[k] += 5.0f * level.frametime;
+                if (client->kick_angles[k] > 0) client->kick_angles[k] = 0;
+            }
+        }
     }
 
     /* Dead — check for respawn on attack press */
@@ -1139,6 +1208,19 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
 
         ent->groundentity = pm.groundentity;
         client->viewheight = pm.viewheight;
+    }
+
+    /* Crouch handling */
+    if (ucmd->buttons & BUTTON_CROUCH) {
+        if (client->viewheight > 10) {
+            client->viewheight = 10;  /* crouched eye height */
+            ent->maxs[2] = 16;  /* reduced bbox height */
+        }
+    } else {
+        if (client->viewheight < 22) {
+            client->viewheight = 22;  /* standing eye height */
+            ent->maxs[2] = 32;  /* full bbox height */
+        }
     }
 
     /* Footstep sounds — on ground and moving */

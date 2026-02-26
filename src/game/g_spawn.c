@@ -564,7 +564,33 @@ static void SP_info_player_deathmatch(edict_t *ent, epair_t *pairs, int num_pair
 
 static void SP_light(edict_t *ent, epair_t *pairs, int num_pairs)
 {
-    (void)pairs; (void)num_pairs;
+    /* Set lightstyle if the light has a style with a pattern */
+    if (ent->style) {
+        const char *pattern = ED_FindValue(pairs, num_pairs, "style_pattern");
+        if (!pattern) {
+            /* Standard Q2 lightstyle patterns */
+            static const char *default_patterns[] = {
+                "m",                                        /* 0: normal */
+                "mmnmmommommnonmmonqnmmo",                  /* 1: FLICKER */
+                "abcdefghijklmnopqrstuvwxyzyxwvutsrqponmlkjihgfedcba", /* 2: SLOW PULSE */
+                "mmmmmaaaaammmmmaaaaaabcdefgabcdefg",        /* 3: CANDLE */
+                "mamamamamama",                             /* 4: FAST STROBE */
+                "jklmnopqrstuvwxyzyxwvutsrqponmlkj",        /* 5: GENTLE PULSE */
+                "nmonqnmomnmomomno",                        /* 6: FLICKER2 */
+                "mmmaaaabcdefgmmmmaaaammmaamm",              /* 7: CANDLE2 */
+                "mmmaaammmaaammmabcdefaaaammmmabcdefmmmaaaa", /* 8: CANDLE3 */
+                "aaaaaaaazzzzzzzz",                         /* 9: SLOW STROBE */
+                "mmamammmmammamamaaamammma",                 /* 10: FLUORESCENT */
+                "abcdefghijklmnopqrrqponmlkjihgfedcba",     /* 11: SLOW PULSE2 */
+            };
+
+            if (ent->style > 0 && ent->style < 12) {
+                gi.configstring(CS_LIGHTS + ent->style, default_patterns[ent->style]);
+            }
+        } else {
+            gi.configstring(CS_LIGHTS + ent->style, pattern);
+        }
+    }
 
     /* Lights are compiled into lightmaps, no runtime entity needed */
     ent->inuse = qfalse;

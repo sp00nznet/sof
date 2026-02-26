@@ -171,6 +171,8 @@ void CL_CreateCmd(usercmd_t *cmd, int msec)
         cmd->buttons |= BUTTON_ATTACK;
     if (in_use.active)
         cmd->buttons |= BUTTON_USE;
+    if (in_movedown.active)
+        cmd->buttons |= BUTTON_CROUCH;
     if (in_attack.active || in_attack2.active ||
         in_forward.active || in_back.active ||
         in_moveleft.active || in_moveright.active ||
