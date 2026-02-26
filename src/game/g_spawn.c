@@ -194,6 +194,8 @@ static void SP_target_relay(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_wall(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_path_corner(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_train(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_trigger_counter(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_target_earthquake(edict_t *ent, epair_t *pairs, int num_pairs);
 
 /*
  * Spawn function dispatch table
@@ -244,6 +246,7 @@ static spawn_func_t spawn_funcs[] = {
     { "trigger_push",               SP_trigger_push },
     { "trigger_hurt",               SP_trigger_hurt },
     { "trigger_gravity",            SP_trigger_multiple },
+    { "trigger_counter",            SP_trigger_counter },
     { "trigger_teleport",           SP_trigger_teleport },
     { "misc_teleport_dest",         SP_misc_teleport_dest },
     { "info_teleport_destination",  SP_misc_teleport_dest },
@@ -252,6 +255,7 @@ static spawn_func_t spawn_funcs[] = {
     { "target_speaker",             SP_target_speaker },
     { "target_changelevel",         SP_target_changelevel },
     { "target_relay",               SP_target_relay },
+    { "target_earthquake",          SP_target_earthquake },
     { "target_explosion",           SP_target_speaker },
     { "target_temp_entity",         SP_target_speaker },
 
@@ -1676,6 +1680,92 @@ static void SP_func_train(edict_t *ent, epair_t *pairs, int num_pairs)
     gi.linkentity(ent);
 }
 
+/* ==========================================================================
+   trigger_counter — Counts touches, fires target on reaching count
+   ========================================================================== */
+
+static void trigger_counter_use(edict_t *self, edict_t *other, edict_t *activator)
+{
+    (void)other;
+
+    self->count--;
+    if (self->count > 0) {
+        gi.cprintf(activator, PRINT_ALL, "%d more to go...\n", self->count);
+        return;
+    }
+
+    /* Count reached — fire targets */
+    self->activator = activator;
+    G_FireTargets(self, activator);
+
+    /* Remove self */
+    self->use = NULL;
+}
+
+static void trigger_counter_touch(edict_t *self, edict_t *other, void *plane, csurface_t *surf)
+{
+    (void)plane; (void)surf;
+    if (!other || !other->client) return;
+    trigger_counter_use(self, other, other);
+}
+
+static void SP_trigger_counter(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+
+    if (!ent->count)
+        ent->count = 2;
+
+    ent->solid = SOLID_TRIGGER;
+    ent->touch = trigger_counter_touch;
+    ent->use = trigger_counter_use;
+    gi.linkentity(ent);
+}
+
+/* ==========================================================================
+   target_earthquake — Shakes player view when used
+   ========================================================================== */
+
+static void earthquake_think(edict_t *self)
+{
+    extern game_export_t globals;
+    edict_t *player = &globals.edicts[1];
+
+    if (level.time > self->teleport_time) {
+        /* Earthquake over */
+        self->think = NULL;
+        self->nextthink = 0;
+        return;
+    }
+
+    /* Apply random kick angles to player */
+    if (player->inuse && player->client) {
+        float intensity = self->speed ? self->speed : 2.0f;
+        player->client->kick_angles[0] = gi.flrand(-intensity, intensity);
+        player->client->kick_angles[1] = gi.flrand(-intensity, intensity);
+        player->client->kick_angles[2] = gi.flrand(-intensity * 0.5f, intensity * 0.5f);
+    }
+
+    self->nextthink = level.time + level.frametime;
+}
+
+static void earthquake_use(edict_t *self, edict_t *other, edict_t *activator)
+{
+    (void)other; (void)activator;
+
+    float duration = self->wait ? self->wait : 3.0f;
+    self->teleport_time = level.time + duration;
+    self->think = earthquake_think;
+    self->nextthink = level.time + level.frametime;
+}
+
+static void SP_target_earthquake(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+
+    ent->use = earthquake_use;
+}
+
 static void target_speaker_use(edict_t *self, edict_t *other, edict_t *activator)
 {
     (void)other; (void)activator;
@@ -1718,11 +1808,20 @@ static void SP_target_speaker(edict_t *ent, epair_t *pairs, int num_pairs)
 
 static void SP_misc_model(edict_t *ent, epair_t *pairs, int num_pairs)
 {
-    (void)pairs; (void)num_pairs;
+    const char *mdl = ED_FindValue(pairs, num_pairs, "model");
 
     /* Non-interactive model placement */
-    ent->solid = 0;  /* SOLID_NOT */
-    ent->movetype = 0;  /* MOVETYPE_NONE */
+    ent->solid = SOLID_NOT;
+    ent->movetype = MOVETYPE_NONE;
+
+    /* Set model if specified */
+    if (mdl && mdl[0]) {
+        gi.setmodel(ent, mdl);
+    } else if (ent->model && ent->model[0]) {
+        gi.setmodel(ent, ent->model);
+    }
+
+    gi.linkentity(ent);
 }
 
 /* ==========================================================================

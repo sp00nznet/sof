@@ -1290,7 +1290,6 @@ static void ClientDisconnect(edict_t *ent)
    ========================================================================== */
 
 #define SAVE_MAGIC      0x534F4653  /* "SOFS" */
-#define SAVE_VERSION    1
 
 /* Saved entity data — only fields that matter for restoration */
 typedef struct {
@@ -1313,6 +1312,7 @@ typedef struct {
 } save_entity_t;
 
 /* Saved client/game state */
+#define SAVE_VERSION    2   /* bumped for ammo/armor fields */
 typedef struct {
     int         health;
     int         max_health;
@@ -1322,6 +1322,10 @@ typedef struct {
     float       viewheight;
     float       game_time;
     int         num_entities;
+    int         armor;
+    int         armor_max;
+    int         ammo[WEAP_COUNT];
+    int         ammo_max[WEAP_COUNT];
 } save_game_t;
 
 static void WriteGame(const char *filename, qboolean autosave)
@@ -1352,6 +1356,10 @@ static void WriteGame(const char *filename, qboolean autosave)
         VectorCopy(player->s.origin, sg.origin);
         VectorCopy(player->client->viewangles, sg.angles);
         sg.viewheight = player->client->viewheight;
+        sg.armor = player->client->armor;
+        sg.armor_max = player->client->armor_max;
+        memcpy(sg.ammo, player->client->ammo, sizeof(sg.ammo));
+        memcpy(sg.ammo_max, player->client->ammo_max, sizeof(sg.ammo_max));
     }
     sg.game_time = level.time;
     sg.num_entities = globals.num_edicts;
@@ -1396,6 +1404,10 @@ static void ReadGame(const char *filename)
         VectorCopy(sg.origin, player->s.origin);
         VectorCopy(sg.angles, player->client->viewangles);
         player->client->viewheight = sg.viewheight;
+        player->client->armor = sg.armor;
+        player->client->armor_max = sg.armor_max;
+        memcpy(player->client->ammo, sg.ammo, sizeof(sg.ammo));
+        memcpy(player->client->ammo_max, sg.ammo_max, sizeof(sg.ammo_max));
         player->deadflag = 0;
         player->client->ps.pm_type = PM_NORMAL;
     }

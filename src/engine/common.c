@@ -547,6 +547,9 @@ static void SCR_DrawHUD(float frametime)
     /* Crosshair */
     SCR_DrawCrosshair();
 
+    /* HUD background bar — bottom of screen (semi-transparent dark) */
+    R_DrawFill(0, g_display.height - 48, g_display.width, 48, (int)(0x80000000));
+
     /* Health display - bottom left */
     if (SV_GetPlayerHealth(&health, &max_health)) {
         /* Health label */
