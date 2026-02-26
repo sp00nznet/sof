@@ -190,6 +190,8 @@ static void SP_trigger_push(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_trigger_hurt(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_trigger_teleport(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_misc_teleport_dest(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_target_relay(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_wall(edict_t *ent, epair_t *pairs, int num_pairs);
 
 /*
  * Spawn function dispatch table
@@ -224,7 +226,7 @@ static spawn_func_t spawn_funcs[] = {
     { "func_plat",                  SP_func_plat },
     { "func_rotating",              SP_func_rotating },
     { "func_button",                SP_func_button },
-    { "func_wall",                  SP_misc_model },
+    { "func_wall",                  SP_func_wall },
     { "func_timer",                 SP_func_timer },
     { "func_train",                 SP_func_plat },
     { "func_conveyor",              SP_misc_model },
@@ -233,7 +235,7 @@ static spawn_func_t spawn_funcs[] = {
     /* Triggers */
     { "trigger_once",               SP_trigger_once },
     { "trigger_multiple",           SP_trigger_multiple },
-    { "trigger_relay",              SP_trigger_once },
+    { "trigger_relay",              SP_target_relay },
     { "trigger_always",             SP_trigger_once },
     { "trigger_changelevel",        SP_trigger_changelevel },
     { "trigger_push",               SP_trigger_push },
@@ -246,6 +248,7 @@ static spawn_func_t spawn_funcs[] = {
     /* Targets */
     { "target_speaker",             SP_target_speaker },
     { "target_changelevel",         SP_target_changelevel },
+    { "target_relay",               SP_target_relay },
     { "target_explosion",           SP_target_speaker },
     { "target_temp_entity",         SP_target_speaker },
 
@@ -313,7 +316,7 @@ static spawn_func_t spawn_funcs[] = {
 
 extern game_export_t globals;
 
-static edict_t *G_AllocEdict(void)
+edict_t *G_AllocEdict(void)
 {
     int i;
     edict_t *e;
@@ -832,6 +835,23 @@ static void SP_func_plat(edict_t *ent, epair_t *pairs, int num_pairs)
    Trigger System
    ========================================================================== */
 
+/* Kill entities matching killtarget field */
+static void G_KillTargets(const char *killtarget)
+{
+    int i;
+    if (!killtarget || !killtarget[0]) return;
+
+    for (i = 0; i < globals.max_edicts; i++) {
+        edict_t *t = &globals.edicts[i];
+        if (!t->inuse || !t->targetname)
+            continue;
+        if (Q_stricmp(t->targetname, killtarget) == 0) {
+            t->inuse = qfalse;
+            gi.unlinkentity(t);
+        }
+    }
+}
+
 /* Find entities by targetname and call their use() */
 static void G_UseTargets(edict_t *activator, const char *target)
 {
@@ -849,6 +869,17 @@ static void G_UseTargets(edict_t *activator, const char *target)
     }
 }
 
+/* Full target firing with killtarget + message (for entities with both fields) */
+static void G_FireTargets(edict_t *self, edict_t *activator)
+{
+    if (self->killtarget)
+        G_KillTargets(self->killtarget);
+    if (self->target)
+        G_UseTargets(activator, self->target);
+    if (self->message)
+        gi.centerprintf(activator, "%s", self->message);
+}
+
 static void trigger_touch(edict_t *self, edict_t *other, void *plane, csurface_t *surf)
 {
     (void)plane; (void)surf;
@@ -862,13 +893,9 @@ static void trigger_touch(edict_t *self, edict_t *other, void *plane, csurface_t
 
     self->dmg_debounce_time = level.time + self->wait;
 
-    /* Fire targets */
-    if (self->target)
-        G_UseTargets(other, self->target);
-
-    /* Print message if set */
-    if (self->message)
-        gi.centerprintf(other, "%s", self->message);
+    /* Fire targets and killtargets */
+    self->activator = other;
+    G_FireTargets(self, other);
 
     /* trigger_once removes itself after firing */
     if (!self->wait) {
@@ -1465,6 +1492,63 @@ static void SP_func_explosive(edict_t *ent, epair_t *pairs, int num_pairs)
     ent->dmg = dmg_str ? atoi(dmg_str) : 100;
     ent->dmg_radius = ent->dmg * 2;
     ent->die = explosive_die;
+
+    gi.linkentity(ent);
+}
+
+/* ==========================================================================
+   target_relay — Receives use(), fires its own target chain
+   ========================================================================== */
+
+static void target_relay_use(edict_t *self, edict_t *other, edict_t *activator)
+{
+    (void)other;
+    G_FireTargets(self, activator);
+}
+
+static void SP_target_relay(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+    ent->use = target_relay_use;
+}
+
+/* ==========================================================================
+   func_wall — Toggleable solid BSP brush
+   Spawnflags: 1 = start inactive (invisible + non-solid)
+   ========================================================================== */
+
+static void func_wall_use(edict_t *self, edict_t *other, edict_t *activator)
+{
+    (void)other; (void)activator;
+
+    if (self->solid == SOLID_BSP) {
+        /* Turn off */
+        self->solid = SOLID_NOT;
+        self->svflags |= SVF_NOCLIENT;
+        gi.unlinkentity(self);
+    } else {
+        /* Turn on */
+        self->solid = SOLID_BSP;
+        self->svflags &= ~SVF_NOCLIENT;
+        gi.linkentity(self);
+    }
+}
+
+static void SP_func_wall(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *sf_str = ED_FindValue(pairs, num_pairs, "spawnflags");
+    int sf = sf_str ? atoi(sf_str) : 0;
+
+    ent->movetype = MOVETYPE_PUSH;
+    ent->use = func_wall_use;
+
+    if (sf & 1) {
+        /* Start off */
+        ent->solid = SOLID_NOT;
+        ent->svflags |= SVF_NOCLIENT;
+    } else {
+        ent->solid = SOLID_BSP;
+    }
 
     gi.linkentity(ent);
 }

@@ -25,6 +25,7 @@ extern void R_AddDlight(vec3_t origin, float r, float g, float b,
 
 /* Forward declarations */
 static void G_AngleVectors(vec3_t angles, vec3_t fwd, vec3_t rt, vec3_t up_out);
+static void G_FireProjectile(edict_t *ent, qboolean is_grenade);
 static void WriteGame(const char *filename, qboolean autosave);
 static void ReadGame(const char *filename);
 static void WriteLevel(const char *filename);
@@ -557,11 +558,213 @@ static qboolean G_UseUtilityWeapon(edict_t *ent)
         return qtrue;
     }
 
+    /* Projectile weapons: rocket launcher, grenade */
+    if (weap == WEAP_ROCKET || weap == WEAP_GRENADE) {
+        if (ent->client->ammo[weap] <= 0) {
+            if (snd_noammo)
+                gi.sound(ent, CHAN_WEAPON, snd_noammo, 0.5f, ATTN_NORM, 0);
+            return qtrue;
+        }
+        ent->client->ammo[weap]--;
+        if (snd_weapons[weap])
+            gi.sound(ent, CHAN_WEAPON, snd_weapons[weap], 1.0f, ATTN_NORM, 0);
+        G_FireProjectile(ent, (qboolean)(weap == WEAP_GRENADE));
+        return qtrue;
+    }
+
     /* Non-damaging weapons: goggles, field pack — do nothing for now */
     if (weap == WEAP_GOGGLES || weap == WEAP_FPAK || weap == WEAP_NONE)
         return qtrue;
 
     return qfalse;
+}
+
+/*
+ * T_RadiusDamage — Deal damage to all entities within a radius
+ */
+static void T_RadiusDamage(edict_t *inflictor, edict_t *attacker,
+                            float damage, float radius)
+{
+    edict_t *touch[64];
+    int num, i;
+    vec3_t dmg_mins, dmg_maxs;
+
+    VectorSet(dmg_mins, inflictor->s.origin[0] - radius,
+                        inflictor->s.origin[1] - radius,
+                        inflictor->s.origin[2] - radius);
+    VectorSet(dmg_maxs, inflictor->s.origin[0] + radius,
+                        inflictor->s.origin[1] + radius,
+                        inflictor->s.origin[2] + radius);
+
+    num = gi.BoxEdicts(dmg_mins, dmg_maxs, touch, 64, AREA_SOLID);
+    for (i = 0; i < num; i++) {
+        edict_t *t = touch[i];
+        vec3_t diff;
+        float dist, dmg_applied;
+
+        if (!t || t == inflictor || !t->inuse || !t->takedamage)
+            continue;
+
+        /* Distance-based falloff */
+        VectorSubtract(t->s.origin, inflictor->s.origin, diff);
+        dist = VectorLength(diff);
+        if (dist > radius)
+            continue;
+
+        dmg_applied = damage * (1.0f - dist / radius);
+        if (dmg_applied < 1)
+            continue;
+
+        /* Armor absorbs for players */
+        if (t->client && t->client->armor > 0) {
+            int absorb = (int)(dmg_applied * 0.66f);
+            if (absorb > t->client->armor) absorb = t->client->armor;
+            t->client->armor -= absorb;
+            dmg_applied -= absorb;
+        }
+
+        t->health -= (int)dmg_applied;
+
+        /* Pain flash for players */
+        if (t->client) {
+            t->client->blend[0] = 1.0f;
+            t->client->blend[1] = 0.0f;
+            t->client->blend[2] = 0.0f;
+            t->client->blend[3] = 0.3f;
+            t->client->pers_health = t->health;
+        }
+
+        if (t->health <= 0 && t->die) {
+            t->die(t, inflictor, attacker, (int)dmg_applied, inflictor->s.origin);
+        }
+    }
+}
+
+/*
+ * Rocket/missile think — move and check for impact
+ */
+static void rocket_think(edict_t *self)
+{
+    trace_t tr;
+    vec3_t end;
+
+    /* Move forward */
+    VectorMA(self->s.origin, level.frametime, self->velocity, end);
+    tr = gi.trace(self->s.origin, self->mins, self->maxs, end, self, MASK_SHOT);
+
+    if (tr.fraction < 1.0f) {
+        /* Impact — explode */
+        R_ParticleEffect(tr.endpos, tr.plane.normal, 2, 32);
+        R_AddDlight(tr.endpos, 1.0f, 0.6f, 0.1f, 400.0f, 0.5f);
+        if (snd_explode)
+            gi.positioned_sound(tr.endpos, NULL, CHAN_AUTO, snd_explode, 1.0f, ATTN_NORM, 0);
+
+        VectorCopy(tr.endpos, self->s.origin);
+        T_RadiusDamage(self, self->owner, (float)self->dmg, (float)self->dmg_radius);
+
+        /* Direct hit bonus */
+        if (tr.ent && tr.ent->takedamage && tr.ent->health > 0) {
+            tr.ent->health -= self->dmg;
+            if (tr.ent->health <= 0 && tr.ent->die)
+                tr.ent->die(tr.ent, self, self->owner, self->dmg, tr.endpos);
+        }
+
+        self->inuse = qfalse;
+        gi.unlinkentity(self);
+        return;
+    }
+
+    VectorCopy(end, self->s.origin);
+
+    /* Rocket trail particles */
+    R_ParticleEffect(self->s.origin, self->velocity, 3, 2);
+
+    /* Timeout after 5 seconds */
+    if (level.time > self->teleport_time) {
+        self->inuse = qfalse;
+        gi.unlinkentity(self);
+        return;
+    }
+
+    self->nextthink = level.time + level.frametime;
+    gi.linkentity(self);
+}
+
+/*
+ * Grenade think — bounces, then detonates after timer
+ */
+static void grenade_explode(edict_t *self)
+{
+    vec3_t up = {0, 0, 1};
+
+    R_ParticleEffect(self->s.origin, up, 2, 24);
+    R_AddDlight(self->s.origin, 1.0f, 0.5f, 0.1f, 350.0f, 0.4f);
+    if (snd_explode)
+        gi.positioned_sound(self->s.origin, NULL, CHAN_AUTO, snd_explode, 1.0f, ATTN_NORM, 0);
+
+    T_RadiusDamage(self, self->owner, (float)self->dmg, (float)self->dmg_radius);
+
+    self->inuse = qfalse;
+    gi.unlinkentity(self);
+}
+
+/*
+ * G_FireProjectile — Spawn a rocket or grenade projectile
+ */
+static void G_FireProjectile(edict_t *ent, qboolean is_grenade)
+{
+    edict_t *proj;
+    vec3_t forward, right, up;
+    vec3_t start;
+
+    proj = G_AllocEdict();
+    if (!proj) return;
+
+    G_AngleVectors(ent->client->viewangles, forward, right, up);
+
+    VectorCopy(ent->s.origin, start);
+    start[2] += ent->client->viewheight;
+    VectorMA(start, 16, forward, start);
+
+    proj->classname = is_grenade ? "grenade" : "rocket";
+    proj->owner = ent;
+    proj->entity_type = ET_MISSILE;
+    proj->clipmask = MASK_SHOT;
+    proj->solid = SOLID_BBOX;
+
+    VectorSet(proj->mins, -2, -2, -2);
+    VectorSet(proj->maxs, 2, 2, 2);
+    VectorCopy(start, proj->s.origin);
+    VectorCopy(ent->client->viewangles, proj->s.angles);
+
+    if (is_grenade) {
+        proj->movetype = MOVETYPE_BOUNCE;
+        VectorScale(forward, 600, proj->velocity);
+        proj->velocity[2] += 200;  /* arc upward */
+        proj->dmg = weapon_damage[WEAP_GRENADE];
+        proj->dmg_radius = 200;
+        proj->think = grenade_explode;
+        proj->nextthink = level.time + 2.5f;  /* 2.5s fuse */
+        proj->teleport_time = level.time + 10.0f;
+    } else {
+        proj->movetype = MOVETYPE_FLYMISSILE;
+        VectorScale(forward, 1000, proj->velocity);
+        proj->dmg = weapon_damage[WEAP_ROCKET];
+        proj->dmg_radius = 150;
+        proj->think = rocket_think;
+        proj->nextthink = level.time + level.frametime;
+        proj->teleport_time = level.time + 5.0f;
+    }
+
+    /* Muzzle flash */
+    {
+        vec3_t muzzle;
+        VectorMA(start, 16, forward, muzzle);
+        R_ParticleEffect(muzzle, forward, 3, 4);
+        R_AddDlight(muzzle, 1.0f, 0.8f, 0.3f, 250.0f, 0.15f);
+    }
+
+    gi.linkentity(proj);
 }
 
 /*

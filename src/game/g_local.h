@@ -506,6 +506,7 @@ extern game_import_t gi;
 /* Entity spawning (g_spawn.c) */
 void G_SpawnEntities(const char *mapname, const char *entstring,
                      const char *spawnpoint);
+edict_t *G_AllocEdict(void);
 
 /* Entity physics (g_phys.c) */
 void G_RunEntity(edict_t *ent);
