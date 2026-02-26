@@ -263,6 +263,10 @@ void        R_ClearParticles(void);
 void        R_ParticleEffect(vec3_t org, vec3_t dir, int type, int count);
 void        R_UpdateParticles(float frametime);
 
+/* Dynamic lights */
+void        R_AddDlight(vec3_t origin, float r, float g, float b,
+                         float intensity, float duration);
+
 /* Camera */
 void        R_GetCameraOrigin(vec3_t out);
 void        R_SetCameraOrigin(vec3_t origin);

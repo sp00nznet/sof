@@ -14,8 +14,10 @@
 
 #define FRAMETIME   0.1f    /* 10 Hz game frame */
 
-/* Particle effects from renderer (unified binary) */
+/* Particle/light effects from renderer (unified binary) */
 extern void R_ParticleEffect(vec3_t org, vec3_t dir, int type, int count);
+extern void R_AddDlight(vec3_t origin, float r, float g, float b,
+                         float intensity, float duration);
 
 /* ==========================================================================
    AI Constants
@@ -291,11 +293,12 @@ static void ai_think_attack(edict_t *self)
         tr = gi.trace(start, NULL, NULL, end, self, MASK_SHOT);
 
         if (tr.fraction < 1.0f) {
-            /* Muzzle flash particles */
+            /* Muzzle flash particles and light */
             {
                 vec3_t muzzle;
                 VectorMA(start, 16, dir, muzzle);
                 R_ParticleEffect(muzzle, dir, 3, 2);
+                R_AddDlight(muzzle, 1.0f, 0.7f, 0.3f, 150.0f, 0.1f);
             }
 
             if (tr.ent && tr.ent->takedamage && tr.ent->health > 0) {

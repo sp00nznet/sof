@@ -54,6 +54,20 @@ static float    sky_rotate;
 static vec3_t   sky_axis;
 
 /* ==========================================================================
+   Dynamic Lights
+   ========================================================================== */
+
+typedef struct {
+    vec3_t  origin;
+    vec3_t  color;
+    float   intensity;
+    float   die;        /* time when light expires (from Sys_Milliseconds) */
+} r_dlight_t;
+
+static r_dlight_t   r_dlights[MAX_DLIGHTS];
+static int          r_num_dlights;
+
+/* ==========================================================================
    GL Function Pointers
    ========================================================================== */
 
@@ -283,6 +297,11 @@ void R_Shutdown(void)
     Sys_DestroyWindow();
 }
 
+/* Forward declarations — defined in later sections */
+static void R_DrawParticles(void);
+static void R_DrawDlights(void);
+static void R_UpdateDlights(void);
+
 /* ==========================================================================
    Frame Rendering
    ========================================================================== */
@@ -305,8 +324,9 @@ void R_BeginFrame(float camera_separation)
     if (frametime < 0.001f) frametime = 0.001f;
     last_frame_time = now;
 
-    /* Update particles */
+    /* Update particles and dynamic lights */
     R_UpdateParticles(frametime);
+    R_UpdateDlights();
 
     /* Clear screen */
     qglClearColor(0.1f, 0.1f, 0.15f, 1.0f);
@@ -385,9 +405,6 @@ static void R_Setup3DModelview(refdef_t *fd)
     /* Translate to view origin (inverted) */
     qglTranslatef(-fd->vieworg[0], -fd->vieworg[1], -fd->vieworg[2]);
 }
-
-/* Forward declaration — particle rendering (defined in Particle System section) */
-static void R_DrawParticles(void);
 
 /* ==========================================================================
    Entity Rendering
@@ -531,6 +548,9 @@ void R_RenderFrame(refdef_t *fd)
 
     /* Draw particles */
     R_DrawParticles();
+
+    /* Draw dynamic lights */
+    R_DrawDlights();
 
     /* Full-screen blend (damage flash, underwater tint) */
     if (fd->blend[3] > 0) {
@@ -735,6 +755,87 @@ static void R_DrawParticles(void)
         r_particle_t *p = &r_particles[i];
         qglColor4f(p->color[0], p->color[1], p->color[2], p->color[3]);
         qglVertex3f(p->org[0], p->org[1], p->org[2]);
+    }
+    qglEnd();
+
+    if (qglPointSize) qglPointSize(1.0f);
+    qglDepthMask(GL_TRUE);
+    qglDisable(GL_BLEND);
+    qglEnable(GL_TEXTURE_2D);
+    qglColor4f(1, 1, 1, 1);
+}
+
+/* ==========================================================================
+   Dynamic Lights
+   ========================================================================== */
+
+/*
+ * R_AddDlight - Add a temporary dynamic light
+ */
+void R_AddDlight(vec3_t origin, float r, float g, float b, float intensity,
+                  float duration)
+{
+    r_dlight_t *dl;
+
+    if (r_num_dlights >= MAX_DLIGHTS)
+        return;
+
+    dl = &r_dlights[r_num_dlights++];
+    VectorCopy(origin, dl->origin);
+    dl->color[0] = r; dl->color[1] = g; dl->color[2] = b;
+    dl->intensity = intensity;
+    dl->die = (float)Sys_Milliseconds() + duration * 1000.0f;
+}
+
+/*
+ * R_UpdateDlights - Remove expired lights
+ */
+static void R_UpdateDlights(void)
+{
+    int i;
+    float now = (float)Sys_Milliseconds();
+
+    for (i = 0; i < r_num_dlights; ) {
+        if (r_dlights[i].die < now) {
+            r_dlights[i] = r_dlights[--r_num_dlights];
+            continue;
+        }
+        /* Fade intensity as it expires */
+        {
+            float remaining = (r_dlights[i].die - now) * 0.001f;
+            if (remaining < 0.2f) {
+                float scale = remaining / 0.2f;
+                r_dlights[i].intensity *= scale;
+            }
+        }
+        i++;
+    }
+}
+
+/*
+ * R_DrawDlights - Render dynamic lights as additive billboards
+ * Simple GL 1.1 approach: draw a bright point-sprite at each light pos.
+ */
+static void R_DrawDlights(void)
+{
+    int i;
+
+    if (r_num_dlights == 0)
+        return;
+
+    qglDisable(GL_TEXTURE_2D);
+    qglEnable(GL_BLEND);
+    qglBlendFunc(GL_ONE, GL_ONE);   /* additive blending */
+    qglDepthMask(GL_FALSE);
+    if (qglPointSize) qglPointSize(8.0f);
+
+    qglBegin(GL_POINTS);
+    for (i = 0; i < r_num_dlights; i++) {
+        r_dlight_t *dl = &r_dlights[i];
+        float scale = dl->intensity / 200.0f;
+        qglColor4f(dl->color[0] * scale, dl->color[1] * scale,
+                    dl->color[2] * scale, 1.0f);
+        qglVertex3f(dl->origin[0], dl->origin[1], dl->origin[2]);
     }
     qglEnd();
 

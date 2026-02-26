@@ -29,8 +29,10 @@
 
 #include "g_local.h"
 
-/* Particle effects from renderer (unified binary) */
+/* Particle/light effects from renderer (unified binary) */
 extern void R_ParticleEffect(vec3_t org, vec3_t dir, int type, int count);
+extern void R_AddDlight(vec3_t origin, float r, float g, float b,
+                         float intensity, float duration);
 
 /* Monster spawn functions (g_ai.c) — use void* for epair_t since they don't parse it */
 extern void SP_monster_soldier(edict_t *ent, void *pairs, int num_pairs);
@@ -1123,8 +1125,9 @@ static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
 
     (void)inflictor; (void)damage; (void)point;
 
-    /* Explosion particles */
+    /* Explosion particles and light */
     R_ParticleEffect(self->s.origin, up, 2, 32);
+    R_AddDlight(self->s.origin, 1.0f, 0.6f, 0.1f, 400.0f, 0.5f);
 
     /* Fire targets */
     if (self->target)

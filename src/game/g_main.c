@@ -16,8 +16,10 @@
 
 #include "g_local.h"
 
-/* Particle effects from renderer (unified binary) */
+/* Particle/light effects from renderer (unified binary) */
 extern void R_ParticleEffect(vec3_t org, vec3_t dir, int type, int count);
+extern void R_AddDlight(vec3_t origin, float r, float g, float b,
+                         float intensity, float duration);
 
 /* Forward declarations */
 static void G_AngleVectors(vec3_t angles, vec3_t fwd, vec3_t rt, vec3_t up_out);
@@ -496,12 +498,13 @@ static void G_FireHitscan(edict_t *ent)
     /* Direction from view angles */
     G_AngleVectors(ent->client->viewangles, forward, right, up);
 
-    /* Muzzle flash particles */
+    /* Muzzle flash particles and light */
     {
         vec3_t muzzle;
         VectorMA(start, 16, forward, muzzle);
         VectorMA(muzzle, 6, right, muzzle);
         R_ParticleEffect(muzzle, forward, 3, 3);
+        R_AddDlight(muzzle, 1.0f, 0.8f, 0.4f, 200.0f, 0.1f);
     }
 
     /* Trace 8192 units forward */
@@ -520,8 +523,9 @@ static void G_FireHitscan(edict_t *ent)
                        damage, tr.ent->health);
 
             if (tr.ent->health <= 0 && tr.ent->die) {
-                /* Explosion particles on kill */
+                /* Explosion particles and light on kill */
                 R_ParticleEffect(tr.endpos, tr.plane.normal, 2, 16);
+                R_AddDlight(tr.endpos, 1.0f, 0.5f, 0.1f, 300.0f, 0.3f);
                 tr.ent->die(tr.ent, ent, ent, damage, tr.endpos);
             }
         } else {
