@@ -829,6 +829,23 @@ qboolean SV_GetPlayerAmmo(int *ammo, int *ammo_max)
 }
 
 /*
+ * SV_GetEntityCount — Get active entity count for debug HUD
+ */
+int SV_GetEntityCount(void)
+{
+    int count = 0, i;
+
+    if (!ge || !ge->edicts)
+        return 0;
+
+    for (i = 0; i < ge->num_edicts; i++) {
+        edict_t *e = (edict_t *)((byte *)ge->edicts + i * ge->edict_size);
+        if (e->inuse) count++;
+    }
+    return count;
+}
+
+/*
  * SV_RunGameFrame — Called from SV_Frame at 10Hz
  * Drives the game module's RunFrame which iterates all entities.
  */

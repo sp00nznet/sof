@@ -526,6 +526,43 @@ static float weapon_firerate[WEAP_COUNT] = {
 static float player_next_fire;  /* level.time when player can fire again */
 
 /*
+ * G_UseUtilityWeapon — Handle non-hitscan weapons (medkit, etc.)
+ * Returns qtrue if handled (caller should not fire hitscan).
+ */
+static qboolean G_UseUtilityWeapon(edict_t *ent)
+{
+    int weap = ent->client->pers_weapon;
+
+    if (weap == WEAP_MEDKIT) {
+        if (ent->health >= ent->max_health)
+            return qtrue;  /* already full */
+        if (ent->client->ammo[WEAP_MEDKIT] <= 0)
+            return qtrue;  /* no charges */
+
+        ent->client->ammo[WEAP_MEDKIT]--;
+        ent->health += 25;
+        if (ent->health > ent->max_health)
+            ent->health = ent->max_health;
+        ent->client->pers_health = ent->health;
+
+        /* Green heal flash */
+        ent->client->blend[0] = 0.0f;
+        ent->client->blend[1] = 0.8f;
+        ent->client->blend[2] = 0.0f;
+        ent->client->blend[3] = 0.2f;
+
+        gi.cprintf(ent, PRINT_ALL, "Used medkit (+25 HP)\n");
+        return qtrue;
+    }
+
+    /* Non-damaging weapons: goggles, field pack — do nothing for now */
+    if (weap == WEAP_GOGGLES || weap == WEAP_FPAK || weap == WEAP_NONE)
+        return qtrue;
+
+    return qfalse;
+}
+
+/*
  * G_FireHitscan — Fire a hitscan trace from the player's eye
  */
 static void G_FireHitscan(edict_t *ent)
@@ -542,6 +579,12 @@ static void G_FireHitscan(edict_t *ent)
     /* Weapon switch delay — can't fire while switching */
     if (ent->client->weapon_change_time > level.time)
         return;
+
+    /* Handle utility weapons (medkit, etc.) */
+    if (G_UseUtilityWeapon(ent)) {
+        player_next_fire = level.time + ((weap > 0 && weap < WEAP_COUNT) ? weapon_firerate[weap] : 0.5f);
+        return;
+    }
 
     /* Check ammo (knife/melee weapons don't use ammo) */
     if (weap > 0 && weap < WEAP_COUNT && weap != WEAP_KNIFE) {

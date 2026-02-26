@@ -188,6 +188,8 @@ static void SP_func_breakable(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_explosive(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_trigger_push(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_trigger_hurt(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_trigger_teleport(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_misc_teleport_dest(edict_t *ent, epair_t *pairs, int num_pairs);
 
 /*
  * Spawn function dispatch table
@@ -237,6 +239,9 @@ static spawn_func_t spawn_funcs[] = {
     { "trigger_push",               SP_trigger_push },
     { "trigger_hurt",               SP_trigger_hurt },
     { "trigger_gravity",            SP_trigger_multiple },
+    { "trigger_teleport",           SP_trigger_teleport },
+    { "misc_teleport_dest",         SP_misc_teleport_dest },
+    { "info_teleport_destination",  SP_misc_teleport_dest },
 
     /* Targets */
     { "target_speaker",             SP_target_speaker },
@@ -997,6 +1002,73 @@ static void SP_trigger_hurt(edict_t *ent, epair_t *pairs, int num_pairs)
 }
 
 /* ==========================================================================
+   trigger_teleport — Teleports touching entities to target destination
+   ========================================================================== */
+
+static edict_t *G_FindByTargetname(const char *targetname)
+{
+    extern game_export_t globals;
+    int i;
+    for (i = 0; i < globals.num_edicts; i++) {
+        edict_t *e = &globals.edicts[i];
+        if (e->inuse && e->targetname &&
+            Q_stricmp(e->targetname, targetname) == 0)
+            return e;
+    }
+    return NULL;
+}
+
+static void teleport_touch(edict_t *self, edict_t *other, void *plane, csurface_t *surf)
+{
+    edict_t *dest;
+
+    (void)plane; (void)surf;
+
+    if (!other || !other->inuse)
+        return;
+
+    if (!self->target)
+        return;
+
+    dest = G_FindByTargetname(self->target);
+    if (!dest) {
+        gi.dprintf("trigger_teleport: can't find target %s\n", self->target);
+        return;
+    }
+
+    /* Teleport: set position, clear velocity, set angles */
+    VectorCopy(dest->s.origin, other->s.origin);
+    other->s.origin[2] += 10;  /* slight lift to avoid stuck in floor */
+    VectorClear(other->velocity);
+
+    if (other->client) {
+        VectorCopy(dest->s.angles, other->client->viewangles);
+        other->client->ps.pm_type = PM_NORMAL;
+    }
+    VectorCopy(dest->s.angles, other->s.angles);
+
+    gi.linkentity(other);
+}
+
+static void SP_trigger_teleport(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+
+    ent->solid = SOLID_TRIGGER;
+    ent->touch = teleport_touch;
+    gi.linkentity(ent);
+}
+
+static void SP_misc_teleport_dest(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+
+    /* Just a destination marker — needs targetname set by entity parser */
+    ent->solid = SOLID_NOT;
+    ent->movetype = MOVETYPE_NONE;
+}
+
+/* ==========================================================================
    Level Transition
    ========================================================================== */
 
@@ -1380,16 +1452,40 @@ static void target_speaker_use(edict_t *self, edict_t *other, edict_t *activator
 {
     (void)other; (void)activator;
     if (self->noise_index)
-        gi.sound(self, 0, self->noise_index, 1.0f, 1.0f, 0);
+        gi.sound(self, CHAN_AUTO, self->noise_index, self->volume ? self->volume : 1.0f,
+                 self->attenuation ? self->attenuation : 1.0f, 0);
+}
+
+/* Looping speaker think — replays sound periodically */
+static void target_speaker_loop_think(edict_t *self)
+{
+    if (self->noise_index)
+        gi.sound(self, CHAN_AUTO, self->noise_index, self->volume ? self->volume : 1.0f,
+                 self->attenuation ? self->attenuation : 1.0f, 0);
+    self->nextthink = level.time + self->wait;
 }
 
 static void SP_target_speaker(edict_t *ent, epair_t *pairs, int num_pairs)
 {
     const char *noise = ED_FindValue(pairs, num_pairs, "noise");
+    const char *vol_str = ED_FindValue(pairs, num_pairs, "volume");
+    const char *atten_str = ED_FindValue(pairs, num_pairs, "attenuation");
+
     if (noise && noise[0]) {
         ent->noise_index = gi.soundindex(noise);
     }
+    ent->volume = vol_str ? (float)atof(vol_str) : 1.0f;
+    ent->attenuation = atten_str ? (float)atof(atten_str) : 1.0f;
+
     ent->use = target_speaker_use;
+
+    /* Spawnflag 1 = looping: auto-play with repeat interval */
+    if (ent->style & 1) {
+        if (!ent->wait || ent->wait < 0.1f)
+            ent->wait = 5.0f;  /* default loop every 5 seconds */
+        ent->think = target_speaker_loop_think;
+        ent->nextthink = level.time + 1.0f;  /* first play after 1s */
+    }
 }
 
 static void SP_misc_model(edict_t *ent, epair_t *pairs, int num_pairs)

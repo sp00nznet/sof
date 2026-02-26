@@ -37,6 +37,7 @@ extern qboolean SV_GetPlayerHealth(int *health, int *max_health);
 extern const char *SV_GetPlayerWeapon(void);
 extern qboolean SV_GetPlayerAmmo(int *ammo, int *ammo_max);
 extern void SV_GetPlayerBlend(float *blend);
+extern int  SV_GetEntityCount(void);
 
 /* Forward declaration — freecam toggle (defined below in client section) */
 static void Cmd_Freecam_f(void);
@@ -633,6 +634,54 @@ static void SCR_DrawHUD(float frametime)
         R_DrawString((g_display.width - 14 * 8) / 2, g_display.height / 2 - 16, "YOU ARE DEAD");
         R_SetDrawColor(0.8f, 0.8f, 0.8f, 1.0f);
         R_DrawString((g_display.width - 23 * 8) / 2, g_display.height / 2, "Press FIRE to respawn");
+        R_SetDrawColor(0.0f, 1.0f, 0.0f, 1.0f);
+    }
+
+    /* Developer HUD — FPS, position, entity count */
+    if (developer && developer->value) {
+        static int  fps_frame_count;
+        static float fps_next_update;
+        static int  fps_display;
+        vec3_t pos, ang;
+        float vh = 0;
+
+        /* FPS counter — update once per second */
+        fps_frame_count++;
+        if (cl_time >= fps_next_update) {
+            fps_display = fps_frame_count;
+            fps_frame_count = 0;
+            fps_next_update = cl_time + 1.0f;
+        }
+
+        R_SetDrawColor(1.0f, 1.0f, 0.0f, 1.0f);
+
+        /* FPS — top right */
+        {
+            char fpsbuf[16];
+            int flen, fx;
+            snprintf(fpsbuf, sizeof(fpsbuf), "FPS: %d", fps_display);
+            flen = (int)strlen(fpsbuf);
+            fx = g_display.width - 8 - flen * 8;
+            R_DrawString(fx, 8, fpsbuf);
+        }
+
+        /* Position — top left */
+        if (SV_GetPlayerState(pos, ang, &vh)) {
+            char posbuf[64];
+            snprintf(posbuf, sizeof(posbuf), "%.0f %.0f %.0f", pos[0], pos[1], pos[2]);
+            R_DrawString(8, 8, posbuf);
+        }
+
+        /* Entity count — below FPS */
+        {
+            char entbuf[32];
+            int elen, ex;
+            snprintf(entbuf, sizeof(entbuf), "Ents: %d", SV_GetEntityCount());
+            elen = (int)strlen(entbuf);
+            ex = g_display.width - 8 - elen * 8;
+            R_DrawString(ex, 20, entbuf);
+        }
+
         R_SetDrawColor(0.0f, 1.0f, 0.0f, 1.0f);
     }
 }
