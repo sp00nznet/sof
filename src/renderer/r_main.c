@@ -16,6 +16,7 @@
  */
 
 #include "r_local.h"
+#include "../game/g_local.h"
 
 /* ==========================================================================
    GL State
@@ -360,6 +361,42 @@ static void R_Setup3DModelview(refdef_t *fd)
     qglTranslatef(-fd->vieworg[0], -fd->vieworg[1], -fd->vieworg[2]);
 }
 
+/* ==========================================================================
+   Entity Rendering
+   Iterate game entity list and draw inline BSP models (func_door, etc.)
+   ========================================================================== */
+
+/* Access game's entity list through engine bridge */
+extern game_export_t *SV_GetGameExport(void);
+extern const char *SV_GetConfigstring(int index);
+
+static void R_DrawBrushEntities(void)
+{
+    game_export_t *ge = SV_GetGameExport();
+    int i;
+
+    if (!ge || !ge->edicts || ge->num_edicts <= 0)
+        return;
+
+    for (i = 1; i < ge->num_edicts; i++) {
+        edict_t *ent = (edict_t *)((byte *)ge->edicts + i * ge->edict_size);
+        const char *model_name;
+
+        if (!ent->inuse)
+            continue;
+        if (ent->s.modelindex <= 0)
+            continue;
+
+        /* Check if this is an inline BSP model (*N) */
+        model_name = SV_GetConfigstring(CS_MODELS + ent->s.modelindex);
+        if (!model_name || model_name[0] != '*')
+            continue;
+
+        /* Extract BSP submodel index from "*N" name */
+        R_DrawBrushModel(atoi(model_name + 1), ent->s.origin, ent->s.angles);
+    }
+}
+
 /*
  * R_RenderFrame - Render a 3D scene from a refdef_t
  *
@@ -391,8 +428,9 @@ void R_RenderFrame(refdef_t *fd)
     if (R_WorldLoaded() && r_drawworld->value)
         R_DrawWorld();
 
-    /* TODO: R_DrawEntities (entity_t list from refdef) */
-    /* TODO: R_DrawParticles (particle_t list from refdef) */
+    /* Draw brush entities (inline BSP models) */
+    if (r_drawentities->value)
+        R_DrawBrushEntities();
 
     /* Full-screen blend (damage flash, underwater tint) */
     if (fd->blend[3] > 0) {

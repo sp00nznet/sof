@@ -208,8 +208,18 @@ static int GI_imageindex(const char *name)
     return SV_FindIndex(name, CS_IMAGES, MAX_IMAGES);
 }
 
+/* Forward declarations — renderer and entity linking */
+extern bsp_world_t *R_GetWorldModel(void);
+extern void SV_LinkEdict(edict_t *ent);
+extern void SV_UnlinkEdict(edict_t *ent);
+extern int  SV_AreaEdicts(vec3_t mins, vec3_t maxs, edict_t **list,
+                          int maxcount, int areatype);
+extern void SV_ClearWorld(void);
+
 static void GI_setmodel(edict_t *ent, const char *name)
 {
+    bsp_world_t *world;
+
     if (!ent || !name)
         return;
 
@@ -217,12 +227,19 @@ static void GI_setmodel(edict_t *ent, const char *name)
 
     /* Inline BSP models (*1, *2, etc.) — set bounding box from submodel */
     if (name[0] == '*') {
-        /* TODO: look up submodel bounds from BSP and set ent->mins/maxs */
+        int submodel = atoi(name + 1);
+        world = R_GetWorldModel();
+
+        if (world && world->loaded && submodel > 0 &&
+            submodel < world->num_models) {
+            bsp_model_t *mod = &world->models[submodel];
+            VectorCopy(mod->mins, ent->mins);
+            VectorCopy(mod->maxs, ent->maxs);
+            ent->solid = SOLID_BSP;
+            SV_LinkEdict(ent);
+        }
     }
 }
-
-/* Collision — forward to CM_BoxTrace / CM_PointContents with loaded BSP */
-extern bsp_world_t *R_GetWorldModel(void);
 
 static trace_t GI_trace(vec3_t start, vec3_t mins, vec3_t maxs,
                         vec3_t end, edict_t *passent, int contentmask)
@@ -263,13 +280,6 @@ static qboolean GI_inPHS(vec3_t p1, vec3_t p2)
     (void)p1; (void)p2;
     return qtrue;
 }
-
-/* Entity linking — forward to sv_world.c */
-extern void SV_LinkEdict(edict_t *ent);
-extern void SV_UnlinkEdict(edict_t *ent);
-extern int  SV_AreaEdicts(vec3_t mins, vec3_t maxs, edict_t **list,
-                          int maxcount, int areatype);
-extern void SV_ClearWorld(void);
 
 static void GI_setorigin(edict_t *ent, vec3_t origin)
 {

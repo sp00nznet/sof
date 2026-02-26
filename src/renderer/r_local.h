@@ -249,6 +249,8 @@ GLuint      R_GetFaceLightmapTexture(int face_idx);
 void        R_LoadWorldMap(const char *name);
 qboolean    R_WorldLoaded(void);
 void        R_DrawWorld(void);
+void        R_DrawSingleFace(bsp_world_t *world, int face_idx);
+void        R_DrawBrushModel(int modelindex, vec3_t origin, vec3_t angles);
 void        R_RenderWorldView(void);
 void        R_InitSurfCommands(void);
 

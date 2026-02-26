@@ -311,7 +311,7 @@ static void R_SetFaceColor(bsp_world_t *world, bsp_face_t *face)
 /*
  * R_DrawSingleFace - Draw one face with texture and lightmap binding
  */
-static void R_DrawSingleFace(bsp_world_t *world, int face_idx)
+void R_DrawSingleFace(bsp_world_t *world, int face_idx)
 {
     bsp_face_t *face = &world->faces[face_idx];
     image_t *img = NULL;
@@ -516,6 +516,41 @@ void R_RenderWorldView(void)
 
     /* Render world geometry */
     R_DrawWorld();
+}
+
+/* ==========================================================================
+   Brush Model Rendering
+   Draw inline BSP models (func_door, func_plat, etc.)
+   ========================================================================== */
+
+void R_DrawBrushModel(int modelindex, vec3_t origin, vec3_t angles)
+{
+    bsp_world_t *world = &r_worldmodel;
+    bsp_model_t *mod;
+    int i;
+
+    if (!r_worldloaded || modelindex <= 0 || modelindex >= world->num_models)
+        return;
+
+    mod = &world->models[modelindex];
+
+    qglPushMatrix();
+    qglTranslatef(origin[0], origin[1], origin[2]);
+
+    if (angles[0] || angles[1] || angles[2]) {
+        qglRotatef(angles[1], 0, 0, 1);  /* yaw */
+        qglRotatef(angles[0], 0, 1, 0);  /* pitch */
+        qglRotatef(angles[2], 1, 0, 0);  /* roll */
+    }
+
+    /* Render all faces belonging to this submodel */
+    for (i = 0; i < mod->numfaces; i++) {
+        int face_idx = mod->firstface + i;
+        if (face_idx >= 0 && face_idx < world->num_faces)
+            R_DrawSingleFace(world, face_idx);
+    }
+
+    qglPopMatrix();
 }
 
 /* ==========================================================================
