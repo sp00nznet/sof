@@ -540,6 +540,24 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
     if (ucmd->buttons & BUTTON_ATTACK)
         G_FireHitscan(ent);
 
+    /* Use interaction — short-range trace to find usable entities */
+    if (ucmd->buttons & BUTTON_USE) {
+        vec3_t use_start, use_end, use_fwd, use_rt, use_up;
+        trace_t use_tr;
+
+        VectorCopy(ent->s.origin, use_start);
+        use_start[2] += client->viewheight;
+        G_AngleVectors(client->viewangles, use_fwd, use_rt, use_up);
+        VectorMA(use_start, 96, use_fwd, use_end);  /* 96 unit range */
+
+        use_tr = gi.trace(use_start, NULL, NULL, use_end, ent, MASK_SHOT);
+        if (use_tr.fraction < 1.0f && use_tr.ent) {
+            edict_t *target = use_tr.ent;
+            if (target->use)
+                target->use(target, ent, ent);
+        }
+    }
+
     gi.linkentity(ent);
 }
 

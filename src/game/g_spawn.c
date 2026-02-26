@@ -172,6 +172,8 @@ static void SP_func_rotating(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_button(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_target_changelevel(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_timer(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_breakable(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_explosive(edict_t *ent, epair_t *pairs, int num_pairs);
 
 /*
  * Spawn function dispatch table
@@ -227,6 +229,11 @@ static spawn_func_t spawn_funcs[] = {
     { "target_changelevel",         SP_target_changelevel },
     { "target_explosion",           SP_target_speaker },
     { "target_temp_entity",         SP_target_speaker },
+
+    /* Breakable/explosive */
+    { "func_breakable",             SP_func_breakable },
+    { "func_explosive",             SP_func_explosive },
+    { "misc_explobox",              SP_func_explosive },
 
     /* Misc */
     { "misc_model",                 SP_misc_model },
@@ -1035,6 +1042,105 @@ static void SP_func_timer(edict_t *ent, epair_t *pairs, int num_pairs)
             ent->nextthink = level.time + 1.0f + ent->wait + ent->random * gi.flrand(-1.0f, 1.0f);
         }
     }
+}
+
+/* ==========================================================================
+   Breakable / Explosive Entities
+   ========================================================================== */
+
+static void breakable_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
+                          int damage, vec3_t point)
+{
+    (void)inflictor; (void)damage; (void)point;
+
+    /* Fire targets on destruction */
+    if (self->target)
+        G_UseTargets(attacker, self->target);
+
+    /* Remove the entity */
+    self->takedamage = DAMAGE_NO;
+    self->solid = SOLID_NOT;
+    self->inuse = qfalse;
+    gi.unlinkentity(self);
+}
+
+static void SP_func_breakable(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *health_str = ED_FindValue(pairs, num_pairs, "health");
+
+    (void)pairs; (void)num_pairs;
+
+    ent->solid = SOLID_BSP;
+    ent->movetype = MOVETYPE_PUSH;
+    ent->takedamage = DAMAGE_YES;
+    ent->health = health_str ? atoi(health_str) : 50;
+    ent->max_health = ent->health;
+    ent->die = breakable_die;
+
+    gi.linkentity(ent);
+}
+
+static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
+                          int damage, vec3_t point)
+{
+    (void)inflictor; (void)damage; (void)point;
+
+    /* Fire targets */
+    if (self->target)
+        G_UseTargets(attacker, self->target);
+
+    /* Damage nearby entities */
+    {
+        edict_t *touch[32];
+        int num, i;
+        vec3_t dmg_mins, dmg_maxs;
+        float radius = self->dmg_radius ? (float)self->dmg_radius : 128.0f;
+
+        VectorSet(dmg_mins, self->s.origin[0] - radius,
+                            self->s.origin[1] - radius,
+                            self->s.origin[2] - radius);
+        VectorSet(dmg_maxs, self->s.origin[0] + radius,
+                            self->s.origin[1] + radius,
+                            self->s.origin[2] + radius);
+
+        num = gi.BoxEdicts(dmg_mins, dmg_maxs, touch, 32, AREA_SOLID);
+        for (i = 0; i < num; i++) {
+            edict_t *t = touch[i];
+            if (!t || t == self || !t->inuse || !t->takedamage)
+                continue;
+            {
+                int explosion_dmg = self->dmg ? self->dmg : 100;
+                t->health -= explosion_dmg;
+                if (t->health <= 0 && t->die)
+                    t->die(t, self, attacker, explosion_dmg, self->s.origin);
+            }
+        }
+    }
+
+    /* Remove self */
+    self->takedamage = DAMAGE_NO;
+    self->solid = SOLID_NOT;
+    self->inuse = qfalse;
+    gi.unlinkentity(self);
+}
+
+static void SP_func_explosive(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *health_str = ED_FindValue(pairs, num_pairs, "health");
+    const char *dmg_str = ED_FindValue(pairs, num_pairs, "dmg");
+
+    (void)pairs; (void)num_pairs;
+
+    ent->solid = SOLID_BSP;
+    ent->movetype = MOVETYPE_PUSH;
+    ent->takedamage = DAMAGE_YES;
+    ent->health = health_str ? atoi(health_str) : 30;
+    ent->max_health = ent->health;
+    ent->dmg = dmg_str ? atoi(dmg_str) : 100;
+    ent->dmg_radius = ent->dmg * 2;
+    ent->die = explosive_die;
+
+    gi.linkentity(ent);
 }
 
 static void target_speaker_use(edict_t *self, edict_t *other, edict_t *activator)

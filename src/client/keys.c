@@ -361,4 +361,6 @@ void Key_Init(void)
     Key_SetBinding(K_TAB, "+scores");
     Key_SetBinding(K_MWHEELUP, "cmd weapnext");
     Key_SetBinding(K_MWHEELDOWN, "cmd weapprev");
+    Key_SetBinding('e', "+use");
+    Key_SetBinding('r', "cmd reload");
 }
