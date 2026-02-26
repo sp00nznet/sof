@@ -345,6 +345,18 @@ struct gclient_s {
 
     /* Flashlight */
     qboolean        flashlight_on;          /* flashlight toggle */
+
+    /* Night vision goggles */
+    qboolean        goggles_on;             /* NVG active */
+    float           goggles_battery;        /* battery remaining (0-100) */
+
+    /* Field pack */
+    int             fpak_count;             /* field packs carried (max 3) */
+    float           fpak_heal_end;          /* level.time when trickle heal ends */
+    int             fpak_heal_remaining;    /* HP left to heal */
+
+    /* Spawn protection */
+    float           invuln_time;            /* level.time when invulnerability ends */
 };
 
 /* ==========================================================================

@@ -1104,10 +1104,10 @@ static void trigger_hurt_touch(edict_t *self, edict_t *other, void *plane, csurf
     if (!other->takedamage)
         return;
 
-    /* Debounce — don't damage every frame */
+    /* Debounce — use 'wait' key or default 1 second */
     if (self->dmg_debounce_time > level.time)
         return;
-    self->dmg_debounce_time = level.time + 1.0f;  /* 1 second between hits */
+    self->dmg_debounce_time = level.time + (self->wait ? self->wait : 1.0f);
 
     damage = self->dmg ? self->dmg : 5;
     other->health -= damage;
@@ -1133,7 +1133,7 @@ static void trigger_hurt_touch(edict_t *self, edict_t *other, void *plane, csurf
 
 static void SP_trigger_hurt(edict_t *ent, epair_t *pairs, int num_pairs)
 {
-    const char *dmg_str;
+    const char *dmg_str, *wait_str;
 
     ent->solid = SOLID_TRIGGER;
     ent->touch = trigger_hurt_touch;
@@ -1141,6 +1141,10 @@ static void SP_trigger_hurt(edict_t *ent, epair_t *pairs, int num_pairs)
     /* Parse damage amount */
     dmg_str = ED_FindValue(pairs, num_pairs, "dmg");
     ent->dmg = dmg_str ? atoi(dmg_str) : 5;
+
+    /* Parse damage interval (default 1.0s) */
+    wait_str = ED_FindValue(pairs, num_pairs, "wait");
+    ent->wait = wait_str ? (float)atof(wait_str) : 1.0f;
 
     gi.linkentity(ent);
 }
@@ -2439,6 +2443,16 @@ static void item_touch(edict_t *self, edict_t *other, void *plane, csurface_t *s
         other->client->armor += give;
         if (other->client->armor > other->client->armor_max)
             other->client->armor = other->client->armor_max;
+    }
+    /* Field pack pickup */
+    else if (strstr(self->classname, "fpak") || strstr(self->classname, "field_pack")) {
+        if (other->client->fpak_count >= 3)
+            return;  /* max 3 field packs */
+        other->client->fpak_count++;
+    }
+    /* Goggles pickup — refill battery */
+    else if (strstr(self->classname, "goggles") || strstr(self->classname, "nightvision")) {
+        other->client->goggles_battery = 100.0f;
     }
     /* Weapon/ammo pickup */
     else {

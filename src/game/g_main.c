@@ -35,6 +35,7 @@ static void WriteLevel(const char *filename);
 static void ReadLevel(const char *filename);
 static void G_UpdateDecals(void);
 static void G_AddDecal(vec3_t origin, vec3_t normal, int type);
+static void G_SpawnGibs(edict_t *ent, int count);
 
 /* ==========================================================================
    Globals
@@ -456,6 +457,12 @@ static void ClientBegin(edict_t *ent)
         ent->client->next_pain_sound = 0;
         ent->client->reloading_weapon = 0;
         ent->client->reload_finish_time = 0;
+        ent->client->goggles_on = qfalse;
+        ent->client->goggles_battery = 100.0f;
+        ent->client->fpak_count = 0;
+        ent->client->fpak_heal_remaining = 0;
+        ent->client->fpak_heal_end = 0;
+        ent->client->invuln_time = 0;
 
         /* Initialize magazines to full for all weapons */
         {
@@ -952,8 +959,47 @@ static qboolean G_UseUtilityWeapon(edict_t *ent)
         return qtrue;
     }
 
-    /* Non-damaging weapons: goggles, field pack — do nothing for now */
-    if (weap == WEAP_GOGGLES || weap == WEAP_FPAK || weap == WEAP_NONE)
+    /* Night vision goggles: toggle on/off */
+    if (weap == WEAP_GOGGLES) {
+        if (ent->client->goggles_battery <= 0 && !ent->client->goggles_on) {
+            gi.cprintf(ent, PRINT_ALL, "Goggles battery dead\n");
+            return qtrue;
+        }
+        ent->client->goggles_on = !ent->client->goggles_on;
+        gi.cprintf(ent, PRINT_ALL, "Night vision: %s\n",
+                   ent->client->goggles_on ? "ON" : "OFF");
+        return qtrue;
+    }
+
+    /* Field pack: start trickle heal */
+    if (weap == WEAP_FPAK) {
+        if (ent->client->fpak_count <= 0) {
+            gi.cprintf(ent, PRINT_ALL, "No field packs\n");
+            return qtrue;
+        }
+        if (ent->health >= ent->max_health) {
+            gi.cprintf(ent, PRINT_ALL, "Health full\n");
+            return qtrue;
+        }
+        if (ent->client->fpak_heal_remaining > 0) {
+            gi.cprintf(ent, PRINT_ALL, "Already healing\n");
+            return qtrue;
+        }
+        ent->client->fpak_count--;
+        ent->client->fpak_heal_remaining = 25;
+        ent->client->fpak_heal_end = level.time + 3.0f;
+
+        /* Mild green flash */
+        ent->client->blend[0] = 0.0f;
+        ent->client->blend[1] = 0.6f;
+        ent->client->blend[2] = 0.0f;
+        ent->client->blend[3] = 0.15f;
+
+        gi.cprintf(ent, PRINT_ALL, "Using field pack (+25 HP over 3s)\n");
+        return qtrue;
+    }
+
+    if (weap == WEAP_NONE)
         return qtrue;
 
     return qfalse;
@@ -995,6 +1041,10 @@ static void T_RadiusDamage(edict_t *inflictor, edict_t *attacker,
         if (dmg_applied < 1)
             continue;
 
+        /* Spawn invulnerability — skip damage */
+        if (t->client && t->client->invuln_time > level.time)
+            continue;
+
         /* Armor absorbs for players */
         if (t->client && t->client->armor > 0) {
             int absorb = (int)(dmg_applied * 0.66f);
@@ -1015,6 +1065,9 @@ static void T_RadiusDamage(edict_t *inflictor, edict_t *attacker,
         }
 
         if (t->health <= 0 && t->die) {
+            /* Gib on overkill from explosions */
+            if (t->health < -40)
+                G_SpawnGibs(t, 4 + gi.irand(0, 4));
             t->die(t, inflictor, attacker, (int)dmg_applied, inflictor->s.origin);
         }
     }
@@ -1268,6 +1321,87 @@ static void G_UpdateDecals(void)
             /* Stagger rendering to avoid spawning all 256 every frame */
             R_ParticleEffect(d->origin, d->normal, d->type, 1);
         }
+    }
+}
+
+/* ==========================================================================
+   Gib Physics — Physical chunks spawned on overkill deaths
+   ========================================================================== */
+
+static void gib_think(edict_t *self)
+{
+    /* Expire after 5 seconds */
+    if (level.time > self->dmg_debounce_time) {
+        self->inuse = qfalse;
+        gi.unlinkentity(self);
+        return;
+    }
+    self->nextthink = level.time + 0.1f;
+}
+
+static void gib_touch(edict_t *self, edict_t *other, void *plane, csurface_t *surf)
+{
+    (void)other; (void)surf;
+
+    /* Splat effect on first bounce */
+    if (self->dmg == 0) {
+        vec3_t up = {0, 0, 1};
+        if (plane) {
+            trace_t *tr_plane = (trace_t *)plane;
+            VectorCopy(tr_plane->plane.normal, up);
+        }
+        R_ParticleEffect(self->s.origin, up, 1, 4);  /* blood splash */
+        self->dmg = 1;  /* flag: already bounced */
+    }
+
+    /* Reduce velocity on each bounce */
+    self->velocity[0] *= 0.6f;
+    self->velocity[1] *= 0.6f;
+    self->velocity[2] *= -0.4f;
+}
+
+static void G_SpawnGibs(edict_t *ent, int count)
+{
+    int i;
+    int snd_gib;
+
+    snd_gib = gi.soundindex("player/udeath.wav");
+
+    if (snd_gib)
+        gi.sound(ent, CHAN_BODY, snd_gib, 1.0f, ATTN_NORM, 0);
+
+    for (i = 0; i < count; i++) {
+        edict_t *gib = G_AllocEdict();
+        if (!gib) break;
+
+        gib->classname = "gib";
+        gib->movetype = MOVETYPE_BOUNCE;
+        gib->solid = SOLID_NOT;
+        gib->touch = gib_touch;
+        gib->think = gib_think;
+        gib->nextthink = level.time + 0.1f;
+        gib->dmg_debounce_time = level.time + 5.0f;  /* 5s lifetime */
+        gib->dmg = 0;  /* bounce flag: not yet bounced */
+
+        VectorCopy(ent->s.origin, gib->s.origin);
+        gib->s.origin[2] += 16;  /* spawn from torso height */
+
+        /* Random outward velocity */
+        gib->velocity[0] = gi.flrand(-300.0f, 300.0f);
+        gib->velocity[1] = gi.flrand(-300.0f, 300.0f);
+        gib->velocity[2] = gi.flrand(200.0f, 500.0f);
+
+        VectorSet(gib->mins, -2, -2, -2);
+        VectorSet(gib->maxs, 2, 2, 2);
+
+        gi.linkentity(gib);
+    }
+
+    /* Big blood burst at origin */
+    {
+        vec3_t up = {0, 0, 1};
+        R_ParticleEffect(ent->s.origin, up, 1, 64);
+        R_AddDlight(ent->s.origin, 1.0f, 0.0f, 0.0f, 200.0f, 0.3f);
     }
 }
 
@@ -1551,6 +1685,12 @@ static void G_FireHitscan(edict_t *ent)
     if (tr.fraction < 1.0f) {
         /* Spawn impact particles at hit point */
         if (tr.ent && tr.ent->takedamage && tr.ent->health > 0) {
+            /* Spawn invulnerability check */
+            if (tr.ent->client && tr.ent->client->invuln_time > level.time) {
+                R_ParticleEffect(tr.endpos, tr.plane.normal, 3, 4);  /* shield spark */
+                goto hitscan_impact_done;
+            }
+
             /* Blood effect + flesh hit sound */
             R_ParticleEffect(tr.endpos, tr.plane.normal, 1, 8);
             if (snd_hit_flesh)
@@ -1615,9 +1755,10 @@ static void G_FireHitscan(edict_t *ent)
                 else if (snd_explode)
                     gi.sound(tr.ent, CHAN_AUTO, snd_explode, 1.0f, ATTN_NORM, 0);
 
-                /* Gib effect — overkill damage causes gib explosion */
+                /* Gib effect — overkill damage causes physical gibs */
                 if (tr.ent->health < -40) {
-                    R_ParticleEffect(tr.endpos, tr.plane.normal, 1, 48);
+                    int gib_count = 4 + gi.irand(0, 4);  /* 4-8 gibs */
+                    G_SpawnGibs(tr.ent, gib_count);
                 }
 
                 tr.ent->die(tr.ent, ent, ent, damage, tr.endpos);
@@ -1632,6 +1773,8 @@ static void G_FireHitscan(edict_t *ent)
                 if (tr.ent->svflags & SVF_MONSTER)
                     level.killed_monsters++;
             }
+        hitscan_impact_done:
+            (void)0;  /* label requires a statement */
         } else {
             /* Bullet impact sparks + ricochet sound */
             R_ParticleEffect(tr.endpos, tr.plane.normal, 0, 6);
@@ -1718,6 +1861,7 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
             ent->deadflag = 0;
             client->ps.pm_type = PM_NORMAL;
             client->blend[3] = 0;
+            client->invuln_time = level.time + 3.0f;  /* 3s spawn protection */
         }
         return;
     }
@@ -2022,6 +2166,43 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
 
         fl_tr = gi.trace(fl_start, NULL, NULL, fl_end, ent, MASK_SHOT);
         R_AddDlight(fl_tr.endpos, 1.0f, 1.0f, 0.9f, 300.0f, level.frametime + 0.05f);
+    }
+
+    /* Night vision goggles — green tint + ambient light boost */
+    if (client->goggles_on) {
+        client->goggles_battery -= level.frametime * 3.33f;  /* ~30s of battery */
+        if (client->goggles_battery <= 0) {
+            client->goggles_battery = 0;
+            client->goggles_on = qfalse;
+            gi.cprintf(ent, PRINT_ALL, "Goggles battery depleted\n");
+        } else {
+            /* Green screen tint */
+            client->blend[0] = 0.0f;
+            client->blend[1] = 0.4f;
+            client->blend[2] = 0.0f;
+            client->blend[3] = 0.15f;
+            /* Ambient light around player */
+            R_AddDlight(ent->s.origin, 0.2f, 0.8f, 0.2f, 400.0f, level.frametime + 0.05f);
+        }
+    }
+
+    /* Field pack trickle heal */
+    if (client->fpak_heal_remaining > 0) {
+        int heal_per_tick = (int)(25.0f * level.frametime / 3.0f);
+        if (heal_per_tick < 1) heal_per_tick = 1;
+        if (heal_per_tick > client->fpak_heal_remaining)
+            heal_per_tick = client->fpak_heal_remaining;
+
+        ent->health += heal_per_tick;
+        if (ent->health > ent->max_health)
+            ent->health = ent->max_health;
+        client->pers_health = ent->health;
+        client->fpak_heal_remaining -= heal_per_tick;
+
+        if (client->fpak_heal_remaining <= 0 || ent->health >= ent->max_health) {
+            client->fpak_heal_remaining = 0;
+            client->fpak_heal_end = 0;
+        }
     }
 
     gi.linkentity(ent);
