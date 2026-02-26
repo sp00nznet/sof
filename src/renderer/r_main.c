@@ -696,7 +696,7 @@ static void R_InitCharFont(void)
         for (py = 0; py < 7; py++) {
             byte bits = glyph[py];
             for (px = 0; px < 5; px++) {
-                if (bits & (1 << (4 - px))) {
+                if (bits & (1 << px)) {
                     int tx = cx + px + 1;
                     int ty = cy + py;
                     int ofs = (ty * 128 + tx) * 4;
