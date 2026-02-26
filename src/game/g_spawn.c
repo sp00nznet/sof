@@ -166,6 +166,7 @@ static void SP_trigger_once(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_trigger_multiple(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_target_speaker(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_misc_model(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_item_pickup(edict_t *ent, epair_t *pairs, int num_pairs);
 
 /*
  * Spawn function dispatch table
@@ -213,6 +214,40 @@ static spawn_func_t spawn_funcs[] = {
 
     /* Misc */
     { "misc_model",                 SP_misc_model },
+
+    /* Weapons (SoF) */
+    { "weapon_knife",               SP_item_pickup },
+    { "weapon_pistol1",             SP_item_pickup },
+    { "weapon_pistol2",             SP_item_pickup },
+    { "weapon_shotgun",             SP_item_pickup },
+    { "weapon_machinegun",          SP_item_pickup },
+    { "weapon_assault",             SP_item_pickup },
+    { "weapon_sniper",              SP_item_pickup },
+    { "weapon_slugger",             SP_item_pickup },
+    { "weapon_rocket",              SP_item_pickup },
+    { "weapon_flamegun",            SP_item_pickup },
+    { "weapon_mpg",                 SP_item_pickup },
+    { "weapon_grenade",             SP_item_pickup },
+
+    /* Ammo */
+    { "ammo_pistol",                SP_item_pickup },
+    { "ammo_shotgun",               SP_item_pickup },
+    { "ammo_machinegun",            SP_item_pickup },
+    { "ammo_assault",               SP_item_pickup },
+    { "ammo_sniper",                SP_item_pickup },
+    { "ammo_slugger",               SP_item_pickup },
+    { "ammo_rockets",               SP_item_pickup },
+    { "ammo_fuel",                  SP_item_pickup },
+    { "ammo_cells",                 SP_item_pickup },
+    { "ammo_grenades",              SP_item_pickup },
+
+    /* Items */
+    { "item_health",                SP_item_pickup },
+    { "item_health_small",          SP_item_pickup },
+    { "item_health_large",          SP_item_pickup },
+    { "item_armor_body",            SP_item_pickup },
+    { "item_armor_combat",          SP_item_pickup },
+    { "item_armor_jacket",          SP_item_pickup },
 
     /* Sentinel */
     { NULL, NULL }
@@ -745,6 +780,57 @@ static void SP_misc_model(edict_t *ent, epair_t *pairs, int num_pairs)
     /* Non-interactive model placement */
     ent->solid = 0;  /* SOLID_NOT */
     ent->movetype = 0;  /* MOVETYPE_NONE */
+}
+
+/* ==========================================================================
+   Item / Weapon Pickups
+   ========================================================================== */
+
+static void item_touch(edict_t *self, edict_t *other, void *plane, csurface_t *surf)
+{
+    (void)plane; (void)surf;
+
+    if (!other || !other->client)
+        return;
+
+    /* Simple pickup: print message, give health/ammo, remove item */
+    if (self->classname) {
+        if (strstr(self->classname, "health")) {
+            int heal = 25;
+            if (strstr(self->classname, "large")) heal = 100;
+            else if (strstr(self->classname, "small")) heal = 10;
+
+            if (other->health >= other->max_health)
+                return;  /* already full */
+
+            other->health += heal;
+            if (other->health > other->max_health)
+                other->health = other->max_health;
+            if (other->client)
+                other->client->pers_health = other->health;
+        }
+
+        gi.cprintf(other, PRINT_ALL, "Picked up %s\n", self->classname);
+    }
+
+    /* Remove the item */
+    self->inuse = qfalse;
+    gi.unlinkentity(self);
+}
+
+static void SP_item_pickup(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+
+    ent->solid = SOLID_TRIGGER;
+    ent->movetype = MOVETYPE_NONE;
+    ent->touch = item_touch;
+
+    /* Items have a pickup bbox */
+    VectorSet(ent->mins, -16, -16, -16);
+    VectorSet(ent->maxs, 16, 16, 16);
+
+    gi.linkentity(ent);
 }
 
 /* ==========================================================================

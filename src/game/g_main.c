@@ -341,6 +341,61 @@ static void ClientCommand(edict_t *ent)
     gi.cprintf(ent, PRINT_ALL, "Unknown command: %s\n", cmd);
 }
 
+/* ==========================================================================
+   Utility
+   ========================================================================== */
+
+static void G_AngleVectors(vec3_t angles, vec3_t fwd, vec3_t rt, vec3_t up_out)
+{
+    float angle, sr, sp, sy, cr, cp, cy;
+
+    angle = angles[1] * (3.14159265f / 180.0f);
+    sy = (float)sin(angle); cy = (float)cos(angle);
+    angle = angles[0] * (3.14159265f / 180.0f);
+    sp = (float)sin(angle); cp = (float)cos(angle);
+    angle = angles[2] * (3.14159265f / 180.0f);
+    sr = (float)sin(angle); cr = (float)cos(angle);
+
+    if (fwd) { fwd[0] = cp * cy; fwd[1] = cp * sy; fwd[2] = -sp; }
+    if (rt) { rt[0] = -sr * sp * cy + cr * -(-sy); rt[1] = -sr * sp * sy + cr * cy; rt[2] = -sr * cp; }
+    if (up_out) { up_out[0] = cr * sp * cy + -sr * -(-sy); up_out[1] = cr * sp * sy + -sr * cy; up_out[2] = cr * cp; }
+}
+
+/*
+ * G_FireHitscan — Fire a hitscan trace from the player's eye
+ */
+static void G_FireHitscan(edict_t *ent)
+{
+    vec3_t start, end, forward, right, up;
+    trace_t tr;
+    int damage = 15;
+
+    /* Fire from eye position */
+    VectorCopy(ent->s.origin, start);
+    start[2] += ent->client->viewheight;
+
+    /* Direction from view angles */
+    G_AngleVectors(ent->client->viewangles, forward, right, up);
+
+    /* Trace 8192 units forward */
+    VectorMA(start, 8192, forward, end);
+    tr = gi.trace(start, NULL, NULL, end, ent, MASK_SHOT);
+
+    if (tr.fraction < 1.0f && tr.ent) {
+        edict_t *hit = tr.ent;
+        if (hit->takedamage && hit->health > 0) {
+            hit->health -= damage;
+            gi.dprintf("Hit %s for %d damage (health: %d)\n",
+                       hit->classname ? hit->classname : "entity",
+                       damage, hit->health);
+
+            if (hit->health <= 0 && hit->die) {
+                hit->die(hit, ent, ent, damage, tr.endpos);
+            }
+        }
+    }
+}
+
 /* Pmove trace wrapper — uses player entity as passent */
 static edict_t *pm_passent;
 
@@ -396,6 +451,10 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
                 other->touch(other, ent, NULL, NULL);
         }
     }
+
+    /* Fire weapon on attack button */
+    if (ucmd->buttons & BUTTON_ATTACK)
+        G_FireHitscan(ent);
 
     gi.linkentity(ent);
 }
