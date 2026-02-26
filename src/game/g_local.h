@@ -357,6 +357,9 @@ struct gclient_s {
 
     /* Spawn protection */
     float           invuln_time;            /* level.time when invulnerability ends */
+
+    /* View bob */
+    float           bob_time;               /* sin cycle timer for head bob */
 };
 
 /* ==========================================================================

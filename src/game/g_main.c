@@ -22,6 +22,10 @@ extern void R_ParticleEffect(vec3_t org, vec3_t dir, int type, int count);
 extern void R_AddDlight(vec3_t origin, float r, float g, float b,
                          float intensity, float duration);
 
+/* HUD effects from engine (unified binary) */
+extern void SCR_AddDamageNumber(int damage, int screen_x, int screen_y);
+extern void SCR_AddPickupMessage(const char *text);
+
 /* Sound constants now in g_local.h */
 
 /* Forward declarations */
@@ -1773,6 +1777,9 @@ static void G_FireHitscan(edict_t *ent)
                 tr.ent->health -= zone_dmg;
                 damage = zone_dmg;  /* update for death check */
 
+                /* Floating damage number at crosshair area */
+                SCR_AddDamageNumber(zone_dmg, 0, 0);  /* 0,0 = use screen center */
+
                 gi.dprintf("Hit %s zone %d (x%.1f) for %d damage (health: %d)\n",
                            tr.ent->classname ? tr.ent->classname : "entity",
                            zone, zone_mult, zone_dmg, tr.ent->health);
@@ -1989,6 +1996,22 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
         if (client->viewheight < 22) {
             client->viewheight = 22;  /* standing eye height */
             ent->maxs[2] = 32;  /* full bbox height */
+        }
+    }
+
+    /* Head bob — subtle view oscillation while moving */
+    if (ent->groundentity && !ent->deadflag) {
+        float speed = (float)sqrt(ent->velocity[0] * ent->velocity[0] +
+                                   ent->velocity[1] * ent->velocity[1]);
+        if (speed > 40.0f) {
+            float bob_scale = (speed > 200.0f) ? 0.8f : speed / 250.0f;
+            float bob_freq = (speed > 200.0f) ? 12.0f : 8.0f;
+            client->bob_time += level.frametime * bob_freq;
+            client->viewheight += (int)(sinf(client->bob_time) * bob_scale);
+        } else {
+            /* Idle sway — very subtle */
+            client->bob_time += level.frametime * 2.0f;
+            client->kick_angles[2] = sinf(client->bob_time) * 0.1f;
         }
     }
 

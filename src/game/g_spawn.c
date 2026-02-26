@@ -209,6 +209,7 @@ static void SP_info_npc(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_conveyor_real(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_water(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_pendulum(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_target_monster_maker(edict_t *ent, epair_t *pairs, int num_pairs);
 
 /*
  * Spawn function dispatch table
@@ -275,6 +276,7 @@ static spawn_func_t spawn_funcs[] = {
     { "target_earthquake",          SP_target_earthquake },
     { "target_explosion",           SP_target_speaker },
     { "target_temp_entity",         SP_target_speaker },
+    { "target_monster_maker",       SP_target_monster_maker },
 
     /* Breakable/explosive */
     { "func_breakable",             SP_func_breakable },
@@ -2512,6 +2514,68 @@ static void SP_item_pickup(edict_t *ent, epair_t *pairs, int num_pairs)
     VectorSet(ent->maxs, 16, 16, 16);
 
     gi.linkentity(ent);
+}
+
+/* ==========================================================================
+   target_monster_maker — Spawns a monster at its location when triggered
+   Keys: monstertype (classname), count (max spawns, 0=infinite)
+   ========================================================================== */
+
+static void monster_maker_use(edict_t *self, edict_t *other, edict_t *activator)
+{
+    edict_t *monster;
+
+    (void)other; (void)activator;
+
+    /* Check spawn limit */
+    if (self->count > 0 && self->dmg >= self->count)
+        return;  /* dmg used as spawn counter */
+
+    monster = G_AllocEdict();
+    if (!monster) return;
+
+    VectorCopy(self->s.origin, monster->s.origin);
+    monster->s.origin[2] += 16;  /* lift slightly */
+    VectorCopy(self->s.angles, monster->s.angles);
+
+    /* Spawn the appropriate monster type */
+    {
+        const char *type = self->message ? self->message : "monster_soldier";
+        if (Q_stricmp(type, "monster_soldier_ss") == 0)
+            SP_monster_soldier_ss(monster, NULL, 0);
+        else if (Q_stricmp(type, "monster_soldier_light") == 0)
+            SP_monster_soldier_light(monster, NULL, 0);
+        else if (Q_stricmp(type, "monster_guard") == 0)
+            SP_monster_guard(monster, NULL, 0);
+        else if (Q_stricmp(type, "monster_boss") == 0)
+            SP_monster_boss(monster, NULL, 0);
+        else
+            SP_monster_soldier(monster, NULL, 0);
+    }
+
+    /* Spawn particles */
+    {
+        vec3_t up = {0, 0, 1};
+        R_ParticleEffect(monster->s.origin, up, 3, 16);
+    }
+
+    level.total_monsters++;
+    self->dmg++;  /* increment spawn counter */
+}
+
+static void SP_target_monster_maker(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *type_str = ED_FindValue(pairs, num_pairs, "monstertype");
+    const char *count_str = ED_FindValue(pairs, num_pairs, "count");
+
+    ent->use = monster_maker_use;
+    ent->solid = SOLID_NOT;
+
+    if (type_str)
+        ent->message = (char *)type_str;  /* reuse message field for type */
+
+    ent->count = count_str ? atoi(count_str) : 0;
+    ent->dmg = 0;  /* spawn counter */
 }
 
 /* ==========================================================================

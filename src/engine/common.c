@@ -104,11 +104,13 @@ static void Cmd_WriteConfig_f(void)
     Com_Printf("Wrote %s\n", filename);
 }
 
-/* Forward declarations — HUD, menu, scoreboard, chat drawing (defined below) */
+/* Forward declarations — HUD, menu, scoreboard, chat, damage, pickup drawing */
 static void SCR_DrawHUD(float frametime);
 static void SCR_DrawMenu(void);
 static void SCR_DrawScoreboard(void);
 static void SCR_DrawChat(void);
+static void SCR_DrawDamageNumbers(void);
+static void SCR_DrawPickupMessages(void);
 
 /* ANGLE2SHORT / SHORT2ANGLE for usercmd angle encoding */
 #define ANGLE2SHORT(x)  ((int)((x)*65536.0f/360.0f) & 65535)
@@ -365,6 +367,8 @@ void Qcommon_Frame(int msec)
         /* Render frame */
         R_BeginFrame(0.0f);
         SCR_DrawHUD(msec / 1000.0f);
+        SCR_DrawDamageNumbers();
+        SCR_DrawPickupMessages();
         SCR_DrawChat();
         SCR_DrawScoreboard();
         SCR_DrawMenu();
@@ -816,6 +820,131 @@ static void SCR_DrawChat(void)
 
         R_DrawString(10, y, cl->text);
         y += 12;
+    }
+
+    R_SetDrawColor(0xFF, 0xFF, 0xFF, 0xFF);
+}
+
+/* ==========================================================================
+   Floating Damage Numbers
+   ========================================================================== */
+
+#define MAX_DAMAGE_NUMS  16
+#define DAMAGE_NUM_LIFETIME  2.0f
+
+typedef struct {
+    int     value;
+    int     screen_x, screen_y;
+    float   birth_time;
+    float   vel_y;      /* rise speed in pixels/sec */
+    qboolean active;
+} damage_num_t;
+
+static damage_num_t dmg_nums[MAX_DAMAGE_NUMS];
+static int dmg_num_idx;
+
+void SCR_AddDamageNumber(int damage, int screen_x, int screen_y)
+{
+    damage_num_t *d = &dmg_nums[dmg_num_idx % MAX_DAMAGE_NUMS];
+    d->value = damage;
+    /* Default to screen center if 0,0 passed */
+    if (screen_x == 0 && screen_y == 0) {
+        screen_x = g_display.width / 2;
+        screen_y = g_display.height / 2 - 30;
+    }
+    d->screen_x = screen_x + ((rand() % 40) - 20);
+    d->screen_y = screen_y;
+    d->birth_time = (float)Sys_Milliseconds() / 1000.0f;
+    d->vel_y = -40.0f;  /* rise upward */
+    d->active = qtrue;
+    dmg_num_idx++;
+}
+
+static void SCR_DrawDamageNumbers(void)
+{
+    int i;
+    float now = (float)Sys_Milliseconds() / 1000.0f;
+
+    for (i = 0; i < MAX_DAMAGE_NUMS; i++) {
+        damage_num_t *d = &dmg_nums[i];
+        float age;
+        int y;
+        int alpha;
+        char buf[16];
+
+        if (!d->active) continue;
+
+        age = now - d->birth_time;
+        if (age > DAMAGE_NUM_LIFETIME) {
+            d->active = qfalse;
+            continue;
+        }
+
+        y = d->screen_y + (int)(d->vel_y * age);
+        alpha = (int)(255.0f * (1.0f - age / DAMAGE_NUM_LIFETIME));
+        if (alpha < 0) alpha = 0;
+
+        /* Color based on damage: high=red, medium=yellow, low=white */
+        if (d->value >= 50)
+            R_SetDrawColor(0xFF, 0x40, 0x40, alpha);
+        else if (d->value >= 20)
+            R_SetDrawColor(0xFF, 0xFF, 0x40, alpha);
+        else
+            R_SetDrawColor(0xFF, 0xFF, 0xFF, alpha);
+
+        Com_sprintf(buf, sizeof(buf), "%d", d->value);
+        R_DrawString(d->screen_x, y, buf);
+    }
+
+    R_SetDrawColor(0xFF, 0xFF, 0xFF, 0xFF);
+}
+
+/* ==========================================================================
+   Pickup Message Queue
+   ========================================================================== */
+
+#define MAX_PICKUP_MSGS  4
+#define PICKUP_MSG_TIME  2.0f
+
+typedef struct {
+    char    text[64];
+    float   birth_time;
+} pickup_msg_t;
+
+static pickup_msg_t pickup_msgs[MAX_PICKUP_MSGS];
+static int pickup_msg_idx;
+
+void SCR_AddPickupMessage(const char *text)
+{
+    pickup_msg_t *m = &pickup_msgs[pickup_msg_idx % MAX_PICKUP_MSGS];
+    Com_sprintf(m->text, sizeof(m->text), "%s", text);
+    m->birth_time = (float)Sys_Milliseconds() / 1000.0f;
+    pickup_msg_idx++;
+}
+
+static void SCR_DrawPickupMessages(void)
+{
+    int i;
+    float now = (float)Sys_Milliseconds() / 1000.0f;
+    int cx = g_display.width / 2;
+    int y = g_display.height / 2 + 40;  /* below crosshair */
+
+    for (i = 0; i < MAX_PICKUP_MSGS; i++) {
+        pickup_msg_t *m = &pickup_msgs[i];
+        float age;
+        int alpha;
+
+        if (m->text[0] == '\0') continue;
+
+        age = now - m->birth_time;
+        if (age > PICKUP_MSG_TIME) continue;
+
+        alpha = (int)(255.0f * (1.0f - age / PICKUP_MSG_TIME));
+        if (alpha < 0) alpha = 0;
+
+        R_SetDrawColor(0xFF, 0xFF, 0x80, alpha);
+        R_DrawString(cx - (int)(strlen(m->text) * 4), y, m->text);
+        y += 14;
     }
 
     R_SetDrawColor(0xFF, 0xFF, 0xFF, 0xFF);
