@@ -14,10 +14,20 @@
 
 #define FRAMETIME   0.1f    /* 10 Hz game frame */
 
+/* Sound constants now in g_local.h */
+
 /* Particle/light effects from renderer (unified binary) */
 extern void R_ParticleEffect(vec3_t org, vec3_t dir, int type, int count);
 extern void R_AddDlight(vec3_t origin, float r, float g, float b,
                          float intensity, float duration);
+
+/* Monster sound indices — precached in monster_start */
+static int snd_monster_pain1;
+static int snd_monster_pain2;
+static int snd_monster_die;
+static int snd_monster_sight;
+static int snd_monster_fire;
+static qboolean monster_sounds_cached;
 
 /* ==========================================================================
    AI Constants
@@ -178,6 +188,9 @@ static void ai_think_idle(edict_t *self)
 {
     /* Look for player */
     if (AI_FindTarget(self)) {
+        /* Sight sound */
+        if (snd_monster_sight)
+            gi.sound(self, CHAN_VOICE, snd_monster_sight, 1.0f, ATTN_NORM, 0);
         /* Transition to alert */
         self->count = AI_STATE_ALERT;
         self->nextthink = level.time + 0.5f;   /* brief alert pause */
@@ -293,12 +306,14 @@ static void ai_think_attack(edict_t *self)
         tr = gi.trace(start, NULL, NULL, end, self, MASK_SHOT);
 
         if (tr.fraction < 1.0f) {
-            /* Muzzle flash particles and light */
+            /* Muzzle flash particles, light, and sound */
             {
                 vec3_t muzzle;
                 VectorMA(start, 16, dir, muzzle);
                 R_ParticleEffect(muzzle, dir, 3, 2);
                 R_AddDlight(muzzle, 1.0f, 0.7f, 0.3f, 150.0f, 0.1f);
+                if (snd_monster_fire)
+                    gi.sound(self, CHAN_WEAPON, snd_monster_fire, 1.0f, ATTN_NORM, 0);
             }
 
             if (tr.ent && tr.ent->takedamage && tr.ent->health > 0) {
@@ -372,6 +387,13 @@ void monster_pain(edict_t *self, edict_t *other, float kick, int damage)
     if (self->health <= 0)
         return;
 
+    /* Pain sound */
+    {
+        int snd = (rand() & 1) ? snd_monster_pain1 : snd_monster_pain2;
+        if (snd)
+            gi.sound(self, CHAN_VOICE, snd, 1.0f, ATTN_NORM, 0);
+    }
+
     /* Brief pain stun */
     self->count = AI_STATE_PAIN;
     self->velocity[0] = self->velocity[1] = 0;
@@ -395,6 +417,10 @@ void monster_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
     vec3_t up = {0, 0, 1};
 
     (void)inflictor; (void)attacker; (void)damage; (void)point;
+
+    /* Death sound */
+    if (snd_monster_die)
+        gi.sound(self, CHAN_VOICE, snd_monster_die, 1.0f, ATTN_NORM, 0);
 
     /* Death explosion of blood */
     R_ParticleEffect(self->s.origin, up, 1, 24);
@@ -423,6 +449,16 @@ void monster_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
 static void monster_start(edict_t *ent, int health, int damage,
                            float speed)
 {
+    /* Precache monster sounds once */
+    if (!monster_sounds_cached) {
+        snd_monster_pain1 = gi.soundindex("npc/pain1.wav");
+        snd_monster_pain2 = gi.soundindex("npc/pain2.wav");
+        snd_monster_die = gi.soundindex("npc/die1.wav");
+        snd_monster_sight = gi.soundindex("npc/sight1.wav");
+        snd_monster_fire = gi.soundindex("weapons/mp5/fire.wav");
+        monster_sounds_cached = qtrue;
+    }
+
     ent->solid = SOLID_BBOX;
     ent->movetype = MOVETYPE_STEP;
     ent->takedamage = DAMAGE_AIM;

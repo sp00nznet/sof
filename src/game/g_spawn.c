@@ -186,6 +186,8 @@ static void SP_target_changelevel(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_timer(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_breakable(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_explosive(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_trigger_push(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_trigger_hurt(edict_t *ent, epair_t *pairs, int num_pairs);
 
 /*
  * Spawn function dispatch table
@@ -232,8 +234,8 @@ static spawn_func_t spawn_funcs[] = {
     { "trigger_relay",              SP_trigger_once },
     { "trigger_always",             SP_trigger_once },
     { "trigger_changelevel",        SP_trigger_changelevel },
-    { "trigger_push",               SP_trigger_multiple },
-    { "trigger_hurt",               SP_trigger_multiple },
+    { "trigger_push",               SP_trigger_push },
+    { "trigger_hurt",               SP_trigger_hurt },
     { "trigger_gravity",            SP_trigger_multiple },
 
     /* Targets */
@@ -554,6 +556,27 @@ static void SP_light(edict_t *ent, epair_t *pairs, int num_pairs)
 }
 
 /* ==========================================================================
+   Door / Platform Sound Indices
+   ========================================================================== */
+
+static int snd_door_start;
+static int snd_door_end;
+static int snd_plat_start;
+static int snd_plat_end;
+static qboolean door_sounds_cached;
+
+static void door_precache_sounds(void)
+{
+    if (door_sounds_cached)
+        return;
+    snd_door_start = gi.soundindex("doors/dr1_strt.wav");
+    snd_door_end = gi.soundindex("doors/dr1_end.wav");
+    snd_plat_start = gi.soundindex("plats/pt1_strt.wav");
+    snd_plat_end = gi.soundindex("plats/pt1_end.wav");
+    door_sounds_cached = qtrue;
+}
+
+/* ==========================================================================
    Door / Platform Movement Helpers
    ========================================================================== */
 
@@ -602,6 +625,9 @@ static void door_hit_top(edict_t *self)
     self->moveinfo.state = MSTATE_TOP;
     VectorClear(self->velocity);
 
+    if (snd_door_end)
+        gi.sound(self, CHAN_AUTO, snd_door_end, 1.0f, 1, 0);
+
     if (self->moveinfo.wait >= 0) {
         self->nextthink = level.time + self->moveinfo.wait;
         self->think = door_go_down;
@@ -613,6 +639,9 @@ static void door_hit_bottom(edict_t *self)
 {
     self->moveinfo.state = MSTATE_BOTTOM;
     VectorClear(self->velocity);
+
+    if (snd_door_end)
+        gi.sound(self, CHAN_AUTO, snd_door_end, 1.0f, 1, 0);
 }
 
 static void door_go_up(edict_t *self)
@@ -621,6 +650,8 @@ static void door_go_up(edict_t *self)
         return;
 
     self->moveinfo.state = MSTATE_UP;
+    if (snd_door_start)
+        gi.sound(self, CHAN_AUTO, snd_door_start, 1.0f, 1, 0);
     Move_Calc(self, self->moveinfo.end_origin, door_hit_top);
 }
 
@@ -630,6 +661,8 @@ static void door_go_down(edict_t *self)
         return;
 
     self->moveinfo.state = MSTATE_DOWN;
+    if (snd_door_start)
+        gi.sound(self, CHAN_AUTO, snd_door_start, 1.0f, 1, 0);
     Move_Calc(self, self->moveinfo.start_origin, door_hit_bottom);
 }
 
@@ -661,6 +694,8 @@ static void SP_func_door(edict_t *ent, epair_t *pairs, int num_pairs)
     vec3_t move_dir;
     float lip;
     const char *lip_str;
+
+    door_precache_sounds();
 
     ent->movetype = MOVETYPE_PUSH;
     ent->solid = SOLID_BSP;
@@ -714,12 +749,16 @@ static void plat_hit_top(edict_t *self)
 {
     self->moveinfo.state = MSTATE_TOP;
     VectorClear(self->velocity);
+    if (snd_plat_end)
+        gi.sound(self, CHAN_AUTO, snd_plat_end, 1.0f, 1, 0);
 }
 
 static void plat_hit_bottom(edict_t *self)
 {
     self->moveinfo.state = MSTATE_BOTTOM;
     VectorClear(self->velocity);
+    if (snd_plat_end)
+        gi.sound(self, CHAN_AUTO, snd_plat_end, 1.0f, 1, 0);
     /* Wait then return up */
     self->nextthink = level.time + 1.0f;
     self->think = plat_go_up;
@@ -730,6 +769,8 @@ static void plat_go_down(edict_t *self)
     if (self->moveinfo.state == MSTATE_DOWN || self->moveinfo.state == MSTATE_BOTTOM)
         return;
     self->moveinfo.state = MSTATE_DOWN;
+    if (snd_plat_start)
+        gi.sound(self, CHAN_AUTO, snd_plat_start, 1.0f, 1, 0);
     Move_Calc(self, self->moveinfo.end_origin, plat_hit_bottom);
 }
 
@@ -738,6 +779,8 @@ static void plat_go_up(edict_t *self)
     if (self->moveinfo.state == MSTATE_UP || self->moveinfo.state == MSTATE_TOP)
         return;
     self->moveinfo.state = MSTATE_UP;
+    if (snd_plat_start)
+        gi.sound(self, CHAN_AUTO, snd_plat_start, 1.0f, 1, 0);
     Move_Calc(self, self->moveinfo.start_origin, plat_hit_top);
 }
 
@@ -755,6 +798,7 @@ static void SP_func_plat(edict_t *ent, epair_t *pairs, int num_pairs)
     const char *height_str;
 
     (void)pairs; (void)num_pairs;
+    door_precache_sounds();
 
     ent->movetype = MOVETYPE_PUSH;
     ent->solid = SOLID_BSP;
@@ -848,6 +892,107 @@ static void SP_trigger_multiple(edict_t *ent, epair_t *pairs, int num_pairs)
     ent->touch = trigger_touch;
     if (!ent->wait)
         ent->wait = 0.2f;
+    gi.linkentity(ent);
+}
+
+/* ==========================================================================
+   trigger_push — Applies velocity to entities that touch it
+   ========================================================================== */
+
+static void trigger_push_touch(edict_t *self, edict_t *other, void *plane, csurface_t *surf)
+{
+    (void)plane; (void)surf;
+
+    if (!other || !other->inuse)
+        return;
+
+    /* Apply push velocity from move_angles (set during spawn from "speed" + angle) */
+    VectorCopy(self->move_angles, other->velocity);
+
+    /* Clear groundentity so player goes airborne */
+    other->groundentity = NULL;
+}
+
+static void SP_trigger_push(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    float push_speed;
+    float angle;
+
+    ent->solid = SOLID_TRIGGER;
+    ent->touch = trigger_push_touch;
+
+    /* Calculate push direction from angle + speed */
+    push_speed = ent->speed ? ent->speed : 1000.0f;
+    angle = ent->s.angles[1] * (3.14159265f / 180.0f);
+
+    /* Default: push upward if no angle specified */
+    if (ent->s.angles[1] == 0 && ent->s.angles[0] == 0) {
+        VectorSet(ent->move_angles, 0, 0, push_speed);
+    } else {
+        float pitch = ent->s.angles[0] * (3.14159265f / 180.0f);
+        ent->move_angles[0] = (float)cos(angle) * (float)cos(pitch) * push_speed;
+        ent->move_angles[1] = (float)sin(angle) * (float)cos(pitch) * push_speed;
+        ent->move_angles[2] = -(float)sin(pitch) * push_speed;
+    }
+
+    VectorClear(ent->s.angles);
+    gi.linkentity(ent);
+}
+
+/* ==========================================================================
+   trigger_hurt — Damages entities that touch it
+   ========================================================================== */
+
+static void trigger_hurt_touch(edict_t *self, edict_t *other, void *plane, csurface_t *surf)
+{
+    int damage;
+
+    (void)plane; (void)surf;
+
+    if (!other || !other->inuse || other->health <= 0)
+        return;
+
+    if (!other->takedamage)
+        return;
+
+    /* Debounce — don't damage every frame */
+    if (self->dmg_debounce_time > level.time)
+        return;
+    self->dmg_debounce_time = level.time + 1.0f;  /* 1 second between hits */
+
+    damage = self->dmg ? self->dmg : 5;
+    other->health -= damage;
+
+    /* Damage flash for player */
+    if (other->client) {
+        other->client->blend[0] = 1.0f;
+        other->client->blend[1] = 0.0f;
+        other->client->blend[2] = 0.0f;
+        other->client->blend[3] = 0.25f;
+        other->client->pers_health = other->health;
+    }
+
+    if (other->health <= 0) {
+        if (other->die)
+            other->die(other, self, self, damage, other->s.origin);
+        else if (other->client) {
+            other->deadflag = 1;
+            other->client->ps.pm_type = PM_DEAD;
+        }
+    }
+}
+
+static void SP_trigger_hurt(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *dmg_str;
+
+    ent->solid = SOLID_TRIGGER;
+    ent->touch = trigger_hurt_touch;
+
+    /* Parse damage amount */
+    dmg_str = ED_FindValue(pairs, num_pairs, "dmg");
+    ent->dmg = dmg_str ? atoi(dmg_str) : 5;
+
     gi.linkentity(ent);
 }
 
@@ -1295,6 +1440,14 @@ static const int ammo_pickup_amount[WEAP_COUNT] = {
     0, 0, 12, 15, 8, 50, 30, 5, 20, 4, 50, 25, 30, 2, 1, 2, 0, 0
 };
 
+/* Item respawn think — re-activate after deathmatch respawn delay */
+static void item_respawn_think(edict_t *self)
+{
+    self->solid = SOLID_TRIGGER;
+    self->svflags &= ~SVF_NOCLIENT;
+    gi.linkentity(self);
+}
+
 static void item_touch(edict_t *self, edict_t *other, void *plane, csurface_t *surf)
 {
     (void)plane; (void)surf;
@@ -1341,9 +1494,20 @@ static void item_touch(edict_t *self, edict_t *other, void *plane, csurface_t *s
 
     gi.cprintf(other, PRINT_ALL, "Picked up %s\n", self->classname);
 
-    /* Remove the item */
-    self->inuse = qfalse;
-    gi.unlinkentity(self);
+    /* Deathmatch: hide and schedule respawn; SP: remove permanently */
+    {
+        cvar_t *dm = gi.cvar("deathmatch", "0", 0);
+        if (dm && dm->value) {
+        self->solid = SOLID_NOT;
+        self->svflags |= SVF_NOCLIENT;   /* hide from rendering */
+        gi.unlinkentity(self);
+        self->think = item_respawn_think;
+        self->nextthink = level.time + 30.0f;  /* respawn in 30 seconds */
+        } else {
+            self->inuse = qfalse;
+            gi.unlinkentity(self);
+        }
+    }
 }
 
 static void SP_item_pickup(edict_t *ent, epair_t *pairs, int num_pairs)

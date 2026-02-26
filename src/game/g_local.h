@@ -30,6 +30,25 @@
 #define MOVETYPE_FLYMISSILE 9       /* like fly, but solid to everything */
 #define MOVETYPE_BOUNCE     10      /* like toss, but bounces off surfaces */
 
+/* ==========================================================================
+   Sound Constants (match snd_local.h — guarded to avoid redefinition)
+   ========================================================================== */
+
+#ifndef ATTN_NONE
+#define ATTN_NONE           0
+#define ATTN_NORM           1
+#define ATTN_IDLE           2
+#define ATTN_STATIC         3
+#endif
+
+#ifndef CHAN_AUTO
+#define CHAN_AUTO            0
+#define CHAN_WEAPON          1
+#define CHAN_VOICE           2
+#define CHAN_ITEM            3
+#define CHAN_BODY            4
+#endif
+
 #define SOLID_NOT       0       /* no interaction with other objects */
 #define SOLID_TRIGGER   1       /* only touch when inside */
 #define SOLID_BBOX      2       /* touch on edge */
@@ -342,7 +361,10 @@ struct edict_s {
     int             areanum;
     int             areanum2;
 
-    /* SVF_ flags */
+    /* SVF_ flags (server visibility flags) */
+#define SVF_NOCLIENT    0x00000001  /* don't send to clients */
+#define SVF_DEADMONSTER 0x00000002  /* dead monster, special clip */
+#define SVF_MONSTER     0x00000004  /* this is a monster */
     int             svflags;
 
     /* Bounding box */

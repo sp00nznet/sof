@@ -21,6 +21,8 @@ extern void R_ParticleEffect(vec3_t org, vec3_t dir, int type, int count);
 extern void R_AddDlight(vec3_t origin, float r, float g, float b,
                          float intensity, float duration);
 
+/* Sound constants now in g_local.h */
+
 /* Forward declarations */
 static void G_AngleVectors(vec3_t angles, vec3_t fwd, vec3_t rt, vec3_t up_out);
 static void WriteGame(const char *filename, qboolean autosave);
@@ -86,6 +88,16 @@ static cvar_t   *ghl_mip;
 static cvar_t   *ctf_loops;
 static cvar_t   *ctf_team_red;
 static cvar_t   *ctf_team_blue;
+
+/* ==========================================================================
+   Sound Indices — precached during RegisterWeapons
+   ========================================================================== */
+
+static int snd_weapons[WEAP_COUNT];     /* weapon fire sounds */
+static int snd_ric1, snd_ric2, snd_ric3;  /* ricochet/impact */
+static int snd_hit_flesh;               /* bullet-on-flesh impact */
+static int snd_explode;                 /* explosion */
+static int snd_noammo;                  /* empty click */
 
 /* ==========================================================================
    SoF Weapon Names (from RegisterWeapons at 0x50095280)
@@ -517,7 +529,9 @@ static void G_FireHitscan(edict_t *ent)
     /* Check ammo (knife/melee weapons don't use ammo) */
     if (weap > 0 && weap < WEAP_COUNT && weap != WEAP_KNIFE) {
         if (ent->client->ammo[weap] <= 0) {
-            /* Click — no ammo */
+            /* Empty click sound */
+            if (snd_noammo)
+                gi.sound(ent, CHAN_WEAPON, snd_noammo, 0.5f, ATTN_NORM, 0);
             return;
         }
         ent->client->ammo[weap]--;
@@ -542,6 +556,10 @@ static void G_FireHitscan(edict_t *ent)
         R_AddDlight(muzzle, 1.0f, 0.8f, 0.4f, 200.0f, 0.1f);
     }
 
+    /* Weapon fire sound */
+    if (weap > 0 && weap < WEAP_COUNT && snd_weapons[weap])
+        gi.sound(ent, CHAN_WEAPON, snd_weapons[weap], 1.0f, ATTN_NORM, 0);
+
     /* Trace 8192 units forward */
     VectorMA(start, 8192, forward, end);
     tr = gi.trace(start, NULL, NULL, end, ent, MASK_SHOT);
@@ -549,8 +567,10 @@ static void G_FireHitscan(edict_t *ent)
     if (tr.fraction < 1.0f) {
         /* Spawn impact particles at hit point */
         if (tr.ent && tr.ent->takedamage && tr.ent->health > 0) {
-            /* Blood effect on damageable entities */
+            /* Blood effect + flesh hit sound */
             R_ParticleEffect(tr.endpos, tr.plane.normal, 1, 8);
+            if (snd_hit_flesh)
+                gi.sound(tr.ent, CHAN_BODY, snd_hit_flesh, 1.0f, ATTN_NORM, 0);
 
             tr.ent->health -= damage;
             gi.dprintf("Hit %s for %d damage (health: %d)\n",
@@ -558,14 +578,26 @@ static void G_FireHitscan(edict_t *ent)
                        damage, tr.ent->health);
 
             if (tr.ent->health <= 0 && tr.ent->die) {
-                /* Explosion particles and light on kill */
+                /* Explosion particles, light, and sound on kill */
                 R_ParticleEffect(tr.endpos, tr.plane.normal, 2, 16);
                 R_AddDlight(tr.endpos, 1.0f, 0.5f, 0.1f, 300.0f, 0.3f);
+                if (snd_explode)
+                    gi.sound(tr.ent, CHAN_AUTO, snd_explode, 1.0f, ATTN_NORM, 0);
                 tr.ent->die(tr.ent, ent, ent, damage, tr.endpos);
             }
         } else {
-            /* Bullet impact sparks on world/solid surfaces */
+            /* Bullet impact sparks + ricochet sound */
             R_ParticleEffect(tr.endpos, tr.plane.normal, 0, 6);
+            {
+                int ric_snd = 0;
+                int r = gi.irand(0, 2);
+                if (r == 0) ric_snd = snd_ric1;
+                else if (r == 1) ric_snd = snd_ric2;
+                else ric_snd = snd_ric3;
+                if (ric_snd)
+                    gi.positioned_sound(tr.endpos, NULL, CHAN_AUTO,
+                                        ric_snd, 0.7f, ATTN_NORM, 0);
+            }
         }
     }
 }
@@ -969,10 +1001,43 @@ static void G_GetGameTime(void)
 static void G_RegisterWeapons(void)
 {
     int i;
+
+    /* Weapon fire sound paths — match original SoF data layout */
+    static const char *weapon_fire_sounds[WEAP_COUNT] = {
+        NULL,                           /* WEAP_NONE */
+        "weapons/knife/swing.wav",      /* WEAP_KNIFE */
+        "weapons/pistol/fire.wav",      /* WEAP_PISTOL1 */
+        "weapons/silvtln/fire.wav",     /* WEAP_PISTOL2 */
+        "weapons/shotgun/fire.wav",     /* WEAP_SHOTGUN */
+        "weapons/mp5/fire.wav",         /* WEAP_MACHINEGUN */
+        "weapons/m4/fire.wav",          /* WEAP_ASSAULT */
+        "weapons/sniper/fire.wav",      /* WEAP_SNIPER */
+        "weapons/slugger/fire.wav",     /* WEAP_SLUGGER */
+        "weapons/rocket/fire.wav",      /* WEAP_ROCKET */
+        "weapons/flame/fire.wav",       /* WEAP_FLAMEGUN */
+        "weapons/mpg/fire.wav",         /* WEAP_MPG */
+        "weapons/mpistol/fire.wav",     /* WEAP_MPISTOL */
+        "weapons/grenade/throw.wav",    /* WEAP_GRENADE */
+        "weapons/c4/place.wav",         /* WEAP_C4 */
+        "items/medkit/use.wav",         /* WEAP_MEDKIT */
+        NULL,                           /* WEAP_GOGGLES */
+        NULL                            /* WEAP_FPAK */
+    };
+
     gi.dprintf("RegisterWeapons:\n");
     for (i = 1; i < WEAP_COUNT; i++) {
         gi.dprintf("  %s\n", weapon_names[i]);
+        if (weapon_fire_sounds[i])
+            snd_weapons[i] = gi.soundindex(weapon_fire_sounds[i]);
     }
+
+    /* Impact/environment sounds */
+    snd_ric1 = gi.soundindex("world/ric1.wav");
+    snd_ric2 = gi.soundindex("world/ric2.wav");
+    snd_ric3 = gi.soundindex("world/ric3.wav");
+    snd_hit_flesh = gi.soundindex("player/hit_flesh.wav");
+    snd_explode = gi.soundindex("weapons/explode.wav");
+    snd_noammo = gi.soundindex("weapons/noammo.wav");
 }
 
 static const char *G_GetGameVersion(void)
