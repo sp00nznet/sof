@@ -432,6 +432,52 @@ int CM_PointContents(bsp_world_t *world, vec3_t p)
  * Translates the trace into model space, traces, then translates back.
  * Used for moveable BSP objects like doors, platforms, trains.
  */
+/*
+ * RotatePoint — Rotate a point by Euler angles (pitch, yaw, roll)
+ */
+static void CM_RotatePoint(vec3_t point, vec3_t angles, qboolean inverse)
+{
+    float a, sa, ca;
+    float t;
+    int axis_order[3];
+    int i;
+
+    /* Rotation order: yaw(Z) → pitch(Y) → roll(X) */
+    /* For inverse, apply in reverse order with negated angles */
+    axis_order[0] = inverse ? 2 : 1;  /* start with yaw or roll */
+    axis_order[1] = 0;                 /* pitch always middle */
+    axis_order[2] = inverse ? 1 : 2;  /* end with roll or yaw */
+
+    for (i = 0; i < 3; i++) {
+        int ax = axis_order[i];
+        a = angles[ax];
+        if (a == 0) continue;
+        if (inverse) a = -a;
+
+        a = a * (float)(3.14159265 / 180.0);
+        sa = (float)sin(a);
+        ca = (float)cos(a);
+
+        switch (ax) {
+        case 0: /* pitch — rotate around Y (right) axis: affects X and Z */
+            t = point[0] * ca - point[2] * sa;
+            point[2] = point[0] * sa + point[2] * ca;
+            point[0] = t;
+            break;
+        case 1: /* yaw — rotate around Z (up) axis: affects X and Y */
+            t = point[0] * ca - point[1] * sa;
+            point[1] = point[0] * sa + point[1] * ca;
+            point[0] = t;
+            break;
+        case 2: /* roll — rotate around X (forward) axis: affects Y and Z */
+            t = point[1] * ca - point[2] * sa;
+            point[2] = point[1] * sa + point[2] * ca;
+            point[1] = t;
+            break;
+        }
+    }
+}
+
 trace_t CM_TransformedBoxTrace(bsp_world_t *world,
                                vec3_t start, vec3_t mins, vec3_t maxs,
                                vec3_t end, int headnode,
@@ -439,18 +485,32 @@ trace_t CM_TransformedBoxTrace(bsp_world_t *world,
 {
     trace_t tr;
     vec3_t  start_l, end_l;
+    qboolean rotated;
 
     (void)headnode;
-    (void)angles;   /* TODO: rotated brush models */
 
     /* Translate into model space */
     VectorSubtract(start, origin, start_l);
     VectorSubtract(end, origin, end_l);
 
+    /* Check if rotation is needed */
+    rotated = (angles[0] || angles[1] || angles[2]) ? qtrue : qfalse;
+
+    if (rotated) {
+        /* Rotate trace start/end into model's local space (inverse rotation) */
+        CM_RotatePoint(start_l, angles, qtrue);
+        CM_RotatePoint(end_l, angles, qtrue);
+    }
+
     /* Trace in local space */
     tr = CM_BoxTrace(world, start_l, mins, maxs, end_l, brushmask);
 
-    /* Translate result back */
+    if (rotated && tr.fraction < 1.0f) {
+        /* Rotate the hit normal back to world space */
+        CM_RotatePoint(tr.plane.normal, angles, qfalse);
+    }
+
+    /* Compute endpos in world space */
     if (tr.fraction < 1.0f) {
         int i;
         for (i = 0; i < 3; i++) {

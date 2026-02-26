@@ -139,6 +139,12 @@ static void IN_LeanLeftUp(void)     { KeyUp(&in_leanleft); }
 static void IN_LeanRightDown(void)  { KeyDown(&in_leanright); }
 static void IN_LeanRightUp(void)    { KeyUp(&in_leanright); }
 
+/* Scoreboard */
+static kbutton_t   in_scores;
+qboolean cl_show_scores = qfalse;
+static void IN_ScoresDown(void)     { KeyDown(&in_scores); cl_show_scores = qtrue; }
+static void IN_ScoresUp(void)       { KeyUp(&in_scores); cl_show_scores = qfalse; }
+
 /* ==========================================================================
    Build Usercmd
    ========================================================================== */
@@ -231,7 +237,7 @@ void CL_InitInput(void)
     Cmd_AddCommand("+leanright", IN_LeanRightDown);
     Cmd_AddCommand("-leanright", IN_LeanRightUp);
 
-    /* Additional aliases */
-    Cmd_AddCommand("+scores", NULL);  /* TODO: scoreboard toggle */
-    Cmd_AddCommand("-scores", NULL);
+    /* Scoreboard toggle */
+    Cmd_AddCommand("+scores", IN_ScoresDown);
+    Cmd_AddCommand("-scores", IN_ScoresUp);
 }

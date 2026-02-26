@@ -805,6 +805,27 @@ qboolean SV_GetPlayerState(vec3_t origin, vec3_t angles, float *viewheight)
 }
 
 /*
+ * SV_GetPlayerZoom — Get player zoom/scope state
+ */
+qboolean SV_GetPlayerZoom(float *fov)
+{
+    edict_t *player;
+
+    if (!ge || !ge->edicts)
+        return qfalse;
+
+    player = (edict_t *)((byte *)ge->edicts + ge->edict_size);
+    if (!player->inuse || !player->client)
+        return qfalse;
+
+    if (player->client->zoomed) {
+        *fov = player->client->zoom_fov;
+        return qtrue;
+    }
+    return qfalse;
+}
+
+/*
  * SV_GetPlayerHealth — Get player health for HUD display
  */
 qboolean SV_GetPlayerHealth(int *health, int *max_health)

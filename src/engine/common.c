@@ -50,6 +50,7 @@ extern void SV_GetPlayerScore(int *kills, int *deaths, int *score);
 extern void SV_GetLevelStats(int *killed_monsters, int *total_monsters,
                              int *found_secrets, int *total_secrets);
 extern int  SV_GetEntityCount(void);
+extern qboolean SV_GetPlayerZoom(float *fov);
 
 /* Forward declaration — freecam toggle (defined below in client section) */
 static void Cmd_Freecam_f(void);
@@ -118,6 +119,12 @@ static void SCR_DrawChat(void);
 static void SCR_DrawDamageNumbers(void);
 static void SCR_DrawPickupMessages(void);
 static void SCR_DrawKillFeed(void);
+static void SCR_DrawIntermission(void);
+
+/* Intermission state */
+static qboolean     cl_intermission;
+static float        cl_intermission_time;
+static char         cl_nextmap[64];
 
 /* ANGLE2SHORT / SHORT2ANGLE for usercmd angle encoding */
 #define ANGLE2SHORT(x)  ((int)((x)*65536.0f/360.0f) & 65535)
@@ -405,12 +412,16 @@ void Qcommon_Frame(int msec)
 
         /* Render frame */
         R_BeginFrame(0.0f);
-        SCR_DrawHUD(msec / 1000.0f);
-        SCR_DrawDamageNumbers();
-        SCR_DrawPickupMessages();
-        SCR_DrawKillFeed();
-        SCR_DrawChat();
-        SCR_DrawScoreboard();
+        if (cl_intermission) {
+            SCR_DrawIntermission();
+        } else {
+            SCR_DrawHUD(msec / 1000.0f);
+            SCR_DrawDamageNumbers();
+            SCR_DrawPickupMessages();
+            SCR_DrawKillFeed();
+            SCR_DrawChat();
+            SCR_DrawScoreboard();
+        }
         SCR_DrawMenu();
         Con_DrawNotify();
         Con_DrawConsole(con.current_frac);
@@ -457,6 +468,17 @@ static refdef_t     cl_refdef;          /* current frame's render view */
 static float        cl_time;            /* accumulated time */
 static vec3_t       cl_viewangles;      /* accumulated mouse look angles */
 static qboolean     cl_use_freecam;     /* toggle: freecam vs player movement */
+
+/*
+ * SCR_BeginIntermission — Called by changelevel to show stats before map change
+ */
+void SCR_BeginIntermission(const char *nextmap)
+{
+    cl_intermission = qtrue;
+    cl_intermission_time = cl_time;
+    Q_strncpyz(cl_nextmap, nextmap, sizeof(cl_nextmap));
+    Com_Printf("Intermission: next map %s\n", nextmap);
+}
 
 void CL_Init(void)
 {
@@ -577,6 +599,16 @@ void CL_Frame(int msec)
                 cl_refdef.height = g_display.height;
                 cl_refdef.fov_x = 90.0f;
                 cl_refdef.fov_y = 73.74f;
+
+                /* Apply zoom FOV if scoped */
+                {
+                    float zoom_fov;
+                    if (SV_GetPlayerZoom(&zoom_fov) && zoom_fov > 0) {
+                        cl_refdef.fov_x = zoom_fov;
+                        cl_refdef.fov_y = zoom_fov * 0.75f;
+                    }
+                }
+
                 cl_refdef.time = cl_time;
                 VectorCopy(org, cl_refdef.vieworg);
                 VectorCopy(ang, cl_refdef.viewangles);
@@ -775,6 +807,7 @@ typedef struct {
 
 extern int SV_GetScoreboard(scoreboard_entry_t *entries, int max_entries);
 extern qboolean key_down[];  /* from keys.c */
+extern qboolean cl_show_scores;  /* from cl_input.c */
 
 static void SCR_DrawScoreboard(void)
 {
@@ -787,8 +820,8 @@ static void SCR_DrawScoreboard(void)
     int y = h / 4;
     char line[128];
 
-    /* Only show when TAB is held */
-    if (!key_down[K_TAB])
+    /* Only show when TAB is held or +scores is active */
+    if (!key_down[K_TAB] && !cl_show_scores)
         return;
 
     count = SV_GetScoreboard(entries, 8);
@@ -1076,6 +1109,93 @@ static const char *loading_tips[] = {
     "Explore for hidden secrets.",
 };
 
+/*
+ * SCR_DrawIntermission — Level completion stats screen
+ * Shown for 5 seconds or until any key is pressed.
+ */
+static void SCR_DrawIntermission(void)
+{
+    int w = g_display.width;
+    int h = g_display.height;
+    int cx = w / 2;
+    int y = h / 4;
+    char buf[128];
+    int killed_monsters, total_monsters, found_secrets, total_secrets;
+    int kills, deaths, score;
+    float elapsed;
+
+    if (!cl_intermission)
+        return;
+
+    elapsed = cl_time - cl_intermission_time;
+
+    /* Get stats */
+    SV_GetLevelStats(&killed_monsters, &total_monsters,
+                     &found_secrets, &total_secrets);
+    SV_GetPlayerScore(&kills, &deaths, &score);
+
+    /* Dark overlay */
+    R_DrawFill(0, 0, w, h, (int)0xC0000000);
+
+    /* Title */
+    R_SetDrawColor(1.0f, 0.85f, 0.0f, 1.0f);
+    R_DrawString(cx - 80, y, "MISSION COMPLETE");
+
+    /* Stats box */
+    R_DrawFill(cx - 160, y + 30, 320, 140, (int)0x80000000);
+
+    y += 45;
+    R_SetDrawColor(0.9f, 0.9f, 0.9f, 1.0f);
+
+    Com_sprintf(buf, sizeof(buf), "Monsters:  %d / %d", killed_monsters, total_monsters);
+    R_DrawString(cx - 140, y, buf);
+    y += 20;
+
+    Com_sprintf(buf, sizeof(buf), "Secrets:   %d / %d", found_secrets, total_secrets);
+    R_DrawString(cx - 140, y, buf);
+    y += 20;
+
+    Com_sprintf(buf, sizeof(buf), "Kills:     %d", kills);
+    R_DrawString(cx - 140, y, buf);
+    y += 20;
+
+    Com_sprintf(buf, sizeof(buf), "Deaths:    %d", deaths);
+    R_DrawString(cx - 140, y, buf);
+    y += 20;
+
+    Com_sprintf(buf, sizeof(buf), "Score:     %d", score);
+    R_DrawString(cx - 140, y, buf);
+    y += 30;
+
+    /* Time */
+    {
+        float level_time = cl_time;  /* approximate */
+        int minutes = (int)(level_time / 60.0f);
+        int seconds = (int)level_time % 60;
+        Com_sprintf(buf, sizeof(buf), "Time:      %d:%02d", minutes, seconds);
+        R_SetDrawColor(0.7f, 0.7f, 0.7f, 1.0f);
+        R_DrawString(cx - 140, y, buf);
+    }
+
+    /* Continue prompt */
+    y += 40;
+    if (((int)(elapsed * 2)) % 2 == 0) {
+        R_SetDrawColor(0.6f, 0.6f, 0.6f, 1.0f);
+        R_DrawString(cx - 100, y, "Press any key to continue...");
+    }
+
+    R_SetDrawColor(1.0f, 1.0f, 1.0f, 1.0f);
+
+    /* Auto-advance after 8 seconds, or on any key/button press */
+    if (elapsed > 8.0f || (elapsed > 1.0f && key_down[K_SPACE])) {
+        cl_intermission = qfalse;
+        if (cl_nextmap[0]) {
+            Cbuf_AddText(va("map %s\n", cl_nextmap));
+            cl_nextmap[0] = '\0';
+        }
+    }
+}
+
 void SCR_DrawLoadingScreen(const char *mapname)
 {
     int screen_w = g_display.width;
@@ -1109,6 +1229,69 @@ void SCR_DrawLoadingScreen(const char *mapname)
     R_DrawString(screen_w / 2 - (int)strlen(buf) * 4, bar_y + 30, buf);
 
     R_EndFrame();
+}
+
+static void SCR_DrawScopeOverlay(void)
+{
+    float zoom_fov;
+    int w = g_display.width;
+    int h = g_display.height;
+    int cx = w / 2;
+    int cy = h / 2;
+    int radius;
+    int bar_color = (int)0xFF000000;
+
+    if (!SV_GetPlayerZoom(&zoom_fov))
+        return;
+
+    /* Scope radius — 40% of screen height */
+    radius = h * 2 / 5;
+
+    /* Draw dark bars around the scope circle (approximate with rectangles) */
+    /* Top and bottom bars */
+    R_DrawFill(0, 0, w, cy - radius, bar_color);
+    R_DrawFill(0, cy + radius, w, h - (cy + radius), bar_color);
+    /* Left and right bars */
+    R_DrawFill(0, cy - radius, cx - radius, radius * 2, bar_color);
+    R_DrawFill(cx + radius, cy - radius, w - (cx + radius), radius * 2, bar_color);
+
+    /* Fill corners (approximate circle with 8 rectangular strips) */
+    {
+        int strip;
+        for (strip = 0; strip < 16; strip++) {
+            float angle = (float)strip / 16.0f * 3.14159265f * 0.5f;
+            float ca = (float)cos(angle);
+            float sa = (float)sin(angle);
+            int sx = (int)(ca * radius);
+            int sy = (int)(sa * radius);
+
+            /* Top-left corner fill */
+            R_DrawFill(cx - radius, cy - sy - 1, radius - sx, 1, bar_color);
+            /* Top-right corner fill */
+            R_DrawFill(cx + sx, cy - sy - 1, radius - sx, 1, bar_color);
+            /* Bottom-left corner fill */
+            R_DrawFill(cx - radius, cy + sy, radius - sx, 1, bar_color);
+            /* Bottom-right corner fill */
+            R_DrawFill(cx + sx, cy + sy, radius - sx, 1, bar_color);
+        }
+    }
+
+    /* Scope crosshair — thin cross */
+    R_DrawFill(cx - radius, cy, radius * 2, 1, (int)0x80000000);  /* horizontal */
+    R_DrawFill(cx, cy - radius, 1, radius * 2, (int)0x80000000);  /* vertical */
+
+    /* Range markers on horizontal line */
+    {
+        int mark;
+        for (mark = 1; mark <= 4; mark++) {
+            int off = radius * mark / 5;
+            R_DrawFill(cx - off, cy - 3, 1, 7, (int)0x80000000);
+            R_DrawFill(cx + off, cy - 3, 1, 7, (int)0x80000000);
+        }
+    }
+
+    /* Center dot (bright red) */
+    R_DrawFill(cx - 1, cy - 1, 3, 3, (int)0xFFFF0000);
 }
 
 static void SCR_DrawCrosshair(void)
@@ -1147,8 +1330,15 @@ static void SCR_DrawHUD(float frametime)
     if (cl_state != CA_ACTIVE)
         return;
 
-    /* Crosshair */
-    SCR_DrawCrosshair();
+    /* Crosshair or scope overlay */
+    {
+        float zoom_fov;
+        if (SV_GetPlayerZoom(&zoom_fov)) {
+            SCR_DrawScopeOverlay();
+        } else {
+            SCR_DrawCrosshair();
+        }
+    }
 
     /* HUD background bar — bottom of screen (semi-transparent dark) */
     R_DrawFill(0, g_display.height - 48, g_display.width, 48, (int)(0x80000000));

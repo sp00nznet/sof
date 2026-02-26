@@ -1224,6 +1224,7 @@ static void SP_misc_teleport_dest(edict_t *ent, epair_t *pairs, int num_pairs)
 
 /* Forward declaration for level transition */
 extern void G_SaveTransitionState(void);
+extern void SCR_BeginIntermission(const char *nextmap);
 
 static void changelevel_touch(edict_t *self, edict_t *other, void *plane, csurface_t *surf)
 {
@@ -1242,10 +1243,10 @@ static void changelevel_touch(edict_t *self, edict_t *other, void *plane, csurfa
     /* Save player state for level transition */
     G_SaveTransitionState();
 
-    /* Queue the map change via console command (deferred to avoid re-entrant issues) */
+    /* Show intermission stats screen before loading next map */
     if (self->target) {
-        gi.dprintf("trigger_changelevel: loading %s\n", self->target);
-        gi.AddCommandString(va("map %s\n", self->target));
+        gi.dprintf("trigger_changelevel: intermission -> %s\n", self->target);
+        SCR_BeginIntermission(self->target);
     }
 }
 
@@ -1453,9 +1454,10 @@ static void target_changelevel_use(edict_t *self, edict_t *other, edict_t *activ
     /* Save player state for level transition */
     G_SaveTransitionState();
 
+    /* Show intermission stats screen before loading next map */
     if (self->target) {
-        gi.dprintf("target_changelevel: loading %s\n", self->target);
-        gi.AddCommandString(va("map %s\n", self->target));
+        gi.dprintf("target_changelevel: intermission -> %s\n", self->target);
+        SCR_BeginIntermission(self->target);
     }
 }
 
