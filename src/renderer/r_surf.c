@@ -376,10 +376,65 @@ void R_DrawSingleFace(bsp_world_t *world, int face_idx)
  * visible from the camera's current leaf/cluster. Falls back to
  * rendering all faces if PVS data is unavailable.
  */
+/*
+ * R_IsAlphaFace - Check if a face has transparency flags
+ */
+static qboolean R_IsAlphaFace(bsp_world_t *world, int face_idx)
+{
+    bsp_face_t *face = &world->faces[face_idx];
+
+    if (face->texinfo >= 0 && face->texinfo < world->num_texinfo) {
+        int flags = world->texinfo[face->texinfo].flags;
+        if (flags & (SURF_TRANS33 | SURF_TRANS66 | SURF_WARP))
+            return qtrue;
+
+        /* Also check if the texture itself has alpha */
+        if (face->texinfo < MAX_TEXINFO_CACHE && r_texinfo_images[face->texinfo]) {
+            if (r_texinfo_images[face->texinfo]->has_alpha)
+                return qtrue;
+        }
+    }
+    return qfalse;
+}
+
+/*
+ * R_DrawSingleFaceAlpha - Draw a face with proper alpha blending
+ */
+static void R_DrawSingleFaceAlpha(bsp_world_t *world, int face_idx)
+{
+    bsp_face_t *face = &world->faces[face_idx];
+    int flags = 0;
+    float alpha = 1.0f;
+
+    if (face->texinfo >= 0 && face->texinfo < world->num_texinfo)
+        flags = world->texinfo[face->texinfo].flags;
+
+    /* Determine alpha level from surface flags */
+    if (flags & SURF_TRANS33)
+        alpha = 0.33f;
+    else if (flags & SURF_TRANS66)
+        alpha = 0.66f;
+
+    qglEnable(GL_BLEND);
+    qglBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    qglDepthMask(GL_FALSE);
+    qglColor4f(1.0f, 1.0f, 1.0f, alpha);
+
+    R_DrawSingleFace(world, face_idx);
+
+    qglDepthMask(GL_TRUE);
+    qglDisable(GL_BLEND);
+    qglColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+}
+
+#define MAX_ALPHA_FACES     2048
+
 void R_DrawWorld(void)
 {
     int i;
     bsp_world_t *world = &r_worldmodel;
+    int alpha_faces[MAX_ALPHA_FACES];
+    int num_alpha_faces = 0;
 
     if (!r_worldloaded)
         return;
@@ -408,7 +463,7 @@ void R_DrawWorld(void)
         face_drawn = (byte *)Z_Malloc((world->num_faces + 7) / 8);
         memset(face_drawn, 0, (world->num_faces + 7) / 8);
 
-        /* Walk all leafs, check PVS visibility */
+        /* Pass 1: Opaque faces */
         for (i = 0; i < world->num_leafs; i++) {
             bsp_leaf_t *leaf = &world->leafs[i];
             int j;
@@ -419,7 +474,7 @@ void R_DrawWorld(void)
                     continue;
             }
 
-            /* Render all faces in this leaf */
+            /* Render opaque faces, collect alpha faces */
             for (j = 0; j < leaf->numleaffaces; j++) {
                 int lf_idx = leaf->firstleafface + j;
                 int face_idx;
@@ -436,7 +491,12 @@ void R_DrawWorld(void)
                     continue;
                 face_drawn[face_idx >> 3] |= (1 << (face_idx & 7));
 
-                R_DrawSingleFace(world, face_idx);
+                if (R_IsAlphaFace(world, face_idx)) {
+                    if (num_alpha_faces < MAX_ALPHA_FACES)
+                        alpha_faces[num_alpha_faces++] = face_idx;
+                } else {
+                    R_DrawSingleFace(world, face_idx);
+                }
             }
         }
 
@@ -444,8 +504,19 @@ void R_DrawWorld(void)
     } else {
         /* No PVS — draw all faces (fallback) */
         for (i = 0; i < world->num_faces; i++) {
-            R_DrawSingleFace(world, i);
+            if (R_IsAlphaFace(world, i)) {
+                if (num_alpha_faces < MAX_ALPHA_FACES)
+                    alpha_faces[num_alpha_faces++] = i;
+            } else {
+                R_DrawSingleFace(world, i);
+            }
         }
+    }
+
+    /* Pass 2: Alpha surfaces (rendered after all opaque geometry) */
+    if (num_alpha_faces > 0) {
+        for (i = 0; i < num_alpha_faces; i++)
+            R_DrawSingleFaceAlpha(world, alpha_faces[i]);
     }
 
     qglDisable(GL_CULL_FACE);
