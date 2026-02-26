@@ -19,6 +19,9 @@
 /* Particle effects from renderer (unified binary) */
 extern void R_ParticleEffect(vec3_t org, vec3_t dir, int type, int count);
 
+/* Forward declarations */
+static void G_AngleVectors(vec3_t angles, vec3_t fwd, vec3_t rt, vec3_t up_out);
+
 /* ==========================================================================
    Globals
    ========================================================================== */
@@ -368,6 +371,35 @@ static void ClientCommand(edict_t *ent)
         ent->client->pers_weapon = w;
         ent->weapon_index = w;
         gi.cprintf(ent, PRINT_ALL, "Weapon: %s\n", weapon_names[w]);
+        return;
+    }
+
+    if (Q_stricmp(cmd, "spawn_monster") == 0) {
+        /* Debug: spawn a soldier 128 units in front of player */
+        extern void SP_monster_soldier(edict_t *ent, void *pairs, int num_pairs);
+        int idx;
+
+        for (idx = game_maxclients + 1; idx < globals.max_edicts; idx++) {
+            if (!globals.edicts[idx].inuse)
+                break;
+        }
+        if (idx < globals.max_edicts) {
+            edict_t *monster = &globals.edicts[idx];
+            vec3_t forward, right, up_dir;
+
+            memset(monster, 0, (size_t)globals.edict_size);
+            monster->inuse = qtrue;
+            globals.num_edicts = (idx + 1 > globals.num_edicts) ? idx + 1 : globals.num_edicts;
+
+            G_AngleVectors(ent->client->viewangles, forward, right, up_dir);
+            VectorMA(ent->s.origin, 128, forward, monster->s.origin);
+
+            SP_monster_soldier(monster, NULL, 0);
+            gi.cprintf(ent, PRINT_ALL, "Spawned monster_soldier at (%.0f %.0f %.0f)\n",
+                       monster->s.origin[0], monster->s.origin[1], monster->s.origin[2]);
+        } else {
+            gi.cprintf(ent, PRINT_ALL, "No free edicts\n");
+        }
         return;
     }
 

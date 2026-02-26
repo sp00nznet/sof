@@ -75,6 +75,7 @@ add_executable(sof
     src/game/g_main.c
     src/game/g_spawn.c
     src/game/g_phys.c
+    src/game/g_ai.c
 
     # Server
     src/server/sv_game.c

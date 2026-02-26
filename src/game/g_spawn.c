@@ -32,6 +32,13 @@
 /* Particle effects from renderer (unified binary) */
 extern void R_ParticleEffect(vec3_t org, vec3_t dir, int type, int count);
 
+/* Monster spawn functions (g_ai.c) — use void* for epair_t since they don't parse it */
+extern void SP_monster_soldier(edict_t *ent, void *pairs, int num_pairs);
+extern void SP_monster_soldier_light(edict_t *ent, void *pairs, int num_pairs);
+extern void SP_monster_soldier_ss(edict_t *ent, void *pairs, int num_pairs);
+extern void SP_monster_guard(edict_t *ent, void *pairs, int num_pairs);
+extern void SP_monster_boss(edict_t *ent, void *pairs, int num_pairs);
+
 /* Maximum key/value pairs per entity */
 #define MAX_ENTITY_FIELDS   64
 #define MAX_FIELD_VALUE     256
@@ -237,6 +244,18 @@ static spawn_func_t spawn_funcs[] = {
     { "func_breakable",             SP_func_breakable },
     { "func_explosive",             SP_func_explosive },
     { "misc_explobox",              SP_func_explosive },
+
+    /* Monsters (g_ai.c) */
+    { "monster_soldier",            (void (*)(edict_t *, epair_t *, int))SP_monster_soldier },
+    { "monster_soldier_light",      (void (*)(edict_t *, epair_t *, int))SP_monster_soldier_light },
+    { "monster_soldier_ss",         (void (*)(edict_t *, epair_t *, int))SP_monster_soldier_ss },
+    { "monster_guard",              (void (*)(edict_t *, epair_t *, int))SP_monster_guard },
+    { "monster_boss",               (void (*)(edict_t *, epair_t *, int))SP_monster_boss },
+    /* Q2-compatible monster names */
+    { "monster_soldier_light",      (void (*)(edict_t *, epair_t *, int))SP_monster_soldier_light },
+    { "monster_infantry",           (void (*)(edict_t *, epair_t *, int))SP_monster_soldier },
+    { "monster_gunner",             (void (*)(edict_t *, epair_t *, int))SP_monster_soldier_ss },
+    { "monster_enforcer",           (void (*)(edict_t *, epair_t *, int))SP_monster_soldier },
 
     /* Misc */
     { "misc_model",                 SP_misc_model },
