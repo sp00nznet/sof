@@ -23,6 +23,10 @@ extern void R_AddDlight(vec3_t origin, float r, float g, float b,
 
 /* Forward declarations */
 static void G_AngleVectors(vec3_t angles, vec3_t fwd, vec3_t rt, vec3_t up_out);
+static void WriteGame(const char *filename, qboolean autosave);
+static void ReadGame(const char *filename);
+static void WriteLevel(const char *filename);
+static void ReadLevel(const char *filename);
 
 /* ==========================================================================
    Globals
@@ -376,6 +380,28 @@ static void ClientCommand(edict_t *ent)
         return;
     }
 
+    if (Q_stricmp(cmd, "save") == 0) {
+        const char *savename = gi.argc() > 1 ? gi.argv(1) : "quick";
+        char gamefile[256], levelfile[256];
+        snprintf(gamefile, sizeof(gamefile), "%s.sav", savename);
+        snprintf(levelfile, sizeof(levelfile), "%s.sv2", savename);
+        WriteGame(gamefile, qfalse);
+        WriteLevel(levelfile);
+        gi.cprintf(ent, PRINT_ALL, "Saved: %s\n", savename);
+        return;
+    }
+
+    if (Q_stricmp(cmd, "load") == 0) {
+        const char *savename = gi.argc() > 1 ? gi.argv(1) : "quick";
+        char gamefile[256], levelfile[256];
+        snprintf(gamefile, sizeof(gamefile), "%s.sav", savename);
+        snprintf(levelfile, sizeof(levelfile), "%s.sv2", savename);
+        ReadGame(gamefile);
+        ReadLevel(levelfile);
+        gi.cprintf(ent, PRINT_ALL, "Loaded: %s\n", savename);
+        return;
+    }
+
     if (Q_stricmp(cmd, "spawn_monster") == 0) {
         /* Debug: spawn a soldier 128 units in front of player */
         extern void SP_monster_soldier(edict_t *ent, void *pairs, int num_pairs);
@@ -683,29 +709,243 @@ static void ClientDisconnect(edict_t *ent)
    Save/Load (stubs)
    ========================================================================== */
 
+/* ==========================================================================
+   Save/Load System
+
+   WriteGame: Saves persistent game state (client inventory, game settings).
+   ReadGame:  Restores game state from a save file.
+   WriteLevel: Saves all entity state for current level.
+   ReadLevel:  Restores entity state for current level.
+
+   File format: Simple binary with magic + version header.
+   ========================================================================== */
+
+#define SAVE_MAGIC      0x534F4653  /* "SOFS" */
+#define SAVE_VERSION    1
+
+/* Saved entity data — only fields that matter for restoration */
+typedef struct {
+    int         index;
+    qboolean    inuse;
+    vec3_t      origin;
+    vec3_t      angles;
+    vec3_t      velocity;
+    int         health;
+    int         max_health;
+    int         solid;
+    int         movetype;
+    int         takedamage;
+    int         deadflag;
+    int         flags;
+    int         count;          /* AI state for monsters */
+    float       nextthink;
+    int         ai_flags;
+    char        classname[64];
+} save_entity_t;
+
+/* Saved client/game state */
+typedef struct {
+    int         health;
+    int         max_health;
+    int         weapon;
+    vec3_t      origin;
+    vec3_t      angles;
+    float       viewheight;
+    float       game_time;
+    int         num_entities;
+} save_game_t;
+
 static void WriteGame(const char *filename, qboolean autosave)
 {
-    (void)filename;
+    FILE *f;
+    save_game_t sg;
+    edict_t *player;
+    int magic = SAVE_MAGIC, version = SAVE_VERSION;
+
     (void)autosave;
-    gi.dprintf("WriteGame: %s (autosave=%d)\n", filename, autosave);
+
+    f = fopen(filename, "wb");
+    if (!f) {
+        gi.dprintf("WriteGame: can't open %s\n", filename);
+        return;
+    }
+
+    fwrite(&magic, 4, 1, f);
+    fwrite(&version, 4, 1, f);
+
+    player = &globals.edicts[1];
+    memset(&sg, 0, sizeof(sg));
+
+    if (player->inuse && player->client) {
+        sg.health = player->health;
+        sg.max_health = player->max_health;
+        sg.weapon = player->client->pers_weapon;
+        VectorCopy(player->s.origin, sg.origin);
+        VectorCopy(player->client->viewangles, sg.angles);
+        sg.viewheight = player->client->viewheight;
+    }
+    sg.game_time = level.time;
+    sg.num_entities = globals.num_edicts;
+
+    fwrite(&sg, sizeof(sg), 1, f);
+    fclose(f);
+
+    gi.dprintf("Game saved: %s\n", filename);
 }
 
 static void ReadGame(const char *filename)
 {
-    (void)filename;
-    gi.dprintf("ReadGame: %s\n", filename);
+    FILE *f;
+    save_game_t sg;
+    edict_t *player;
+    int magic, version;
+
+    f = fopen(filename, "rb");
+    if (!f) {
+        gi.dprintf("ReadGame: can't open %s\n", filename);
+        return;
+    }
+
+    fread(&magic, 4, 1, f);
+    fread(&version, 4, 1, f);
+
+    if (magic != SAVE_MAGIC || version != SAVE_VERSION) {
+        gi.dprintf("ReadGame: bad save file %s\n", filename);
+        fclose(f);
+        return;
+    }
+
+    fread(&sg, sizeof(sg), 1, f);
+    fclose(f);
+
+    player = &globals.edicts[1];
+    if (player->inuse && player->client) {
+        player->health = sg.health;
+        player->max_health = sg.max_health;
+        player->client->pers_weapon = sg.weapon;
+        player->weapon_index = sg.weapon;
+        VectorCopy(sg.origin, player->s.origin);
+        VectorCopy(sg.angles, player->client->viewangles);
+        player->client->viewheight = sg.viewheight;
+        player->deadflag = 0;
+        player->client->ps.pm_type = PM_NORMAL;
+    }
+
+    gi.dprintf("Game loaded: %s\n", filename);
 }
 
 static void WriteLevel(const char *filename)
 {
-    (void)filename;
-    gi.dprintf("WriteLevel: %s\n", filename);
+    FILE *f;
+    int magic = SAVE_MAGIC, version = SAVE_VERSION;
+    int i;
+
+    f = fopen(filename, "wb");
+    if (!f) {
+        gi.dprintf("WriteLevel: can't open %s\n", filename);
+        return;
+    }
+
+    fwrite(&magic, 4, 1, f);
+    fwrite(&version, 4, 1, f);
+    fwrite(&globals.num_edicts, 4, 1, f);
+
+    for (i = 0; i < globals.num_edicts; i++) {
+        edict_t *ent = &globals.edicts[i];
+        save_entity_t se;
+
+        memset(&se, 0, sizeof(se));
+        se.index = i;
+        se.inuse = ent->inuse;
+
+        if (ent->inuse) {
+            VectorCopy(ent->s.origin, se.origin);
+            VectorCopy(ent->s.angles, se.angles);
+            VectorCopy(ent->velocity, se.velocity);
+            se.health = ent->health;
+            se.max_health = ent->max_health;
+            se.solid = ent->solid;
+            se.movetype = ent->movetype;
+            se.takedamage = ent->takedamage;
+            se.deadflag = ent->deadflag;
+            se.flags = ent->flags;
+            se.count = ent->count;
+            se.nextthink = ent->nextthink;
+            se.ai_flags = ent->ai_flags;
+            if (ent->classname)
+                Q_strncpyz(se.classname, ent->classname, sizeof(se.classname));
+        }
+
+        fwrite(&se, sizeof(se), 1, f);
+    }
+
+    fclose(f);
+    gi.dprintf("Level saved: %s (%d entities)\n", filename, globals.num_edicts);
 }
 
 static void ReadLevel(const char *filename)
 {
-    (void)filename;
-    gi.dprintf("ReadLevel: %s\n", filename);
+    FILE *f;
+    int magic, version, num_ents, i;
+
+    f = fopen(filename, "rb");
+    if (!f) {
+        gi.dprintf("ReadLevel: can't open %s\n", filename);
+        return;
+    }
+
+    fread(&magic, 4, 1, f);
+    fread(&version, 4, 1, f);
+
+    if (magic != SAVE_MAGIC || version != SAVE_VERSION) {
+        gi.dprintf("ReadLevel: bad save file %s\n", filename);
+        fclose(f);
+        return;
+    }
+
+    fread(&num_ents, 4, 1, f);
+
+    for (i = 0; i < num_ents && i < globals.max_edicts; i++) {
+        edict_t *ent = &globals.edicts[i];
+        save_entity_t se;
+
+        fread(&se, sizeof(se), 1, f);
+
+        /* Skip player entity — restored by ReadGame */
+        if (i == 0 || i == 1)
+            continue;
+
+        if (!se.inuse) {
+            if (ent->inuse) {
+                ent->inuse = qfalse;
+                gi.unlinkentity(ent);
+            }
+            continue;
+        }
+
+        /* Restore saved state over existing entity */
+        VectorCopy(se.origin, ent->s.origin);
+        VectorCopy(se.angles, ent->s.angles);
+        VectorCopy(se.velocity, ent->velocity);
+        ent->health = se.health;
+        ent->max_health = se.max_health;
+        ent->solid = se.solid;
+        ent->movetype = se.movetype;
+        ent->takedamage = se.takedamage;
+        ent->deadflag = se.deadflag;
+        ent->flags = se.flags;
+        ent->count = se.count;
+        ent->nextthink = se.nextthink;
+        ent->ai_flags = se.ai_flags;
+
+        /* Re-link entity with updated position */
+        if (ent->inuse)
+            gi.linkentity(ent);
+    }
+
+    globals.num_edicts = num_ents > globals.num_edicts ? num_ents : globals.num_edicts;
+    fclose(f);
+    gi.dprintf("Level loaded: %s (%d entities)\n", filename, num_ents);
 }
 
 /* ==========================================================================

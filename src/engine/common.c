@@ -43,6 +43,24 @@ static void Cmd_Freecam_f(void);
 /* Forward declaration — client command forwarding */
 extern void SV_ExecuteClientCommand(void);
 
+static void Cmd_SaveGame_f(void)
+{
+    const char *name = Cmd_Argc() > 1 ? Cmd_Argv(1) : "quick";
+    char buf[256];
+    snprintf(buf, sizeof(buf), "save %s", name);
+    Cmd_TokenizeString(buf, qfalse);
+    SV_ExecuteClientCommand();
+}
+
+static void Cmd_LoadGame_f(void)
+{
+    const char *name = Cmd_Argc() > 1 ? Cmd_Argv(1) : "quick";
+    char buf[256];
+    snprintf(buf, sizeof(buf), "load %s", name);
+    Cmd_TokenizeString(buf, qfalse);
+    SV_ExecuteClientCommand();
+}
+
 static void Cmd_ForwardToServer(void)
 {
     /* Re-tokenize with "cmd" stripped so gi.argv(0) returns the actual command */
@@ -189,6 +207,8 @@ void Qcommon_Init(int argc, char **argv)
     Cmd_AddCommand("error", NULL);  /* placeholder */
     Cmd_AddCommand("freecam", Cmd_Freecam_f);
     Cmd_AddCommand("cmd", Cmd_ForwardToServer);
+    Cmd_AddCommand("savegame", Cmd_SaveGame_f);
+    Cmd_AddCommand("loadgame", Cmd_LoadGame_f);
 
     /* Register core cvars */
     developer = Cvar_Get("developer", "0", 0);
