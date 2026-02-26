@@ -11,6 +11,7 @@
 #include "../common/qcommon.h"
 #include "../game/g_local.h"
 #include "../renderer/r_bsp.h"
+#include "../renderer/r_local.h"
 #include "../sound/snd_local.h"
 
 /* ==========================================================================
@@ -824,5 +825,23 @@ void SV_SpawnMapEntities(const char *mapname, const char *entstring)
 
     if (ge && ge->SpawnEntities) {
         ge->SpawnEntities(mapname, entstring, "");
+    }
+
+    /* Apply sky settings from configstrings set by worldspawn */
+    {
+        const char *skyname = sv_configstrings[CS_SKY];
+        if (skyname[0]) {
+            float rotate = 0;
+            vec3_t axis = {0, 0, 1};
+            const char *rotstr = sv_configstrings[CS_SKYROTATE];
+            const char *axisstr = sv_configstrings[CS_SKYAXIS];
+
+            if (rotstr[0])
+                rotate = (float)atof(rotstr);
+            if (axisstr[0])
+                sscanf(axisstr, "%f %f %f", &axis[0], &axis[1], &axis[2]);
+
+            R_SetSky(skyname, rotate, axis);
+        }
     }
 }

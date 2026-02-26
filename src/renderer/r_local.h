@@ -238,6 +238,7 @@ image_t    *R_FindPic(const char *name);
 GLuint      R_GetNoTexture(void);
 void        R_ImageBeginRegistration(void);
 void        R_ImageEndRegistration(void);
+GLuint      R_LoadSkyTexture(const char *path);
 
 /* Lightmap system (r_light.c) */
 void        R_BuildLightmaps(bsp_world_t *world);

@@ -45,6 +45,15 @@ cvar_t  *ghl_specular;
 cvar_t  *ghl_mip;
 
 /* ==========================================================================
+   Skybox State
+   ========================================================================== */
+
+static GLuint   sky_textures[6];    /* rt, lf, up, dn, ft, bk */
+static qboolean sky_loaded;
+static float    sky_rotate;
+static vec3_t   sky_axis;
+
+/* ==========================================================================
    GL Function Pointers
    ========================================================================== */
 
@@ -398,6 +407,72 @@ static void R_DrawBrushEntities(void)
 }
 
 /*
+ * R_DrawSkyBox - Render the skybox cube centered on the camera
+ *
+ * Draws a unit cube with 6 textured faces at the camera position.
+ * Depth writes disabled so sky is always behind world geometry.
+ * Uses Q2 coordinate system (Z-up).
+ */
+static void R_DrawSkyBox(void)
+{
+    /*
+     * Sky face vertex data: 6 faces of a cube, each with 4 vertices.
+     * Q2 convention: rt=+x, lf=-x, up=+z, dn=-z, ft=-y, bk=+y
+     * (ft looks toward negative Y in Q2 coordinates)
+     */
+    static const float sky_verts[6][4][3] = {
+        /* rt (+X) */ {{ 1,-1, 1}, { 1,-1,-1}, { 1, 1,-1}, { 1, 1, 1}},
+        /* lf (-X) */ {{-1, 1, 1}, {-1, 1,-1}, {-1,-1,-1}, {-1,-1, 1}},
+        /* up (+Z) */ {{-1, 1, 1}, { 1, 1, 1}, { 1,-1, 1}, {-1,-1, 1}},
+        /* dn (-Z) */ {{-1,-1,-1}, { 1,-1,-1}, { 1, 1,-1}, {-1, 1,-1}},
+        /* ft (-Y) */ {{ 1,-1, 1}, {-1,-1, 1}, {-1,-1,-1}, { 1,-1,-1}},
+        /* bk (+Y) */ {{-1, 1, 1}, { 1, 1, 1}, { 1, 1,-1}, {-1, 1,-1}},
+    };
+    float s = 2048.0f;
+    vec3_t cam;
+    int i;
+
+    if (!sky_loaded)
+        return;
+
+    qglDepthMask(GL_FALSE);
+    qglDisable(GL_DEPTH_TEST);
+    qglEnable(GL_TEXTURE_2D);
+    qglColor4f(1, 1, 1, 1);
+
+    /*
+     * The modelview currently has rotation + translation (-vieworg).
+     * Push and undo the translation so the sky cube stays centered on
+     * the camera (rotation-only view).
+     */
+    qglMatrixMode(GL_MODELVIEW);
+    qglPushMatrix();
+
+    R_GetCameraOrigin(cam);
+    qglTranslatef(cam[0], cam[1], cam[2]);
+
+    if (sky_rotate != 0)
+        qglRotatef(sky_rotate, sky_axis[0], sky_axis[1], sky_axis[2]);
+
+    for (i = 0; i < 6; i++) {
+        if (!sky_textures[i])
+            continue;
+
+        qglBindTexture(GL_TEXTURE_2D, sky_textures[i]);
+        qglBegin(GL_QUADS);
+        qglTexCoord2f(0, 0); qglVertex3f(sky_verts[i][0][0]*s, sky_verts[i][0][1]*s, sky_verts[i][0][2]*s);
+        qglTexCoord2f(1, 0); qglVertex3f(sky_verts[i][1][0]*s, sky_verts[i][1][1]*s, sky_verts[i][1][2]*s);
+        qglTexCoord2f(1, 1); qglVertex3f(sky_verts[i][2][0]*s, sky_verts[i][2][1]*s, sky_verts[i][2][2]*s);
+        qglTexCoord2f(0, 1); qglVertex3f(sky_verts[i][3][0]*s, sky_verts[i][3][1]*s, sky_verts[i][3][2]*s);
+        qglEnd();
+    }
+
+    qglPopMatrix();
+    qglEnable(GL_DEPTH_TEST);
+    qglDepthMask(GL_TRUE);
+}
+
+/*
  * R_RenderFrame - Render a 3D scene from a refdef_t
  *
  * This is the Q2-standard rendering entry point. The engine fills a
@@ -423,6 +498,9 @@ void R_RenderFrame(refdef_t *fd)
     qglDepthMask(GL_TRUE);
     qglEnable(GL_TEXTURE_2D);
     qglClear(GL_DEPTH_BUFFER_BIT);
+
+    /* Draw skybox (before world, depth writes off so world occludes it) */
+    R_DrawSkyBox();
 
     /* Draw BSP world */
     if (R_WorldLoaded() && r_drawworld->value)
@@ -503,8 +581,50 @@ image_t *R_RegisterPic(const char *name)
 
 void R_SetSky(const char *name, float rotate, vec3_t axis)
 {
-    (void)name; (void)rotate; (void)axis;
-    /* TODO: Load skybox textures */
+    static const char *sky_suffixes[6] = { "rt", "lf", "up", "dn", "ft", "bk" };
+    char path[MAX_QPATH];
+    int i;
+
+    /* Free old sky textures */
+    for (i = 0; i < 6; i++) {
+        if (sky_textures[i]) {
+            qglDeleteTextures(1, &sky_textures[i]);
+            sky_textures[i] = 0;
+        }
+    }
+    sky_loaded = qfalse;
+
+    if (!name || !name[0])
+        return;
+
+    sky_rotate = rotate;
+    if (axis) {
+        VectorCopy(axis, sky_axis);
+    } else {
+        VectorSet(sky_axis, 0, 0, 1);
+    }
+
+    /* Load 6 skybox faces: env/[name][suffix].tga */
+    for (i = 0; i < 6; i++) {
+        Com_sprintf(path, sizeof(path), "env/%s%s.tga", name, sky_suffixes[i]);
+        sky_textures[i] = R_LoadSkyTexture(path);
+        if (!sky_textures[i]) {
+            /* Try pcx fallback */
+            Com_sprintf(path, sizeof(path), "env/%s%s.pcx", name, sky_suffixes[i]);
+            sky_textures[i] = R_LoadSkyTexture(path);
+        }
+    }
+
+    /* Check if at least the front face loaded */
+    if (sky_textures[4]) {
+        sky_loaded = qtrue;
+        Com_Printf("Sky: %s (%d faces loaded)\n", name,
+                   (sky_textures[0]?1:0) + (sky_textures[1]?1:0) +
+                   (sky_textures[2]?1:0) + (sky_textures[3]?1:0) +
+                   (sky_textures[4]?1:0) + (sky_textures[5]?1:0));
+    } else {
+        Com_DPrintf("R_SetSky: couldn't load sky '%s'\n", name);
+    }
 }
 
 void R_EndRegistration(void)

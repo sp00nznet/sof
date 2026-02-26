@@ -430,9 +430,18 @@ static void SP_worldspawn(edict_t *ent, epair_t *pairs, int num_pairs)
     val = ED_FindValue(pairs, num_pairs, "sky");
     if (val) {
         gi.dprintf("Sky: %s\n", val);
+        gi.configstring(CS_SKY, val);
     }
 
-    /* TODO: Set configstrings for sky, cdtrack, etc. */
+    val = ED_FindValue(pairs, num_pairs, "skyrotate");
+    if (val) {
+        gi.configstring(CS_SKYROTATE, val);
+    }
+
+    val = ED_FindValue(pairs, num_pairs, "skyaxis");
+    if (val) {
+        gi.configstring(CS_SKYAXIS, val);
+    }
 }
 
 static void SP_info_player_start(edict_t *ent, epair_t *pairs, int num_pairs)

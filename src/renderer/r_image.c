@@ -616,6 +616,78 @@ GLuint R_GetNoTexture(void)
     return r_notexture;
 }
 
+/*
+ * R_LoadSkyTexture - Load a TGA file and return raw GL texture handle
+ * Used for skybox faces which don't need to be in the image cache.
+ */
+GLuint R_LoadSkyTexture(const char *path)
+{
+    byte    *raw;
+    int     len;
+    int     width, height, bpp;
+    byte    *rgba, *src;
+    int     i, size, data_start;
+    qboolean top_origin, has_alpha;
+    GLuint  texnum;
+
+    len = FS_LoadFile(path, (void **)&raw);
+    if (!raw || len < 18)
+        return 0;
+
+    /* Only uncompressed RGB/grey TGA */
+    if (raw[2] != 2 && raw[2] != 3) {
+        FS_FreeFile(raw);
+        return 0;
+    }
+
+    width = raw[12] | (raw[13] << 8);
+    height = raw[14] | (raw[15] << 8);
+    bpp = raw[16] / 8;
+
+    if (width <= 0 || height <= 0 || width > 2048 || height > 2048 ||
+        (bpp != 3 && bpp != 4)) {
+        FS_FreeFile(raw);
+        return 0;
+    }
+
+    size = width * height;
+    data_start = 18 + raw[0];
+    if (data_start + size * bpp > len) {
+        FS_FreeFile(raw);
+        return 0;
+    }
+
+    rgba = (byte *)Z_Malloc(size * 4);
+    src = raw + data_start;
+    top_origin = (raw[17] & 0x20) != 0;
+    has_alpha = (bpp == 4);
+
+    for (i = 0; i < size; i++) {
+        int sx = i % width;
+        int sy = i / width;
+        int dy = top_origin ? sy : (height - 1 - sy);
+        int dst = (dy * width + sx) * 4;
+        int sidx = i * bpp;
+
+        rgba[dst + 0] = src[sidx + 2];  /* TGA is BGR */
+        rgba[dst + 1] = src[sidx + 1];
+        rgba[dst + 2] = src[sidx + 0];
+        rgba[dst + 3] = has_alpha ? src[sidx + 3] : 255;
+    }
+
+    FS_FreeFile(raw);
+
+    texnum = R_UploadTexture(rgba, width, height, qfalse, has_alpha);
+
+    /* Set clamp-to-edge to avoid seams */
+    qglBindTexture(GL_TEXTURE_2D, texnum);
+    qglTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, 0x812F); /* GL_CLAMP_TO_EDGE */
+    qglTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, 0x812F);
+
+    Z_Free(rgba);
+    return texnum;
+}
+
 /* ==========================================================================
    Image System Init / Shutdown
    ========================================================================== */
