@@ -494,6 +494,40 @@ static void SP_info_player_start(edict_t *ent, epair_t *pairs, int num_pairs)
         player->takedamage = DAMAGE_AIM;
         player->client->pers_weapon = WEAP_PISTOL1;
         player->weapon_index = WEAP_PISTOL1;
+
+        /* Initialize ammo */
+        {
+            /* Max ammo per weapon */
+            static const int default_max_ammo[WEAP_COUNT] = {
+                0,    /* NONE */
+                0,    /* KNIFE (melee) */
+                24,   /* PISTOL1 */
+                30,   /* PISTOL2 */
+                32,   /* SHOTGUN */
+                150,  /* MACHINEGUN */
+                120,  /* ASSAULT */
+                25,   /* SNIPER */
+                40,   /* SLUGGER */
+                12,   /* ROCKET */
+                200,  /* FLAMEGUN */
+                100,  /* MPG */
+                60,   /* MPISTOL */
+                5,    /* GRENADE */
+                3,    /* C4 */
+                5,    /* MEDKIT */
+                0,    /* GOGGLES */
+                0,    /* FPAK */
+            };
+            int w;
+            for (w = 0; w < WEAP_COUNT; w++) {
+                player->client->ammo_max[w] = default_max_ammo[w];
+                player->client->ammo[w] = 0;
+            }
+            /* Start with pistol ammo */
+            player->client->ammo[WEAP_PISTOL1] = 12;
+            player->client->ammo[WEAP_KNIFE] = 999; /* melee = infinite */
+        }
+
         VectorSet(player->mins, -16, -16, -24);
         VectorSet(player->maxs, 16, 16, 32);
         gi.linkentity(player);
@@ -1216,32 +1250,96 @@ static void SP_misc_model(edict_t *ent, epair_t *pairs, int num_pairs)
    Item / Weapon Pickups
    ========================================================================== */
 
+/* Map classname to weapon ID for ammo/weapon pickup */
+static int item_classname_to_weapon(const char *classname)
+{
+    static const struct { const char *name; int weap; } weapon_map[] = {
+        { "weapon_knife",       WEAP_KNIFE },
+        { "weapon_pistol1",     WEAP_PISTOL1 },
+        { "weapon_pistol2",     WEAP_PISTOL2 },
+        { "weapon_shotgun",     WEAP_SHOTGUN },
+        { "weapon_machinegun",  WEAP_MACHINEGUN },
+        { "weapon_assault",     WEAP_ASSAULT },
+        { "weapon_sniper",      WEAP_SNIPER },
+        { "weapon_slugger",     WEAP_SLUGGER },
+        { "weapon_rocket",      WEAP_ROCKET },
+        { "weapon_flamegun",    WEAP_FLAMEGUN },
+        { "weapon_mpg",         WEAP_MPG },
+        { "weapon_mpistol",     WEAP_MPISTOL },
+        { "weapon_grenade",     WEAP_GRENADE },
+        { "weapon_c4",          WEAP_C4 },
+        { "ammo_pistol",        WEAP_PISTOL1 },
+        { "ammo_shotgun",       WEAP_SHOTGUN },
+        { "ammo_machinegun",    WEAP_MACHINEGUN },
+        { "ammo_assault",       WEAP_ASSAULT },
+        { "ammo_sniper",        WEAP_SNIPER },
+        { "ammo_slugger",       WEAP_SLUGGER },
+        { "ammo_rockets",       WEAP_ROCKET },
+        { "ammo_flame",         WEAP_FLAMEGUN },
+        { "ammo_mpg",           WEAP_MPG },
+        { "ammo_grenades",      WEAP_GRENADE },
+        { NULL, 0 }
+    };
+    int i;
+    for (i = 0; weapon_map[i].name; i++) {
+        if (Q_stricmp(classname, weapon_map[i].name) == 0)
+            return weapon_map[i].weap;
+    }
+    return -1;
+}
+
+static const int weapon_pickup_ammo[WEAP_COUNT] = {
+    0, 0, 12, 15, 8, 50, 30, 5, 20, 4, 50, 25, 30, 3, 1, 3, 0, 0
+};
+static const int ammo_pickup_amount[WEAP_COUNT] = {
+    0, 0, 12, 15, 8, 50, 30, 5, 20, 4, 50, 25, 30, 2, 1, 2, 0, 0
+};
+
 static void item_touch(edict_t *self, edict_t *other, void *plane, csurface_t *surf)
 {
     (void)plane; (void)surf;
 
-    if (!other || !other->client)
+    if (!other || !other->client || !self->classname)
         return;
 
-    /* Simple pickup: print message, give health/ammo, remove item */
-    if (self->classname) {
-        if (strstr(self->classname, "health")) {
-            int heal = 25;
-            if (strstr(self->classname, "large")) heal = 100;
-            else if (strstr(self->classname, "small")) heal = 10;
+    /* Health pickup */
+    if (strstr(self->classname, "health")) {
+        int heal = 25;
+        if (strstr(self->classname, "large")) heal = 100;
+        else if (strstr(self->classname, "small")) heal = 10;
 
-            if (other->health >= other->max_health)
-                return;  /* already full */
+        if (other->health >= other->max_health)
+            return;
 
-            other->health += heal;
-            if (other->health > other->max_health)
-                other->health = other->max_health;
-            if (other->client)
-                other->client->pers_health = other->health;
-        }
-
-        gi.cprintf(other, PRINT_ALL, "Picked up %s\n", self->classname);
+        other->health += heal;
+        if (other->health > other->max_health)
+            other->health = other->max_health;
+        other->client->pers_health = other->health;
     }
+    /* Weapon/ammo pickup */
+    else {
+        int weap = item_classname_to_weapon(self->classname);
+        if (weap > 0 && weap < WEAP_COUNT) {
+            int give;
+            qboolean is_weapon = (strncmp(self->classname, "weapon_", 7) == 0);
+
+            give = is_weapon ? weapon_pickup_ammo[weap] : ammo_pickup_amount[weap];
+
+            if (other->client->ammo[weap] >= other->client->ammo_max[weap] && !is_weapon)
+                return;
+
+            other->client->ammo[weap] += give;
+            if (other->client->ammo[weap] > other->client->ammo_max[weap])
+                other->client->ammo[weap] = other->client->ammo_max[weap];
+
+            if (is_weapon) {
+                other->client->pers_weapon = weap;
+                other->weapon_index = weap;
+            }
+        }
+    }
+
+    gi.cprintf(other, PRINT_ALL, "Picked up %s\n", self->classname);
 
     /* Remove the item */
     self->inuse = qfalse;

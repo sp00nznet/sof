@@ -514,6 +514,15 @@ static void G_FireHitscan(edict_t *ent)
     if (level.time < player_next_fire)
         return;
 
+    /* Check ammo (knife/melee weapons don't use ammo) */
+    if (weap > 0 && weap < WEAP_COUNT && weap != WEAP_KNIFE) {
+        if (ent->client->ammo[weap] <= 0) {
+            /* Click — no ammo */
+            return;
+        }
+        ent->client->ammo[weap]--;
+    }
+
     damage = (weap > 0 && weap < WEAP_COUNT) ? weapon_damage[weap] : 15;
     player_next_fire = level.time + ((weap > 0 && weap < WEAP_COUNT) ? weapon_firerate[weap] : 0.2f);
 

@@ -35,6 +35,7 @@ extern void SV_ClientThink(usercmd_t *cmd);
 extern qboolean SV_GetPlayerState(vec3_t origin, vec3_t angles, float *viewheight);
 extern qboolean SV_GetPlayerHealth(int *health, int *max_health);
 extern const char *SV_GetPlayerWeapon(void);
+extern qboolean SV_GetPlayerAmmo(int *ammo, int *ammo_max);
 extern void SV_GetPlayerBlend(float *blend);
 
 /* Forward declaration — freecam toggle (defined below in client section) */
@@ -570,7 +571,33 @@ static void SCR_DrawHUD(float frametime)
             int x = g_display.width - 16 - len * 8;
 
             R_SetDrawColor(0.8f, 0.8f, 0.8f, 1.0f);
-            R_DrawString(x, g_display.height - 28, wname);
+            R_DrawString(x, g_display.height - 40, wname);
+        }
+
+        /* Ammo display - below weapon name */
+        {
+            int ammo = 0, ammo_max = 0;
+            if (SV_GetPlayerAmmo(&ammo, &ammo_max)) {
+                char abuf[32];
+                int alen, ax;
+
+                if (ammo_max > 0) {
+                    snprintf(abuf, sizeof(abuf), "%d / %d", ammo, ammo_max);
+                } else {
+                    snprintf(abuf, sizeof(abuf), "%d", ammo);
+                }
+                alen = (int)strlen(abuf);
+                ax = g_display.width - 16 - alen * 8;
+
+                if (ammo > 10)
+                    R_SetDrawColor(1.0f, 1.0f, 1.0f, 1.0f);
+                else if (ammo > 0)
+                    R_SetDrawColor(1.0f, 1.0f, 0.0f, 1.0f);
+                else
+                    R_SetDrawColor(1.0f, 0.2f, 0.2f, 1.0f);
+
+                R_DrawString(ax, g_display.height - 28, abuf);
+            }
         }
 
         /* Reset to default green for console */

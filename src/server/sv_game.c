@@ -802,6 +802,33 @@ const char *SV_GetPlayerWeapon(void)
 }
 
 /*
+ * SV_GetPlayerAmmo — Get player ammo for HUD display
+ */
+qboolean SV_GetPlayerAmmo(int *ammo, int *ammo_max)
+{
+    edict_t *player;
+
+    if (!ge || !ge->edicts)
+        return qfalse;
+
+    player = (edict_t *)((byte *)ge->edicts + ge->edict_size);
+    if (!player->inuse || !player->client)
+        return qfalse;
+
+    {
+        int weap = player->client->pers_weapon;
+        if (weap >= 0 && weap < WEAP_COUNT) {
+            *ammo = player->client->ammo[weap];
+            *ammo_max = player->client->ammo_max[weap];
+        } else {
+            *ammo = 0;
+            *ammo_max = 0;
+        }
+    }
+    return qtrue;
+}
+
+/*
  * SV_RunGameFrame — Called from SV_Frame at 10Hz
  * Drives the game module's RunFrame which iterates all entities.
  */

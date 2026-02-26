@@ -234,6 +234,32 @@ typedef struct {
 /* pmove_state_t is defined in q_shared.h */
 
 /* ==========================================================================
+   SoF Weapons (from RegisterWeapons at 0x50095280)
+   ========================================================================== */
+
+typedef enum {
+    WEAP_NONE = 0,
+    WEAP_KNIFE,
+    WEAP_PISTOL1,       /* .44 Desert Eagle */
+    WEAP_PISTOL2,       /* Silver Talon */
+    WEAP_SHOTGUN,        /* Pump Shotgun */
+    WEAP_MACHINEGUN,     /* HK MP5 */
+    WEAP_ASSAULT,        /* M4 Assault Rifle */
+    WEAP_SNIPER,         /* MSG90 Sniper */
+    WEAP_SLUGGER,        /* Slugthrower */
+    WEAP_ROCKET,         /* M202A2 Quad Rocket */
+    WEAP_FLAMEGUN,       /* Flame Thrower */
+    WEAP_MPG,            /* Microwave Pulse Gun */
+    WEAP_MPISTOL,        /* Machine Pistol */
+    WEAP_GRENADE,        /* Grenades */
+    WEAP_C4,             /* C4 Explosive */
+    WEAP_MEDKIT,         /* Medical Kit */
+    WEAP_GOGGLES,        /* Night Vision / IR Goggles */
+    WEAP_FPAK,           /* Field Pack */
+    WEAP_COUNT
+} weapon_id_t;
+
+/* ==========================================================================
    gclient_s — Per-client game state
    ========================================================================== */
 
@@ -263,8 +289,12 @@ struct gclient_s {
     int             gore_kills;     /* dismemberment kills count */
     int             last_damage_zone;
 
+    /* Ammo system */
+    int             ammo[WEAP_COUNT];       /* current ammo per weapon */
+    int             ammo_max[WEAP_COUNT];   /* max ammo per weapon */
+
     /* Pad to known alignment */
-    byte            _pad[128];
+    byte            _pad[32];
 };
 
 /* ==========================================================================
@@ -420,32 +450,6 @@ struct edict_s {
     /* Pad to 1104 bytes (0x450) — exact size from binary analysis */
     byte            _pad[64];
 };
-
-/* ==========================================================================
-   SoF Weapons (from RegisterWeapons at 0x50095280)
-   ========================================================================== */
-
-typedef enum {
-    WEAP_NONE = 0,
-    WEAP_KNIFE,
-    WEAP_PISTOL1,       /* .44 Desert Eagle */
-    WEAP_PISTOL2,       /* Silver Talon */
-    WEAP_SHOTGUN,        /* Pump Shotgun */
-    WEAP_MACHINEGUN,     /* HK MP5 */
-    WEAP_ASSAULT,        /* M4 Assault Rifle */
-    WEAP_SNIPER,         /* MSG90 Sniper */
-    WEAP_SLUGGER,        /* Slugthrower */
-    WEAP_ROCKET,         /* M202A2 Quad Rocket */
-    WEAP_FLAMEGUN,       /* Flame Thrower */
-    WEAP_MPG,            /* Microwave Pulse Gun */
-    WEAP_MPISTOL,        /* Machine Pistol */
-    WEAP_GRENADE,        /* Grenades */
-    WEAP_C4,             /* C4 Explosive */
-    WEAP_MEDKIT,         /* Medical Kit */
-    WEAP_GOGGLES,        /* Night Vision / IR Goggles */
-    WEAP_FPAK,           /* Field Pack */
-    WEAP_COUNT
-} weapon_id_t;
 
 /* ==========================================================================
    Level State
