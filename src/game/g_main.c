@@ -503,6 +503,27 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
 
     client = ent->client;
 
+    /* Decay damage flash */
+    if (client->blend[3] > 0) {
+        client->blend[3] -= 0.05f;
+        if (client->blend[3] < 0)
+            client->blend[3] = 0;
+    }
+
+    /* Dead — check for respawn on attack press */
+    if (ent->deadflag) {
+        if (ucmd->buttons & (BUTTON_ATTACK | BUTTON_USE)) {
+            /* Respawn */
+            ent->health = 100;
+            ent->max_health = 100;
+            client->pers_health = 100;
+            ent->deadflag = 0;
+            client->ps.pm_type = PM_NORMAL;
+            client->blend[3] = 0;
+        }
+        return;
+    }
+
     /* Build pmove from entity and client state */
     memset(&pm, 0, sizeof(pm));
     pm.s = client->ps;
@@ -512,19 +533,52 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
 
     pm_passent = ent;
 
-    /* Run player physics */
-    gi.Pmove(&pm);
+    /* Save old velocity for fall damage detection */
+    {
+        float old_z_vel = ent->velocity[2];
 
-    /* Copy results back to entity */
-    client->ps = pm.s;
-    VectorCopy(pm.s.origin, ent->s.origin);
-    VectorCopy(pm.s.velocity, ent->velocity);
-    VectorCopy(pm.viewangles, client->viewangles);
-    VectorCopy(pm.viewangles, ent->s.angles);
-    ent->s.angles[0] = 0;  /* don't pitch the player model */
+        /* Run player physics */
+        gi.Pmove(&pm);
 
-    ent->groundentity = pm.groundentity;
-    client->viewheight = pm.viewheight;
+        /* Copy results back to entity */
+        client->ps = pm.s;
+        VectorCopy(pm.s.origin, ent->s.origin);
+        VectorCopy(pm.s.velocity, ent->velocity);
+        VectorCopy(pm.viewangles, client->viewangles);
+        VectorCopy(pm.viewangles, ent->s.angles);
+        ent->s.angles[0] = 0;  /* don't pitch the player model */
+
+        /* Fall damage — check if we were falling fast and just landed */
+        if (pm.groundentity && !ent->groundentity && old_z_vel < -300) {
+            float fall_speed = -old_z_vel;
+            int fall_dmg = 0;
+
+            if (fall_speed > 700)
+                fall_dmg = (int)((fall_speed - 300) * 0.1f);
+            else if (fall_speed > 500)
+                fall_dmg = (int)((fall_speed - 300) * 0.05f);
+
+            if (fall_dmg > 0) {
+                ent->health -= fall_dmg;
+                client->pers_health = ent->health;
+
+                /* Red flash for fall damage */
+                client->blend[0] = 1.0f;
+                client->blend[1] = 0.0f;
+                client->blend[2] = 0.0f;
+                client->blend[3] = 0.3f;
+
+                if (ent->health <= 0) {
+                    ent->health = 0;
+                    ent->deadflag = 1;
+                    client->ps.pm_type = PM_DEAD;
+                }
+            }
+        }
+
+        ent->groundentity = pm.groundentity;
+        client->viewheight = pm.viewheight;
+    }
 
     /* Process touch callbacks from Pmove */
     {

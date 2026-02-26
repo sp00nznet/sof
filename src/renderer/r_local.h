@@ -153,6 +153,7 @@ void    R_DrawString(int x, int y, const char *str);
 void    R_DrawTileClear(int x, int y, int w, int h, const char *name);
 void    R_DrawFill(int x, int y, int w, int h, int c);
 void    R_DrawFadeScreen(void);
+void    R_DrawFadeScreenColor(float r, float g, float b, float a);
 void    R_DrawStretchRaw(int x, int y, int w, int h, int cols, int rows, byte *data);
 
 /* Video mode */

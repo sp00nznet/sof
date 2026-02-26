@@ -750,6 +750,28 @@ qboolean SV_GetPlayerHealth(int *health, int *max_health)
 }
 
 /*
+ * SV_GetPlayerBlend — Get player screen blend color for damage flash
+ */
+void SV_GetPlayerBlend(float *blend)
+{
+    edict_t *player;
+
+    blend[0] = blend[1] = blend[2] = blend[3] = 0;
+
+    if (!ge || !ge->edicts)
+        return;
+
+    player = (edict_t *)((byte *)ge->edicts + ge->edict_size);
+    if (!player->inuse || !player->client)
+        return;
+
+    blend[0] = player->client->blend[0];
+    blend[1] = player->client->blend[1];
+    blend[2] = player->client->blend[2];
+    blend[3] = player->client->blend[3];
+}
+
+/*
  * SV_GetPlayerWeapon — Get player weapon name for HUD display
  */
 const char *SV_GetPlayerWeapon(void)

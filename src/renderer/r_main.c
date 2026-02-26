@@ -823,12 +823,18 @@ void R_DrawFill(int x, int y, int w, int h, int c)
 
 void R_DrawFadeScreen(void)
 {
+    R_DrawFadeScreenColor(0, 0, 0, 0.8f);
+}
+
+void R_DrawFadeScreenColor(float r, float g, float b, float a)
+{
     if (!qglEnable || !qglBegin)
         return;
 
     qglEnable(GL_BLEND);
     qglDisable(GL_TEXTURE_2D);
-    qglColor4f(0, 0, 0, 0.8f);
+    qglBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    qglColor4f(r, g, b, a);
     qglBegin(GL_QUADS);
     qglVertex3f(0, 0, 0);
     qglVertex3f((float)g_display.width, 0, 0);

@@ -35,6 +35,7 @@ extern void SV_ClientThink(usercmd_t *cmd);
 extern qboolean SV_GetPlayerState(vec3_t origin, vec3_t angles, float *viewheight);
 extern qboolean SV_GetPlayerHealth(int *health, int *max_health);
 extern const char *SV_GetPlayerWeapon(void);
+extern void SV_GetPlayerBlend(float *blend);
 
 /* Forward declaration — freecam toggle (defined below in client section) */
 static void Cmd_Freecam_f(void);
@@ -568,6 +569,24 @@ static void SCR_DrawHUD(float frametime)
         R_SetDrawColor(0.0f, 1.0f, 0.0f, 1.0f);
 
         hud_pickup_time -= frametime;
+    }
+
+    /* Damage flash — full-screen red overlay */
+    {
+        float blend[4];
+        SV_GetPlayerBlend(blend);
+        if (blend[3] > 0.01f) {
+            R_DrawFadeScreenColor(blend[0], blend[1], blend[2], blend[3]);
+        }
+    }
+
+    /* Death message */
+    if (health <= 0) {
+        R_SetDrawColor(1.0f, 0.2f, 0.2f, 1.0f);
+        R_DrawString((g_display.width - 14 * 8) / 2, g_display.height / 2 - 16, "YOU ARE DEAD");
+        R_SetDrawColor(0.8f, 0.8f, 0.8f, 1.0f);
+        R_DrawString((g_display.width - 23 * 8) / 2, g_display.height / 2, "Press FIRE to respawn");
+        R_SetDrawColor(0.0f, 1.0f, 0.0f, 1.0f);
     }
 }
 
