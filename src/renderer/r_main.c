@@ -133,6 +133,7 @@ void (APIENTRY *qglFogfv)(GLenum pname, const GLfloat *params);
 void (APIENTRY *qglHint)(GLenum target, GLenum mode);
 void (APIENTRY *qglReadPixels)(GLint x, GLint y, GLsizei width, GLsizei height, GLenum format, GLenum type, void *pixels);
 void (APIENTRY *qglPixelStorei)(GLenum pname, GLint param);
+void (APIENTRY *qglPolygonOffset)(GLfloat factor, GLfloat units);
 
 /* Extensions */
 PFNGLACTIVETEXTUREARBPROC       qglActiveTextureARB;
@@ -199,6 +200,7 @@ qboolean QGL_Init(void)
     QGL_LOAD(Hint);
     QGL_LOAD(ReadPixels);
     QGL_LOAD(PixelStorei);
+    QGL_LOAD(PolygonOffset);
 
     /* Verify critical functions loaded */
     if (!qglClear || !qglViewport || !qglGetString) {
@@ -327,6 +329,7 @@ void R_Shutdown(void)
 /* Forward declarations — defined in later sections */
 static void R_DrawParticles(void);
 static void R_DrawDlights(void);
+static void R_DrawDecals(void);
 static void R_UpdateDlights(void);
 
 /* ==========================================================================
@@ -669,6 +672,9 @@ void R_RenderFrame(refdef_t *fd)
     if (r_drawentities->value)
         R_DrawBrushEntities();
 
+    /* Draw decals on world surfaces */
+    R_DrawDecals();
+
     /* Draw particles */
     R_DrawParticles();
 
@@ -991,6 +997,147 @@ static void R_DrawDlights(void)
     qglEnd();
 
     if (qglPointSize) qglPointSize(1.0f);
+    qglDepthMask(GL_TRUE);
+    qglDisable(GL_BLEND);
+    qglEnable(GL_TEXTURE_2D);
+    qglColor4f(1, 1, 1, 1);
+}
+
+/* ==========================================================================
+   Decal System — Projected quads on world surfaces
+   ========================================================================== */
+
+#define MAX_R_DECALS    256
+#define R_DECAL_LIFETIME 30.0f
+
+typedef struct {
+    vec3_t      origin;
+    vec3_t      normal;
+    float       spawn_time;
+    int         type;       /* 0=bullet, 1=blood, 2=scorch */
+    qboolean    active;
+} r_decal_t;
+
+static r_decal_t   r_decals[MAX_R_DECALS];
+static int          r_decal_write;
+
+void R_AddDecal(vec3_t origin, vec3_t normal, int type)
+{
+    r_decal_t *d = &r_decals[r_decal_write];
+
+    VectorCopy(origin, d->origin);
+    VectorCopy(normal, d->normal);
+    d->spawn_time = (float)Sys_Milliseconds();
+    d->type = type;
+    d->active = qtrue;
+
+    r_decal_write = (r_decal_write + 1) % MAX_R_DECALS;
+}
+
+static void R_DrawDecals(void)
+{
+    int i;
+    float now = (float)Sys_Milliseconds();
+    int active_count = 0;
+
+    /* Count active decals */
+    for (i = 0; i < MAX_R_DECALS; i++)
+        if (r_decals[i].active) active_count++;
+    if (active_count == 0) return;
+
+    qglDisable(GL_TEXTURE_2D);
+    qglEnable(GL_BLEND);
+    qglBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    qglEnable(GL_POLYGON_OFFSET_FILL);
+    if (qglPolygonOffset) qglPolygonOffset(-1.0f, -1.0f);
+    qglDepthMask(GL_FALSE);
+
+    for (i = 0; i < MAX_R_DECALS; i++) {
+        r_decal_t *d = &r_decals[i];
+        float age, alpha, size;
+        vec3_t right, up, p;
+
+        if (!d->active) continue;
+
+        age = (now - d->spawn_time) * 0.001f;
+        if (age > R_DECAL_LIFETIME) {
+            d->active = qfalse;
+            continue;
+        }
+
+        /* Fade out over last 5 seconds */
+        alpha = (age > R_DECAL_LIFETIME - 5.0f) ?
+                (R_DECAL_LIFETIME - age) / 5.0f : 1.0f;
+
+        /* Decal size and color by type */
+        switch (d->type) {
+        case 0: /* bullet hole — small dark circle */
+            size = 2.0f;
+            qglColor4f(0.15f, 0.12f, 0.10f, alpha * 0.8f);
+            break;
+        case 1: /* blood — reddish splat */
+            size = 4.0f;
+            qglColor4f(0.5f, 0.0f, 0.0f, alpha * 0.7f);
+            break;
+        case 2: /* scorch mark — large dark */
+            size = 8.0f;
+            qglColor4f(0.1f, 0.08f, 0.06f, alpha * 0.6f);
+            break;
+        default:
+            size = 2.0f;
+            qglColor4f(0.2f, 0.2f, 0.2f, alpha * 0.5f);
+            break;
+        }
+
+        /* Build a quad perpendicular to the normal */
+        /* Find two tangent vectors */
+        if (d->normal[2] > 0.9f || d->normal[2] < -0.9f) {
+            /* Normal is mostly Z — use X as reference */
+            right[0] = size; right[1] = 0; right[2] = 0;
+        } else {
+            /* Cross with up to get right */
+            right[0] = -d->normal[1] * size;
+            right[1] = d->normal[0] * size;
+            right[2] = 0;
+            /* Normalize and scale */
+            {
+                float len = (float)sqrt(right[0]*right[0] + right[1]*right[1]);
+                if (len > 0.001f) {
+                    right[0] = right[0] / len * size;
+                    right[1] = right[1] / len * size;
+                }
+            }
+        }
+        /* up = normal cross right */
+        up[0] = d->normal[1]*right[2] - d->normal[2]*right[1];
+        up[1] = d->normal[2]*right[0] - d->normal[0]*right[2];
+        up[2] = d->normal[0]*right[1] - d->normal[1]*right[0];
+
+        /* Draw quad slightly offset from surface */
+        qglBegin(GL_QUADS);
+        p[0] = d->origin[0] + d->normal[0]*0.1f - right[0] - up[0];
+        p[1] = d->origin[1] + d->normal[1]*0.1f - right[1] - up[1];
+        p[2] = d->origin[2] + d->normal[2]*0.1f - right[2] - up[2];
+        qglVertex3f(p[0], p[1], p[2]);
+
+        p[0] = d->origin[0] + d->normal[0]*0.1f + right[0] - up[0];
+        p[1] = d->origin[1] + d->normal[1]*0.1f + right[1] - up[1];
+        p[2] = d->origin[2] + d->normal[2]*0.1f + right[2] - up[2];
+        qglVertex3f(p[0], p[1], p[2]);
+
+        p[0] = d->origin[0] + d->normal[0]*0.1f + right[0] + up[0];
+        p[1] = d->origin[1] + d->normal[1]*0.1f + right[1] + up[1];
+        p[2] = d->origin[2] + d->normal[2]*0.1f + right[2] + up[2];
+        qglVertex3f(p[0], p[1], p[2]);
+
+        p[0] = d->origin[0] + d->normal[0]*0.1f - right[0] + up[0];
+        p[1] = d->origin[1] + d->normal[1]*0.1f - right[1] + up[1];
+        p[2] = d->origin[2] + d->normal[2]*0.1f - right[2] + up[2];
+        qglVertex3f(p[0], p[1], p[2]);
+        qglEnd();
+    }
+
+    qglDisable(GL_POLYGON_OFFSET_FILL);
     qglDepthMask(GL_TRUE);
     qglDisable(GL_BLEND);
     qglEnable(GL_TEXTURE_2D);

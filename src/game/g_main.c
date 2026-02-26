@@ -19,6 +19,7 @@
 
 /* Particle/light effects from renderer (unified binary) */
 extern void R_ParticleEffect(vec3_t org, vec3_t dir, int type, int count);
+extern void R_AddDecal(vec3_t origin, vec3_t normal, int type);
 extern void R_AddDlight(vec3_t origin, float r, float g, float b,
                          float intensity, float duration);
 
@@ -1374,6 +1375,9 @@ static void G_AddDecal(vec3_t origin, vec3_t normal, int type)
     d->active = qtrue;
 
     g_decal_index = (g_decal_index + 1) % MAX_DECALS;
+
+    /* Also add to the renderer's decal system for projected quad rendering */
+    R_AddDecal(origin, normal, type);
 }
 
 /* Called from RunFrame to expire old decals and render persistent ones */

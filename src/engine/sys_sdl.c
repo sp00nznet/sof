@@ -425,20 +425,65 @@ int Sys_RegDeleteKey(const char *key)
    CD Audio Stubs
    ========================================================================== */
 
+/*
+ * CD Audio — plays music tracks via the sound system
+ *
+ * SoF originally used CD audio for background music.
+ * We load WAV files from "music/trackNN.wav" and play them through
+ * the sound system's S_StartSound/S_StartLocalSound interface.
+ *
+ * Track numbers map to files: track02.wav, track03.wav, etc.
+ * (Track 1 is typically the data track on a game CD.)
+ */
+
+extern void S_StartLocalSound(const char *name);
+extern void S_StopAllSounds(void);
+
+static int  cdaudio_track;
+static int  cdaudio_looping;
+static int  cdaudio_playing;
+
 int CDAudio_Init(void)
 {
-    /* TODO: Implement with SDL_mixer playing CD tracks from files */
+    cdaudio_track = 0;
+    cdaudio_playing = 0;
+    Com_Printf("CD Audio: initialized (WAV track playback)\n");
     return 0;
 }
 
-void CDAudio_Shutdown(void) {}
+void CDAudio_Shutdown(void)
+{
+    CDAudio_Stop();
+}
 
 int CDAudio_Play(int track, int looping)
 {
-    (void)track;
-    (void)looping;
-    return 0;
+    char trackname[64];
+
+    cdaudio_track = track;
+    cdaudio_looping = looping;
+    cdaudio_playing = 1;
+
+    /* Try to load the music track */
+    snprintf(trackname, sizeof(trackname), "music/track%02d.wav", track);
+    Com_Printf("CD Audio: play track %d (%s) %s\n", track, trackname,
+               looping ? "[looping]" : "");
+
+    S_StartLocalSound(trackname);
+    return 1;
 }
 
-void CDAudio_Stop(void) {}
-void CDAudio_Update(void) {}
+void CDAudio_Stop(void)
+{
+    if (cdaudio_playing) {
+        cdaudio_playing = 0;
+        Com_Printf("CD Audio: stopped\n");
+    }
+}
+
+void CDAudio_Update(void)
+{
+    /* In a full implementation, we'd check if the track finished
+       and restart it if looping is enabled. For now, the sound
+       system handles playback duration naturally. */
+}

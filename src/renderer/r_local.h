@@ -281,6 +281,9 @@ void        R_UpdateParticles(float frametime);
 void        R_AddDlight(vec3_t origin, float r, float g, float b,
                          float intensity, float duration);
 
+/* Decals */
+void        R_AddDecal(vec3_t origin, vec3_t normal, int type);
+
 /* Camera */
 void        R_GetCameraOrigin(vec3_t out);
 void        R_SetCameraOrigin(vec3_t origin);

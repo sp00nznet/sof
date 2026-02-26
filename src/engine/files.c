@@ -360,11 +360,74 @@ void FS_FreeFile(void *buffer)
    Directory Listing
    ========================================================================== */
 
+/*
+ * Simple glob match: supports * wildcard
+ */
+static qboolean FS_WildcardMatch(const char *pattern, const char *text)
+{
+    while (*pattern) {
+        if (*pattern == '*') {
+            pattern++;
+            if (!*pattern) return qtrue;
+            while (*text) {
+                if (FS_WildcardMatch(pattern, text))
+                    return qtrue;
+                text++;
+            }
+            return qfalse;
+        }
+        if (*pattern != '?' && tolower((unsigned char)*pattern) != tolower((unsigned char)*text))
+            return qfalse;
+        pattern++;
+        text++;
+    }
+    return (*text == '\0');
+}
+
 char **FS_ListFiles(const char *findname, int *numfiles)
 {
-    /* TODO: Implement directory listing for loose files */
+    searchpath_t *search;
+    int count = 0;
+    int max_files = 1024;
+    char **list;
+    int i;
+
     *numfiles = 0;
-    return NULL;
+    list = (char **)Z_Malloc(max_files * sizeof(char *));
+
+    /* Search all PAK files */
+    for (search = fs_searchpaths; search; search = search->next) {
+        if (!search->pack)
+            continue;
+
+        for (i = 0; i < search->pack->numfiles; i++) {
+            const char *name = search->pack->files[i].name;
+
+            if (FS_WildcardMatch(findname, name)) {
+                /* Check for duplicates */
+                int dup = 0;
+                int j;
+                for (j = 0; j < count; j++) {
+                    if (Q_stricmp(list[j], name) == 0) {
+                        dup = 1;
+                        break;
+                    }
+                }
+                if (!dup && count < max_files) {
+                    list[count] = (char *)Z_Malloc((int)strlen(name) + 1);
+                    strcpy(list[count], name);
+                    count++;
+                }
+            }
+        }
+    }
+
+    *numfiles = count;
+    if (count == 0) {
+        Z_Free(list);
+        return NULL;
+    }
+    return list;
 }
 
 void FS_FreeFileList(char **list, int nfiles)
