@@ -687,6 +687,12 @@ void SV_RunGameFrame(void)
  */
 void SV_SpawnMapEntities(const char *mapname, const char *entstring)
 {
+    /* Re-initialize spatial structure for new map */
+    SV_ClearWorld();
+
+    /* Clear configstrings from previous map */
+    memset(sv_configstrings, 0, sizeof(sv_configstrings));
+
     if (ge && ge->SpawnEntities) {
         ge->SpawnEntities(mapname, entstring, "");
     }

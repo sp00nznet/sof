@@ -167,6 +167,7 @@ static void SP_trigger_multiple(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_target_speaker(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_misc_model(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_item_pickup(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_trigger_changelevel(edict_t *ent, epair_t *pairs, int num_pairs);
 
 /*
  * Spawn function dispatch table
@@ -208,6 +209,7 @@ static spawn_func_t spawn_funcs[] = {
     { "trigger_multiple",           SP_trigger_multiple },
     { "trigger_relay",              SP_trigger_once },
     { "trigger_always",             SP_trigger_once },
+    { "trigger_changelevel",        SP_trigger_changelevel },
 
     /* Targets */
     { "target_speaker",             SP_target_speaker },
@@ -759,6 +761,50 @@ static void SP_trigger_multiple(edict_t *ent, epair_t *pairs, int num_pairs)
     if (!ent->wait)
         ent->wait = 0.2f;
     gi.linkentity(ent);
+}
+
+/* ==========================================================================
+   Level Transition
+   ========================================================================== */
+
+static void changelevel_touch(edict_t *self, edict_t *other, void *plane, csurface_t *surf)
+{
+    (void)plane; (void)surf;
+
+    if (!other || !other->client)
+        return;
+
+    /* Only trigger once */
+    self->touch = NULL;
+
+    if (self->message) {
+        gi.bprintf(PRINT_ALL, "%s\n", self->message);
+    }
+
+    /* Queue the map change via console command (deferred to avoid re-entrant issues) */
+    if (self->target) {
+        gi.dprintf("trigger_changelevel: loading %s\n", self->target);
+        gi.AddCommandString(va("map %s\n", self->target));
+    }
+}
+
+static void SP_trigger_changelevel(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *map = ED_FindValue(pairs, num_pairs, "map");
+
+    (void)pairs; (void)num_pairs;
+
+    if (map) {
+        /* Store map name in target field for the touch callback */
+        ent->target = gi.TagMalloc((int)strlen(map) + 1, Z_TAG_GAME);
+        strcpy(ent->target, map);
+    }
+
+    ent->solid = SOLID_TRIGGER;
+    ent->touch = changelevel_touch;
+    gi.linkentity(ent);
+
+    gi.dprintf("  trigger_changelevel -> %s\n", ent->target ? ent->target : "???");
 }
 
 static void target_speaker_use(edict_t *self, edict_t *other, edict_t *activator)
