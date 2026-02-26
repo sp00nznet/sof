@@ -104,13 +104,14 @@ static void Cmd_WriteConfig_f(void)
     Com_Printf("Wrote %s\n", filename);
 }
 
-/* Forward declarations — HUD, menu, scoreboard, chat, damage, pickup drawing */
+/* Forward declarations — HUD, menu, scoreboard, chat, damage, pickup, killfeed */
 static void SCR_DrawHUD(float frametime);
 static void SCR_DrawMenu(void);
 static void SCR_DrawScoreboard(void);
 static void SCR_DrawChat(void);
 static void SCR_DrawDamageNumbers(void);
 static void SCR_DrawPickupMessages(void);
+static void SCR_DrawKillFeed(void);
 
 /* ANGLE2SHORT / SHORT2ANGLE for usercmd angle encoding */
 #define ANGLE2SHORT(x)  ((int)((x)*65536.0f/360.0f) & 65535)
@@ -369,6 +370,7 @@ void Qcommon_Frame(int msec)
         SCR_DrawHUD(msec / 1000.0f);
         SCR_DrawDamageNumbers();
         SCR_DrawPickupMessages();
+        SCR_DrawKillFeed();
         SCR_DrawChat();
         SCR_DrawScoreboard();
         SCR_DrawMenu();
@@ -948,6 +950,109 @@ static void SCR_DrawPickupMessages(void)
     }
 
     R_SetDrawColor(0xFF, 0xFF, 0xFF, 0xFF);
+}
+
+/* ==========================================================================
+   Kill Feed — Recent kill notifications in upper-right
+   ========================================================================== */
+
+#define MAX_KILLFEED  4
+#define KILLFEED_TIME  5.0f
+
+typedef struct {
+    char    text[128];
+    float   birth_time;
+} killfeed_entry_t;
+
+static killfeed_entry_t killfeed[MAX_KILLFEED];
+static int killfeed_idx;
+
+void SCR_AddKillFeed(const char *attacker, const char *victim, const char *weapon)
+{
+    killfeed_entry_t *k = &killfeed[killfeed_idx % MAX_KILLFEED];
+    Com_sprintf(k->text, sizeof(k->text), "%s [%s] %s", attacker, weapon, victim);
+    k->birth_time = (float)Sys_Milliseconds() / 1000.0f;
+    killfeed_idx++;
+}
+
+static void SCR_DrawKillFeed(void)
+{
+    int i;
+    float now = (float)Sys_Milliseconds() / 1000.0f;
+    int x = g_display.width - 300;
+    int y = 8;
+
+    for (i = 0; i < MAX_KILLFEED; i++) {
+        killfeed_entry_t *k = &killfeed[i];
+        float age;
+
+        if (k->text[0] == '\0') continue;
+
+        age = now - k->birth_time;
+        if (age > KILLFEED_TIME) continue;
+
+        {
+            int alpha = (age > KILLFEED_TIME - 1.0f) ?
+                        (int)(255.0f * (KILLFEED_TIME - age)) : 255;
+            if (alpha < 0) alpha = 0;
+            R_SetDrawColor(0xFF, 0xDD, 0xDD, alpha);
+        }
+
+        R_DrawString(x, y, k->text);
+        y += 12;
+    }
+
+    R_SetDrawColor(0xFF, 0xFF, 0xFF, 0xFF);
+}
+
+/* ==========================================================================
+   Loading Screen
+   ========================================================================== */
+
+static const char *loading_tips[] = {
+    "Aim for the head for maximum damage.",
+    "Use cover to avoid enemy fire.",
+    "The shotgun is devastating at close range.",
+    "Field packs heal you over time.",
+    "Night vision goggles drain battery.",
+    "Press E to interact with objects.",
+    "Different body zones take different damage.",
+    "Explore for hidden secrets.",
+};
+
+void SCR_DrawLoadingScreen(const char *mapname)
+{
+    int screen_w = g_display.width;
+    int screen_h = g_display.height;
+    int bar_w = screen_w / 2;
+    int bar_h = 16;
+    int bar_x = (screen_w - bar_w) / 2;
+    int bar_y = screen_h / 2 + 40;
+    char buf[128];
+    int tip_idx;
+
+    R_BeginFrame(0.0f);
+
+    /* Dark background */
+    R_DrawFill(0, 0, screen_w, screen_h, 0xFF000000);
+
+    /* Map name */
+    Com_sprintf(buf, sizeof(buf), "Loading %s...", mapname ? mapname : "map");
+    R_DrawString(screen_w / 2 - (int)strlen(buf) * 4, screen_h / 2 - 20, buf);
+
+    /* Progress bar outline */
+    R_DrawFill(bar_x - 1, bar_y - 1, bar_w + 2, bar_h + 2, 0xFF808080);
+    R_DrawFill(bar_x, bar_y, bar_w, bar_h, 0xFF202020);
+
+    /* Fill 10% initially — will be updated by loader if possible */
+    R_DrawFill(bar_x, bar_y, bar_w / 10, bar_h, 0xFF00AA00);
+
+    /* Random tip */
+    tip_idx = (int)(Sys_Milliseconds() % 8);
+    Com_sprintf(buf, sizeof(buf), "TIP: %s", loading_tips[tip_idx]);
+    R_DrawString(screen_w / 2 - (int)strlen(buf) * 4, bar_y + 30, buf);
+
+    R_EndFrame();
 }
 
 static void SCR_DrawCrosshair(void)

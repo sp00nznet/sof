@@ -346,10 +346,12 @@ void Con_DrawConsole(float frac)
     if (frac <= 0)
         return;
 
-    /* Get screen dimensions from renderer */
-    /* TODO: query actual screen size */
-    screen_w = 1024;
-    screen_h = 768;
+    /* Get screen dimensions from display */
+    {
+        extern sof_display_t g_display;
+        screen_w = g_display.width;
+        screen_h = g_display.height;
+    }
 
     con_height = (int)(screen_h * frac);
     rows = (con_height / 8) - 2;   /* rows available for text, minus input line */

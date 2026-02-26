@@ -25,6 +25,7 @@ extern void R_AddDlight(vec3_t origin, float r, float g, float b,
 /* HUD effects from engine (unified binary) */
 extern void SCR_AddDamageNumber(int damage, int screen_x, int screen_y);
 extern void SCR_AddPickupMessage(const char *text);
+extern void SCR_AddKillFeed(const char *attacker, const char *victim, const char *weapon);
 
 /* Sound constants now in g_local.h */
 
@@ -755,6 +756,24 @@ static void ClientCommand(edict_t *ent)
             gi.cprintf(ent, PRINT_ALL, "Spectator mode: ON\n");
         }
         gi.linkentity(ent);
+        return;
+    }
+
+    /* Team selection for team deathmatch */
+    if (Q_stricmp(cmd, "team") == 0) {
+        const char *team_name = gi.argc() > 1 ? gi.argv(1) : "";
+        if (Q_stricmp(team_name, "red") == 0 || Q_stricmp(team_name, "1") == 0) {
+            ent->client->team = 1;
+            gi.cprintf(ent, PRINT_ALL, "Joined Red Team\n");
+        } else if (Q_stricmp(team_name, "blue") == 0 || Q_stricmp(team_name, "2") == 0) {
+            ent->client->team = 2;
+            gi.cprintf(ent, PRINT_ALL, "Joined Blue Team\n");
+        } else {
+            gi.cprintf(ent, PRINT_ALL, "Usage: team <red|blue>\n");
+            gi.cprintf(ent, PRINT_ALL, "Current team: %s\n",
+                       ent->client->team == 1 ? "Red" :
+                       ent->client->team == 2 ? "Blue" : "None");
+        }
         return;
     }
 
@@ -1745,6 +1764,12 @@ static void G_FireHitscan(edict_t *ent)
                 goto hitscan_impact_done;
             }
 
+            /* Team friendly fire protection */
+            if (ent->client && tr.ent->client &&
+                ent->client->team > 0 && ent->client->team == tr.ent->client->team) {
+                goto hitscan_impact_done;  /* no team damage */
+            }
+
             /* Blood effect + flesh hit sound */
             R_ParticleEffect(tr.endpos, tr.plane.normal, 1, 8);
             if (snd_hit_flesh)
@@ -1824,6 +1849,16 @@ static void G_FireHitscan(edict_t *ent)
                 if (ent->client) {
                     ent->client->kills++;
                     ent->client->score += 10;
+
+                    /* Kill feed notification */
+                    {
+                        const char *victim_name = tr.ent->classname ?
+                            tr.ent->classname : "unknown";
+                        int w = ent->client->pers_weapon;
+                        const char *weap_name = (w > 0 && w < WEAP_COUNT) ?
+                            weapon_names[w] : "unknown";
+                        SCR_AddKillFeed("Player", victim_name, weap_name);
+                    }
                 }
 
                 /* Track monster kills for level stats */

@@ -7,6 +7,7 @@
 
 #include "../common/qcommon.h"
 #include "keys.h"
+#include "console.h"
 
 /* Menu system (common.c) */
 extern int  M_IsActive(void);
@@ -237,7 +238,14 @@ void Key_Event(int key, qboolean down, unsigned time)
     /* Route to appropriate handler */
     switch (key_dest) {
     case key_console:
-        /* TODO: Con_KeyEvent(key) for console input */
+        if (down) {
+            /* Printable ASCII goes through CharEvent for text input */
+            if (key >= 32 && key < 127) {
+                Con_CharEvent(key);
+            } else {
+                Con_KeyEvent(key);
+            }
+        }
         break;
 
     case key_menu:

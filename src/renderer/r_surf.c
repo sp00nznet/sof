@@ -663,6 +663,13 @@ static void Cmd_Map_f(void)
     }
 
     mapname = Cmd_Argv(1);
+
+    /* Show loading screen */
+    {
+        extern void SCR_DrawLoadingScreen(const char *mapname);
+        SCR_DrawLoadingScreen(mapname);
+    }
+
     R_LoadWorldMap(mapname);
 
     /* Spawn entities from BSP */
