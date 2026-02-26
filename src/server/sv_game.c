@@ -571,6 +571,22 @@ void SV_SetConfigstring(int index, const char *val)
 }
 
 /*
+ * SV_ExecuteClientCommand — Route console "cmd" to game's ClientCommand
+ * Called when user types "cmd weapnext" etc.
+ */
+void SV_ExecuteClientCommand(void)
+{
+    edict_t *player;
+
+    if (!ge || !ge->ClientCommand || !ge->edicts)
+        return;
+
+    player = (edict_t *)((byte *)ge->edicts + ge->edict_size);
+    if (player->inuse)
+        ge->ClientCommand(player);
+}
+
+/*
  * SV_ClientThink — Forward usercmd to game's ClientThink for local player
  * In the unified binary there's no networking, so we call directly.
  */
@@ -624,6 +640,35 @@ qboolean SV_GetPlayerHealth(int *health, int *max_health)
     *health = player->health;
     *max_health = player->max_health;
     return qtrue;
+}
+
+/*
+ * SV_GetPlayerWeapon — Get player weapon name for HUD display
+ */
+const char *SV_GetPlayerWeapon(void)
+{
+    edict_t *player;
+
+    if (!ge || !ge->edicts)
+        return NULL;
+
+    player = (edict_t *)((byte *)ge->edicts + ge->edict_size);
+    if (!player->inuse || !player->client)
+        return NULL;
+
+    /* Look up weapon name from configstring or return index-based name */
+    {
+        int weap = player->client->pers_weapon;
+        static const char *weapon_hud_names[] = {
+            "none", "Knife", ".44 Pistol", "Silver Talon", "Shotgun",
+            "MP5", "M4 Assault", "Sniper", "Slugger", "Rocket",
+            "Flamethrower", "MPG", "Mach Pistol", "Grenade", "C4",
+            "Medkit", "Goggles", "Field Pack"
+        };
+        if (weap >= 0 && weap < 18)
+            return weapon_hud_names[weap];
+    }
+    return "unknown";
 }
 
 /*

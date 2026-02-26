@@ -179,11 +179,15 @@ static void SV_Physics_Toss(edict_t *ent)
 
 /*
  * SV_Physics_Push - Door/platform movement
- * Moves entity and pushes other entities out of the way
+ * Moves entity and pushes other entities out of the way.
+ * Based on Q2 SV_Push.
  */
 static void SV_Physics_Push(edict_t *ent)
 {
     vec3_t move, amove;
+    vec3_t org_saved;
+    edict_t *touch[32];
+    int num_touch, i;
 
     /* Calculate movement this frame */
     VectorScale(ent->velocity, FRAMETIME, move);
@@ -194,12 +198,45 @@ static void SV_Physics_Push(edict_t *ent)
         !amove[0] && !amove[1] && !amove[2])
         return;
 
-    /* Apply movement (simplified — full Q2 push uses MoveInfo) */
+    /* Save position in case we need to revert */
+    VectorCopy(ent->s.origin, org_saved);
+
+    /* Apply movement */
     VectorAdd(ent->s.origin, move, ent->s.origin);
     VectorAdd(ent->s.angles, amove, ent->s.angles);
     gi.linkentity(ent);
 
-    /* TODO: Push blocking entities, call blocked callback */
+    /* Find entities overlapping the pusher's new position */
+    num_touch = gi.BoxEdicts(ent->absmin, ent->absmax, touch, 32, AREA_SOLID);
+
+    for (i = 0; i < num_touch; i++) {
+        edict_t *other = touch[i];
+
+        if (!other || other == ent || !other->inuse)
+            continue;
+        if (other->movetype == MOVETYPE_PUSH || other->movetype == MOVETYPE_STOP ||
+            other->movetype == MOVETYPE_NONE || other->movetype == MOVETYPE_NOCLIP)
+            continue;
+
+        /* Push the entity out of the way */
+        {
+            trace_t trace;
+            vec3_t push_end;
+
+            VectorAdd(other->s.origin, move, push_end);
+            trace = gi.trace(other->s.origin, other->mins, other->maxs,
+                             push_end, other, other->clipmask ? other->clipmask : MASK_SOLID);
+
+            VectorCopy(trace.endpos, other->s.origin);
+            gi.linkentity(other);
+
+            /* If still overlapping, call blocked */
+            if (trace.fraction < 1.0f || trace.startsolid) {
+                if (ent->blocked)
+                    ent->blocked(ent, other);
+            }
+        }
+    }
 }
 
 /*

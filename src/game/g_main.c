@@ -334,7 +334,37 @@ static void ClientCommand(edict_t *ent)
     }
 
     if (Q_stricmp(cmd, "use") == 0) {
-        /* TODO: item/weapon use */
+        const char *item = gi.args();
+        int i;
+
+        /* Match weapon name to weapon_id */
+        for (i = 1; i < WEAP_COUNT; i++) {
+            if (Q_stricmp(item, weapon_names[i]) == 0) {
+                ent->client->pers_weapon = i;
+                ent->weapon_index = i;
+                gi.cprintf(ent, PRINT_ALL, "Switched to %s\n", weapon_names[i]);
+                return;
+            }
+        }
+        gi.cprintf(ent, PRINT_ALL, "Unknown weapon: %s\n", item);
+        return;
+    }
+
+    if (Q_stricmp(cmd, "weapnext") == 0) {
+        int w = ent->client->pers_weapon + 1;
+        if (w >= WEAP_COUNT) w = 1;
+        ent->client->pers_weapon = w;
+        ent->weapon_index = w;
+        gi.cprintf(ent, PRINT_ALL, "Weapon: %s\n", weapon_names[w]);
+        return;
+    }
+
+    if (Q_stricmp(cmd, "weapprev") == 0) {
+        int w = ent->client->pers_weapon - 1;
+        if (w < 1) w = WEAP_COUNT - 1;
+        ent->client->pers_weapon = w;
+        ent->weapon_index = w;
+        gi.cprintf(ent, PRINT_ALL, "Weapon: %s\n", weapon_names[w]);
         return;
     }
 
@@ -361,6 +391,52 @@ static void G_AngleVectors(vec3_t angles, vec3_t fwd, vec3_t rt, vec3_t up_out)
     if (up_out) { up_out[0] = cr * sp * cy + -sr * -(-sy); up_out[1] = cr * sp * sy + -sr * cy; up_out[2] = cr * cp; }
 }
 
+/* Weapon damage table (per hit) */
+static int weapon_damage[WEAP_COUNT] = {
+    0,      /* WEAP_NONE */
+    30,     /* WEAP_KNIFE */
+    40,     /* WEAP_PISTOL1 (.44 Desert Eagle) */
+    25,     /* WEAP_PISTOL2 (Silver Talon) */
+    80,     /* WEAP_SHOTGUN (Pump) */
+    15,     /* WEAP_MACHINEGUN (MP5) */
+    20,     /* WEAP_ASSAULT (M4) */
+    90,     /* WEAP_SNIPER (MSG90) */
+    60,     /* WEAP_SLUGGER */
+    120,    /* WEAP_ROCKET */
+    10,     /* WEAP_FLAMEGUN */
+    50,     /* WEAP_MPG */
+    12,     /* WEAP_MPISTOL */
+    100,    /* WEAP_GRENADE */
+    150,    /* WEAP_C4 */
+    0,      /* WEAP_MEDKIT */
+    0,      /* WEAP_GOGGLES */
+    0,      /* WEAP_FPAK */
+};
+
+/* Fire rate: minimum time between shots (in game time seconds) */
+static float weapon_firerate[WEAP_COUNT] = {
+    0,      /* WEAP_NONE */
+    0.4f,   /* WEAP_KNIFE */
+    0.3f,   /* WEAP_PISTOL1 */
+    0.15f,  /* WEAP_PISTOL2 */
+    0.8f,   /* WEAP_SHOTGUN */
+    0.1f,   /* WEAP_MACHINEGUN */
+    0.1f,   /* WEAP_ASSAULT */
+    1.0f,   /* WEAP_SNIPER */
+    0.5f,   /* WEAP_SLUGGER */
+    0.8f,   /* WEAP_ROCKET */
+    0.05f,  /* WEAP_FLAMEGUN */
+    0.4f,   /* WEAP_MPG */
+    0.08f,  /* WEAP_MPISTOL */
+    1.0f,   /* WEAP_GRENADE */
+    1.0f,   /* WEAP_C4 */
+    0.5f,   /* WEAP_MEDKIT */
+    0,      /* WEAP_GOGGLES */
+    0,      /* WEAP_FPAK */
+};
+
+static float player_next_fire;  /* level.time when player can fire again */
+
 /*
  * G_FireHitscan — Fire a hitscan trace from the player's eye
  */
@@ -368,7 +444,15 @@ static void G_FireHitscan(edict_t *ent)
 {
     vec3_t start, end, forward, right, up;
     trace_t tr;
-    int damage = 15;
+    int weap = ent->client->pers_weapon;
+    int damage;
+
+    /* Fire rate limiter */
+    if (level.time < player_next_fire)
+        return;
+
+    damage = (weap > 0 && weap < WEAP_COUNT) ? weapon_damage[weap] : 15;
+    player_next_fire = level.time + ((weap > 0 && weap < WEAP_COUNT) ? weapon_firerate[weap] : 0.2f);
 
     /* Fire from eye position */
     VectorCopy(ent->s.origin, start);

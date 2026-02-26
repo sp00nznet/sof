@@ -431,9 +431,13 @@ static void SP_info_player_start(edict_t *ent, epair_t *pairs, int num_pairs)
         player->client->ps.origin[2] = ent->s.origin[2];
         player->client->ps.pm_type = PM_NORMAL;
         player->health = player->client->pers_health;
+        player->max_health = player->client->pers_max_health;
         player->solid = SOLID_BBOX;
         player->clipmask = MASK_PLAYERSOLID;
         player->movetype = MOVETYPE_WALK;
+        player->takedamage = DAMAGE_AIM;
+        player->client->pers_weapon = WEAP_PISTOL1;
+        player->weapon_index = WEAP_PISTOL1;
         VectorSet(player->mins, -16, -16, -24);
         VectorSet(player->maxs, 16, 16, 32);
         gi.linkentity(player);

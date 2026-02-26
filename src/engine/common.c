@@ -34,9 +34,23 @@ extern void SV_RunGameFrame(void);
 extern void SV_ClientThink(usercmd_t *cmd);
 extern qboolean SV_GetPlayerState(vec3_t origin, vec3_t angles, float *viewheight);
 extern qboolean SV_GetPlayerHealth(int *health, int *max_health);
+extern const char *SV_GetPlayerWeapon(void);
 
 /* Forward declaration — freecam toggle (defined below in client section) */
 static void Cmd_Freecam_f(void);
+
+/* Forward declaration — client command forwarding */
+extern void SV_ExecuteClientCommand(void);
+
+static void Cmd_ForwardToServer(void)
+{
+    /* Re-tokenize with "cmd" stripped so gi.argv(0) returns the actual command */
+    const char *args = Cmd_Args();
+    if (args && args[0]) {
+        Cmd_TokenizeString((char *)args, qfalse);
+        SV_ExecuteClientCommand();
+    }
+}
 
 /* Forward declaration — HUD drawing (defined below in HUD section) */
 static void SCR_DrawHUD(float frametime);
@@ -173,6 +187,7 @@ void Qcommon_Init(int argc, char **argv)
     Cmd_AddCommand("quit", Sys_Quit);
     Cmd_AddCommand("error", NULL);  /* placeholder */
     Cmd_AddCommand("freecam", Cmd_Freecam_f);
+    Cmd_AddCommand("cmd", Cmd_ForwardToServer);
 
     /* Register core cvars */
     developer = Cvar_Get("developer", "0", 0);
@@ -524,6 +539,18 @@ static void SCR_DrawHUD(float frametime)
 
         snprintf(buf, sizeof(buf), "%d", health);
         R_DrawString(16, g_display.height - 28, buf);
+    }
+
+    /* Weapon display - bottom right */
+    {
+        const char *wname = SV_GetPlayerWeapon();
+        if (wname && wname[0]) {
+            int len = (int)strlen(wname);
+            int x = g_display.width - 16 - len * 8;
+
+            R_SetDrawColor(0.8f, 0.8f, 0.8f, 1.0f);
+            R_DrawString(x, g_display.height - 28, wname);
+        }
 
         /* Reset to default green for console */
         R_SetDrawColor(0.0f, 1.0f, 0.0f, 1.0f);

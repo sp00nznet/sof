@@ -359,4 +359,6 @@ void Key_Init(void)
     Key_SetBinding(K_F9, "loadgame quick");
     Key_SetBinding('`', "toggleconsole");
     Key_SetBinding(K_TAB, "+scores");
+    Key_SetBinding(K_MWHEELUP, "cmd weapnext");
+    Key_SetBinding(K_MWHEELDOWN, "cmd weapprev");
 }
