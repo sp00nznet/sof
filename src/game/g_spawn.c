@@ -1095,6 +1095,9 @@ static void button_wait(edict_t *self)
     }
 }
 
+static int snd_button;
+static qboolean button_sounds_cached;
+
 static void button_fire(edict_t *self, edict_t *activator)
 {
     if (self->moveinfo.state == MSTATE_UP || self->moveinfo.state == MSTATE_TOP)
@@ -1102,6 +1105,8 @@ static void button_fire(edict_t *self, edict_t *activator)
 
     self->moveinfo.state = MSTATE_UP;
     self->activator = activator;
+    if (snd_button)
+        gi.sound(self, CHAN_AUTO, snd_button, 1.0f, 1, 0);
     Move_Calc(self, self->moveinfo.end_origin, button_wait);
 }
 
@@ -1126,6 +1131,11 @@ static void SP_func_button(edict_t *ent, epair_t *pairs, int num_pairs)
     const char *angle_str;
 
     (void)pairs; (void)num_pairs;
+
+    if (!button_sounds_cached) {
+        snd_button = gi.soundindex("buttons/switch21.wav");
+        button_sounds_cached = qtrue;
+    }
 
     ent->solid = SOLID_BSP;
     ent->movetype = MOVETYPE_PUSH;

@@ -98,6 +98,10 @@ static int snd_ric1, snd_ric2, snd_ric3;  /* ricochet/impact */
 static int snd_hit_flesh;               /* bullet-on-flesh impact */
 static int snd_explode;                 /* explosion */
 static int snd_noammo;                  /* empty click */
+static int snd_weapon_switch;           /* weapon switch sound */
+static int snd_footstep1, snd_footstep2, snd_footstep3, snd_footstep4;
+
+#define WEAPON_SWITCH_TIME  0.5f        /* 500ms weapon switch delay */
 
 /* ==========================================================================
    SoF Weapon Names (from RegisterWeapons at 0x50095280)
@@ -366,6 +370,9 @@ static void ClientCommand(edict_t *ent)
             if (Q_stricmp(item, weapon_names[i]) == 0) {
                 ent->client->pers_weapon = i;
                 ent->weapon_index = i;
+                ent->client->weapon_change_time = level.time + WEAPON_SWITCH_TIME;
+                if (snd_weapon_switch)
+                    gi.sound(ent, CHAN_ITEM, snd_weapon_switch, 1.0f, ATTN_NORM, 0);
                 gi.cprintf(ent, PRINT_ALL, "Switched to %s\n", weapon_names[i]);
                 return;
             }
@@ -379,6 +386,9 @@ static void ClientCommand(edict_t *ent)
         if (w >= WEAP_COUNT) w = 1;
         ent->client->pers_weapon = w;
         ent->weapon_index = w;
+        ent->client->weapon_change_time = level.time + WEAPON_SWITCH_TIME;
+        if (snd_weapon_switch)
+            gi.sound(ent, CHAN_ITEM, snd_weapon_switch, 1.0f, ATTN_NORM, 0);
         gi.cprintf(ent, PRINT_ALL, "Weapon: %s\n", weapon_names[w]);
         return;
     }
@@ -388,6 +398,9 @@ static void ClientCommand(edict_t *ent)
         if (w < 1) w = WEAP_COUNT - 1;
         ent->client->pers_weapon = w;
         ent->weapon_index = w;
+        ent->client->weapon_change_time = level.time + WEAPON_SWITCH_TIME;
+        if (snd_weapon_switch)
+            gi.sound(ent, CHAN_ITEM, snd_weapon_switch, 1.0f, ATTN_NORM, 0);
         gi.cprintf(ent, PRINT_ALL, "Weapon: %s\n", weapon_names[w]);
         return;
     }
@@ -524,6 +537,10 @@ static void G_FireHitscan(edict_t *ent)
 
     /* Fire rate limiter */
     if (level.time < player_next_fire)
+        return;
+
+    /* Weapon switch delay — can't fire while switching */
+    if (ent->client->weapon_change_time > level.time)
         return;
 
     /* Check ammo (knife/melee weapons don't use ammo) */
@@ -700,6 +717,24 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
 
         ent->groundentity = pm.groundentity;
         client->viewheight = pm.viewheight;
+    }
+
+    /* Footstep sounds — on ground and moving */
+    if (ent->groundentity && !ent->deadflag) {
+        float speed = (float)sqrt(ent->velocity[0] * ent->velocity[0] +
+                                   ent->velocity[1] * ent->velocity[1]);
+        if (speed > 50.0f && level.time >= client->next_footstep) {
+            int step_snd = 0;
+            int r = gi.irand(0, 3);
+            if (r == 0) step_snd = snd_footstep1;
+            else if (r == 1) step_snd = snd_footstep2;
+            else if (r == 2) step_snd = snd_footstep3;
+            else step_snd = snd_footstep4;
+            if (step_snd)
+                gi.sound(ent, CHAN_BODY, step_snd, 0.5f, ATTN_NORM, 0);
+            /* Faster footsteps at higher speed */
+            client->next_footstep = level.time + (speed > 200.0f ? 0.3f : 0.5f);
+        }
     }
 
     /* Process touch callbacks from Pmove */
@@ -1038,6 +1073,11 @@ static void G_RegisterWeapons(void)
     snd_hit_flesh = gi.soundindex("player/hit_flesh.wav");
     snd_explode = gi.soundindex("weapons/explode.wav");
     snd_noammo = gi.soundindex("weapons/noammo.wav");
+    snd_weapon_switch = gi.soundindex("weapons/change.wav");
+    snd_footstep1 = gi.soundindex("player/step1.wav");
+    snd_footstep2 = gi.soundindex("player/step2.wav");
+    snd_footstep3 = gi.soundindex("player/step3.wav");
+    snd_footstep4 = gi.soundindex("player/step4.wav");
 }
 
 static const char *G_GetGameVersion(void)

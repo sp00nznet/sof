@@ -312,8 +312,12 @@ struct gclient_s {
     int             ammo[WEAP_COUNT];       /* current ammo per weapon */
     int             ammo_max[WEAP_COUNT];   /* max ammo per weapon */
 
+    /* Weapon switching */
+    float           weapon_change_time;     /* level.time when switch completes */
+    float           next_footstep;          /* level.time for next footstep sound */
+
     /* Pad to known alignment */
-    byte            _pad[32];
+    byte            _pad[24];
 };
 
 /* ==========================================================================

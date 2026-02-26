@@ -214,12 +214,20 @@ static void R_DrawFace(bsp_world_t *world, bsp_face_t *face,
     bsp_edge_t  *edge;
     float       *v;
     bsp_texinfo_t *ti = NULL;
+    qboolean    is_warp = qfalse;
+    float       warp_time = 0;
 
     if (face->numedges < 3)
         return;
 
-    if (face->texinfo >= 0 && face->texinfo < world->num_texinfo)
+    if (face->texinfo >= 0 && face->texinfo < world->num_texinfo) {
         ti = &world->texinfo[face->texinfo];
+        if (ti->flags & SURF_WARP)
+            is_warp = qtrue;
+    }
+
+    if (is_warp)
+        warp_time = (float)Sys_Milliseconds() * 0.001f;
 
     qglBegin(GL_TRIANGLE_FAN);
 
@@ -248,6 +256,13 @@ static void R_DrawFace(bsp_world_t *world, bsp_face_t *face,
                 s /= 64.0f;
                 t /= 64.0f;
             }
+
+            /* Water warp: scroll texture coordinates with sine wave */
+            if (is_warp) {
+                s += 0.05f * (float)sin(v[1] * 0.05f + warp_time * 2.0f);
+                t += 0.05f * (float)sin(v[0] * 0.05f + warp_time * 2.0f);
+            }
+
             qglTexCoord2f(s, t);
 
             /* Lightmap TC on TMU1 */
@@ -263,7 +278,14 @@ static void R_DrawFace(bsp_world_t *world, bsp_face_t *face,
             }
         }
 
-        qglVertex3f(v[0], v[1], v[2]);
+        /* Water warp: slight vertex displacement for wave effect */
+        if (is_warp) {
+            float wz = v[2] + 2.0f * (float)sin(v[0] * 0.03f + warp_time * 1.5f)
+                             + 2.0f * (float)sin(v[1] * 0.03f + warp_time * 1.2f);
+            qglVertex3f(v[0], v[1], wz);
+        } else {
+            qglVertex3f(v[0], v[1], v[2]);
+        }
     }
 
     qglEnd();
