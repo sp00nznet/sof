@@ -26,6 +26,8 @@ extern void R_AddDlight(vec3_t origin, float r, float g, float b,
 /* Forward declarations */
 static void G_AngleVectors(vec3_t angles, vec3_t fwd, vec3_t rt, vec3_t up_out);
 static void G_FireProjectile(edict_t *ent, qboolean is_grenade);
+static void T_RadiusDamage(edict_t *inflictor, edict_t *attacker,
+                            float damage, float radius);
 static void WriteGame(const char *filename, qboolean autosave);
 static void ReadGame(const char *filename);
 static void WriteLevel(const char *filename);
@@ -101,6 +103,9 @@ static int snd_explode;                 /* explosion */
 static int snd_noammo;                  /* empty click */
 static int snd_weapon_switch;           /* weapon switch sound */
 static int snd_footstep1, snd_footstep2, snd_footstep3, snd_footstep4;
+static int snd_player_pain1, snd_player_pain2;
+static int snd_player_die;
+static int snd_drown;
 
 #define WEAPON_SWITCH_TIME  0.5f        /* 500ms weapon switch delay */
 
@@ -332,6 +337,9 @@ static void ClientBegin(edict_t *ent)
         ent->client->pers_max_health = 100;
         ent->client->armor = 0;
         ent->client->armor_max = 200;
+        ent->client->air_finished = 0;
+        ent->client->next_env_damage = 0;
+        ent->client->next_pain_sound = 0;
     }
 
     ent->health = 100;
@@ -558,6 +566,64 @@ static qboolean G_UseUtilityWeapon(edict_t *ent)
         return qtrue;
     }
 
+    /* C4 explosive: place on first use, detonate on second */
+    if (weap == WEAP_C4) {
+        if (ent->client->ammo[WEAP_C4] <= 0) {
+            /* No C4 charges — try to detonate any placed ones */
+            int i;
+            qboolean detonated = qfalse;
+            for (i = 0; i < globals.max_edicts; i++) {
+                edict_t *c4 = &globals.edicts[i];
+                if (c4->inuse && c4->owner == ent &&
+                    c4->classname && Q_stricmp(c4->classname, "c4_charge") == 0) {
+                    /* Detonate this C4 */
+                    VectorCopy(c4->s.origin, c4->s.origin);
+                    R_ParticleEffect(c4->s.origin, c4->s.angles, 2, 48);
+                    R_AddDlight(c4->s.origin, 1.0f, 0.6f, 0.1f, 500.0f, 0.6f);
+                    if (snd_explode)
+                        gi.positioned_sound(c4->s.origin, NULL, CHAN_AUTO,
+                                            snd_explode, 1.0f, ATTN_NORM, 0);
+                    T_RadiusDamage(c4, ent, (float)c4->dmg, (float)c4->dmg_radius);
+                    c4->inuse = qfalse;
+                    gi.unlinkentity(c4);
+                    detonated = qtrue;
+                }
+            }
+            if (!detonated && snd_noammo)
+                gi.sound(ent, CHAN_WEAPON, snd_noammo, 0.5f, ATTN_NORM, 0);
+            return qtrue;
+        }
+
+        /* Place C4 charge in front of player */
+        {
+            edict_t *c4;
+            vec3_t fwd, rt, up_v, place;
+
+            ent->client->ammo[WEAP_C4]--;
+            c4 = G_AllocEdict();
+            if (!c4) return qtrue;
+
+            G_AngleVectors(ent->client->viewangles, fwd, rt, up_v);
+            VectorCopy(ent->s.origin, place);
+            place[2] += ent->client->viewheight;
+            VectorMA(place, 32, fwd, place);
+
+            c4->classname = "c4_charge";
+            c4->owner = ent;
+            c4->solid = SOLID_NOT;
+            c4->movetype = MOVETYPE_NONE;
+            c4->dmg = weapon_damage[WEAP_C4];
+            c4->dmg_radius = 250;
+            VectorCopy(place, c4->s.origin);
+
+            gi.linkentity(c4);
+            gi.cprintf(ent, PRINT_ALL, "C4 placed. Use again to detonate.\n");
+            if (snd_weapons[WEAP_C4])
+                gi.sound(ent, CHAN_WEAPON, snd_weapons[WEAP_C4], 1.0f, ATTN_NORM, 0);
+        }
+        return qtrue;
+    }
+
     /* Projectile weapons: rocket launcher, grenade */
     if (weap == WEAP_ROCKET || weap == WEAP_GRENADE) {
         if (ent->client->ammo[weap] <= 0) {
@@ -569,6 +635,45 @@ static qboolean G_UseUtilityWeapon(edict_t *ent)
         if (snd_weapons[weap])
             gi.sound(ent, CHAN_WEAPON, snd_weapons[weap], 1.0f, ATTN_NORM, 0);
         G_FireProjectile(ent, (qboolean)(weap == WEAP_GRENADE));
+        return qtrue;
+    }
+
+    /* Flamethrower: short-range particle stream */
+    if (weap == WEAP_FLAMEGUN) {
+        vec3_t fwd, rt, up_v, start, end_pt;
+        trace_t ftr;
+
+        if (ent->client->ammo[WEAP_FLAMEGUN] <= 0) {
+            if (snd_noammo)
+                gi.sound(ent, CHAN_WEAPON, snd_noammo, 0.5f, ATTN_NORM, 0);
+            return qtrue;
+        }
+        ent->client->ammo[WEAP_FLAMEGUN]--;
+
+        G_AngleVectors(ent->client->viewangles, fwd, rt, up_v);
+        VectorCopy(ent->s.origin, start);
+        start[2] += ent->client->viewheight;
+        VectorMA(start, 384, fwd, end_pt);  /* 384 unit range */
+
+        /* Fire particles along path */
+        {
+            vec3_t flame_pt;
+            VectorMA(start, 32, fwd, flame_pt);
+            R_ParticleEffect(flame_pt, fwd, 4, 6);
+            R_AddDlight(flame_pt, 1.0f, 0.5f, 0.0f, 150.0f, 0.1f);
+        }
+
+        if (snd_weapons[WEAP_FLAMEGUN])
+            gi.sound(ent, CHAN_WEAPON, snd_weapons[WEAP_FLAMEGUN], 0.8f, ATTN_NORM, 0);
+
+        ftr = gi.trace(start, NULL, NULL, end_pt, ent, MASK_SHOT);
+        if (ftr.fraction < 1.0f && ftr.ent && ftr.ent->takedamage && ftr.ent->health > 0) {
+            int fdmg = weapon_damage[WEAP_FLAMEGUN];
+            R_ParticleEffect(ftr.endpos, ftr.plane.normal, 4, 4);
+            ftr.ent->health -= fdmg;
+            if (ftr.ent->health <= 0 && ftr.ent->die)
+                ftr.ent->die(ftr.ent, ent, ent, fdmg, ftr.endpos);
+        }
         return qtrue;
     }
 
@@ -851,12 +956,38 @@ static void G_FireHitscan(edict_t *ent)
                        tr.ent->classname ? tr.ent->classname : "entity",
                        damage, tr.ent->health);
 
+            /* Player pain sound + damage flash */
+            if (tr.ent->client) {
+                tr.ent->client->pers_health = tr.ent->health;
+                tr.ent->client->blend[0] = 1.0f;
+                tr.ent->client->blend[1] = 0.0f;
+                tr.ent->client->blend[2] = 0.0f;
+                tr.ent->client->blend[3] = 0.3f;
+
+                if (level.time >= tr.ent->client->next_pain_sound) {
+                    int psnd = gi.irand(0, 1) ? snd_player_pain1 : snd_player_pain2;
+                    if (psnd)
+                        gi.sound(tr.ent, CHAN_VOICE, psnd, 1.0f, ATTN_NORM, 0);
+                    tr.ent->client->next_pain_sound = level.time + 0.5f;
+                }
+            }
+
             if (tr.ent->health <= 0 && tr.ent->die) {
                 /* Explosion particles, light, and sound on kill */
                 R_ParticleEffect(tr.endpos, tr.plane.normal, 2, 16);
                 R_AddDlight(tr.endpos, 1.0f, 0.5f, 0.1f, 300.0f, 0.3f);
-                if (snd_explode)
+
+                /* Player death sound */
+                if (tr.ent->client && snd_player_die)
+                    gi.sound(tr.ent, CHAN_VOICE, snd_player_die, 1.0f, ATTN_NORM, 0);
+                else if (snd_explode)
                     gi.sound(tr.ent, CHAN_AUTO, snd_explode, 1.0f, ATTN_NORM, 0);
+
+                /* Gib effect — overkill damage causes gib explosion */
+                if (tr.ent->health < -40) {
+                    R_ParticleEffect(tr.endpos, tr.plane.normal, 1, 48);
+                }
+
                 tr.ent->die(tr.ent, ent, ent, damage, tr.endpos);
             }
         } else {
@@ -998,6 +1129,77 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
                 gi.sound(ent, CHAN_BODY, step_snd, 0.5f, ATTN_NORM, 0);
             /* Faster footsteps at higher speed */
             client->next_footstep = level.time + (speed > 200.0f ? 0.3f : 0.5f);
+        }
+    }
+
+    /* Environmental damage: lava, slime, drowning */
+    {
+        int contents = gi.pointcontents(ent->s.origin);
+
+        /* Lava: rapid damage */
+        if (contents & CONTENTS_LAVA) {
+            if (level.time >= client->next_env_damage) {
+                ent->health -= 10;
+                client->pers_health = ent->health;
+                client->blend[0] = 1.0f;
+                client->blend[1] = 0.3f;
+                client->blend[2] = 0.0f;
+                client->blend[3] = 0.4f;
+                client->next_env_damage = level.time + 0.2f;
+
+                if (ent->health <= 0) {
+                    ent->health = 0;
+                    ent->deadflag = 1;
+                    client->ps.pm_type = PM_DEAD;
+                }
+            }
+        }
+        /* Slime: slow damage */
+        else if (contents & CONTENTS_SLIME) {
+            if (level.time >= client->next_env_damage) {
+                ent->health -= 4;
+                client->pers_health = ent->health;
+                client->blend[0] = 0.0f;
+                client->blend[1] = 0.5f;
+                client->blend[2] = 0.0f;
+                client->blend[3] = 0.3f;
+                client->next_env_damage = level.time + 1.0f;
+
+                if (ent->health <= 0) {
+                    ent->health = 0;
+                    ent->deadflag = 1;
+                    client->ps.pm_type = PM_DEAD;
+                }
+            }
+        }
+
+        /* Drowning: underwater without air */
+        if (contents & CONTENTS_WATER) {
+            if (client->air_finished == 0)
+                client->air_finished = level.time + 12.0f;  /* 12 seconds of air */
+
+            if (level.time > client->air_finished) {
+                if (level.time >= client->next_env_damage) {
+                    ent->health -= 5;
+                    client->pers_health = ent->health;
+                    client->blend[0] = 0.0f;
+                    client->blend[1] = 0.0f;
+                    client->blend[2] = 1.0f;
+                    client->blend[3] = 0.3f;
+                    client->next_env_damage = level.time + 1.0f;
+                    if (snd_drown)
+                        gi.sound(ent, CHAN_VOICE, snd_drown, 1.0f, ATTN_NORM, 0);
+
+                    if (ent->health <= 0) {
+                        ent->health = 0;
+                        ent->deadflag = 1;
+                        client->ps.pm_type = PM_DEAD;
+                    }
+                }
+            }
+        } else {
+            /* Above water — reset breath */
+            client->air_finished = 0;
         }
     }
 
@@ -1342,6 +1544,12 @@ static void G_RegisterWeapons(void)
     snd_footstep2 = gi.soundindex("player/step2.wav");
     snd_footstep3 = gi.soundindex("player/step3.wav");
     snd_footstep4 = gi.soundindex("player/step4.wav");
+
+    /* Player pain/death sounds */
+    snd_player_pain1 = gi.soundindex("player/pain25_1.wav");
+    snd_player_pain2 = gi.soundindex("player/pain50_1.wav");
+    snd_player_die = gi.soundindex("player/death1.wav");
+    snd_drown = gi.soundindex("player/drown1.wav");
 }
 
 static const char *G_GetGameVersion(void)

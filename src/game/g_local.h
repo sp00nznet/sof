@@ -320,8 +320,13 @@ struct gclient_s {
     int             armor;                  /* current armor points */
     int             armor_max;              /* max armor (default 200) */
 
+    /* Environmental */
+    float           air_finished;           /* time when breath runs out */
+    float           next_env_damage;        /* debounce for lava/slime damage */
+    float           next_pain_sound;        /* debounce for pain sound */
+
     /* Pad to known alignment */
-    byte            _pad[16];
+    byte            _pad[4];
 };
 
 /* ==========================================================================
