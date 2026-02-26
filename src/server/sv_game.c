@@ -256,20 +256,127 @@ static void GI_setmodel(edict_t *ent, const char *name)
     }
 }
 
+/*
+ * SV_ClipTraceToEntity — Clip a trace against a single entity's AABB
+ * Returns qtrue if the entity was closer than the current trace.
+ */
+static qboolean SV_ClipTraceToEntity(trace_t *tr, vec3_t start, vec3_t mins, vec3_t maxs,
+                                     vec3_t end, edict_t *ent)
+{
+    vec3_t ent_mins, ent_maxs;
+    float t_entry, t_exit;
+    int i;
+    vec3_t dir, inv_dir;
+    vec3_t expanded_mins, expanded_maxs;
+
+    /* Expand entity bounds by trace AABB */
+    for (i = 0; i < 3; i++) {
+        expanded_mins[i] = ent->absmin[i] - (maxs ? maxs[i] : 0);
+        expanded_maxs[i] = ent->absmax[i] - (mins ? mins[i] : 0);
+    }
+
+    VectorSubtract(end, start, dir);
+
+    t_entry = 0.0f;
+    t_exit = 1.0f;
+
+    for (i = 0; i < 3; i++) {
+        if (dir[i] == 0.0f) {
+            /* Ray parallel to slab */
+            if (start[i] < expanded_mins[i] || start[i] > expanded_maxs[i])
+                return qfalse;
+        } else {
+            float t1 = (expanded_mins[i] - start[i]) / dir[i];
+            float t2 = (expanded_maxs[i] - start[i]) / dir[i];
+
+            if (t1 > t2) { float tmp = t1; t1 = t2; t2 = tmp; }
+            if (t1 > t_entry) t_entry = t1;
+            if (t2 < t_exit) t_exit = t2;
+
+            if (t_entry > t_exit)
+                return qfalse;
+        }
+    }
+
+    /* Hit - check if closer than current trace */
+    if (t_entry >= 0.0f && t_entry < tr->fraction) {
+        tr->fraction = t_entry;
+        for (i = 0; i < 3; i++)
+            tr->endpos[i] = start[i] + dir[i] * t_entry;
+        tr->ent = ent;
+
+        /* Approximate normal from entry axis */
+        memset(&tr->plane, 0, sizeof(tr->plane));
+        {
+            float best = -1;
+            int best_axis = 0;
+            for (i = 0; i < 3; i++) {
+                float d1 = (float)fabs(tr->endpos[i] - expanded_mins[i]);
+                float d2 = (float)fabs(tr->endpos[i] - expanded_maxs[i]);
+                float d = d1 < d2 ? d1 : d2;
+                if (best < 0 || d < best) {
+                    best = d;
+                    best_axis = i;
+                }
+            }
+            tr->plane.normal[best_axis] = dir[best_axis] > 0 ? -1.0f : 1.0f;
+        }
+        return qtrue;
+    }
+
+    return qfalse;
+}
+
 static trace_t GI_trace(vec3_t start, vec3_t mins, vec3_t maxs,
                         vec3_t end, edict_t *passent, int contentmask)
 {
     trace_t tr;
     bsp_world_t *world = R_GetWorldModel();
 
-    (void)passent;  /* TODO: skip passent in entity-vs-entity traces */
-
+    /* Trace against BSP world */
     if (world && world->loaded) {
         tr = CM_BoxTrace(world, start, mins, maxs, end, contentmask);
     } else {
         memset(&tr, 0, sizeof(tr));
         tr.fraction = 1.0f;
         VectorCopy(end, tr.endpos);
+    }
+
+    /* Trace against solid entities */
+    {
+        edict_t *touch[64];
+        int num_touch, i;
+        vec3_t trace_mins, trace_maxs;
+
+        /* Build AABB encompassing entire trace */
+        for (i = 0; i < 3; i++) {
+            if (start[i] < end[i]) {
+                trace_mins[i] = start[i] + (mins ? mins[i] : 0);
+                trace_maxs[i] = end[i] + (maxs ? maxs[i] : 0);
+            } else {
+                trace_mins[i] = end[i] + (mins ? mins[i] : 0);
+                trace_maxs[i] = start[i] + (maxs ? maxs[i] : 0);
+            }
+        }
+
+        num_touch = SV_AreaEdicts(trace_mins, trace_maxs, touch, 64, AREA_SOLID);
+
+        for (i = 0; i < num_touch; i++) {
+            edict_t *ent = touch[i];
+
+            if (!ent || ent == passent || !ent->inuse)
+                continue;
+
+            /* Skip non-solid entities */
+            if (ent->solid == SOLID_NOT || ent->solid == SOLID_TRIGGER)
+                continue;
+
+            /* Skip owner */
+            if (passent && ent->owner == passent)
+                continue;
+
+            SV_ClipTraceToEntity(&tr, start, mins, maxs, end, ent);
+        }
     }
 
     return tr;
