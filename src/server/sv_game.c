@@ -846,6 +846,29 @@ void SV_GetPlayerBlend(float *blend)
 }
 
 /*
+ * SV_IsPlayerUnderwater — Check if player's eyes are submerged
+ */
+qboolean SV_IsPlayerUnderwater(void)
+{
+    edict_t *player;
+    vec3_t eye_pos;
+    int contents;
+
+    if (!ge || !ge->edicts)
+        return qfalse;
+
+    player = (edict_t *)((byte *)ge->edicts + ge->edict_size);
+    if (!player->inuse || !player->client)
+        return qfalse;
+
+    VectorCopy(player->s.origin, eye_pos);
+    eye_pos[2] += player->client->viewheight;
+
+    contents = GI_pointcontents(eye_pos);
+    return (contents & CONTENTS_WATER) ? qtrue : qfalse;
+}
+
+/*
  * SV_GetPlayerWeapon — Get player weapon name for HUD display
  */
 const char *SV_GetPlayerWeapon(void)

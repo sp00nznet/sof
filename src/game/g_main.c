@@ -2094,19 +2094,52 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
         }
     }
 
-    /* Footstep sounds — on ground and moving */
+    /* Footstep sounds — on ground and moving, with surface material detection */
     if (ent->groundentity && !ent->deadflag) {
         float speed = (float)sqrt(ent->velocity[0] * ent->velocity[0] +
                                    ent->velocity[1] * ent->velocity[1]);
         if (speed > 50.0f && level.time >= client->next_footstep) {
             int step_snd = 0;
             int r = gi.irand(0, 3);
+            float vol = 0.5f;
+
+            /* Check surface material via downward trace */
+            {
+                vec3_t down_start, down_end;
+                trace_t step_tr;
+
+                VectorCopy(ent->s.origin, down_start);
+                VectorCopy(ent->s.origin, down_end);
+                down_end[2] -= 32;
+
+                step_tr = gi.trace(down_start, NULL, NULL, down_end, ent, MASK_SOLID);
+
+                if (step_tr.surface && step_tr.surface->name[0]) {
+                    /* Check texture name for surface type hints */
+                    const char *texname = step_tr.surface->name;
+                    if (strstr(texname, "metal") || strstr(texname, "grate") ||
+                        strstr(texname, "vent")) {
+                        /* Metal surface — louder, sharper */
+                        vol = 0.7f;
+                    } else if (strstr(texname, "water") || strstr(texname, "mud") ||
+                               strstr(texname, "slime")) {
+                        /* Wet surface — splashy, quieter */
+                        vol = 0.3f;
+                    } else if (strstr(texname, "dirt") || strstr(texname, "grass") ||
+                               strstr(texname, "sand")) {
+                        /* Soft surface — muffled */
+                        vol = 0.35f;
+                    }
+                    /* Default concrete/tile stays at 0.5 */
+                }
+            }
+
             if (r == 0) step_snd = snd_footstep1;
             else if (r == 1) step_snd = snd_footstep2;
             else if (r == 2) step_snd = snd_footstep3;
             else step_snd = snd_footstep4;
             if (step_snd)
-                gi.sound(ent, CHAN_BODY, step_snd, 0.5f, ATTN_NORM, 0);
+                gi.sound(ent, CHAN_BODY, step_snd, vol, ATTN_NORM, 0);
             /* Faster footsteps at higher speed */
             client->next_footstep = level.time + (speed > 200.0f ? 0.3f : 0.5f);
         }

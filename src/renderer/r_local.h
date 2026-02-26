@@ -160,6 +160,9 @@ void    R_DrawStretchRaw(int x, int y, int w, int h, int cols, int rows, byte *d
 void    R_SetMode(void);
 void    R_GetModeSize(int mode, int *w, int *h);
 
+/* Screenshot */
+void    R_Screenshot_f(void);
+
 /* ==========================================================================
    GL Function Loading
    SoF originally loaded 336 GL 1.1 functions + extensions via GetProcAddress.
@@ -207,6 +210,16 @@ extern void (APIENTRY *qglTexCoordPointer)(GLint size, GLenum type, GLsizei stri
 extern void (APIENTRY *qglColorPointer)(GLint size, GLenum type, GLsizei stride, const void *pointer);
 extern void (APIENTRY *qglEnableClientState)(GLenum cap);
 extern void (APIENTRY *qglDisableClientState)(GLenum cap);
+
+/* Fog */
+extern void (APIENTRY *qglFogi)(GLenum pname, GLint param);
+extern void (APIENTRY *qglFogf)(GLenum pname, GLfloat param);
+extern void (APIENTRY *qglFogfv)(GLenum pname, const GLfloat *params);
+extern void (APIENTRY *qglHint)(GLenum target, GLenum mode);
+
+/* Screenshot */
+extern void (APIENTRY *qglReadPixels)(GLint x, GLint y, GLsizei width, GLsizei height, GLenum format, GLenum type, void *pixels);
+extern void (APIENTRY *qglPixelStorei)(GLenum pname, GLint param);
 
 extern GLenum (APIENTRY *qglGetError)(void);
 extern const GLubyte *(APIENTRY *qglGetString)(GLenum name);

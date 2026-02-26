@@ -40,6 +40,13 @@ cvar_t  *gl_texturemode;
 cvar_t  *gl_modulate;
 cvar_t  *vid_gamma;
 
+/* Fog */
+cvar_t  *gl_fog;
+cvar_t  *gl_fogdensity;
+cvar_t  *gl_fogcolor_r;
+cvar_t  *gl_fogcolor_g;
+cvar_t  *gl_fogcolor_b;
+
 /* SoF-specific */
 cvar_t  *ghl_specular;
 cvar_t  *ghl_mip;
@@ -120,6 +127,12 @@ void (APIENTRY *qglGetFloatv)(GLenum pname, GLfloat *params);
 void (APIENTRY *qglFinish)(void);
 void (APIENTRY *qglFlush)(void);
 void (APIENTRY *qglPointSize)(GLfloat size);
+void (APIENTRY *qglFogi)(GLenum pname, GLint param);
+void (APIENTRY *qglFogf)(GLenum pname, GLfloat param);
+void (APIENTRY *qglFogfv)(GLenum pname, const GLfloat *params);
+void (APIENTRY *qglHint)(GLenum target, GLenum mode);
+void (APIENTRY *qglReadPixels)(GLint x, GLint y, GLsizei width, GLsizei height, GLenum format, GLenum type, void *pixels);
+void (APIENTRY *qglPixelStorei)(GLenum pname, GLint param);
 
 /* Extensions */
 PFNGLACTIVETEXTUREARBPROC       qglActiveTextureARB;
@@ -180,6 +193,12 @@ qboolean QGL_Init(void)
     QGL_LOAD(Finish);
     QGL_LOAD(Flush);
     QGL_LOAD(PointSize);
+    QGL_LOAD(Fogi);
+    QGL_LOAD(Fogf);
+    QGL_LOAD(Fogfv);
+    QGL_LOAD(Hint);
+    QGL_LOAD(ReadPixels);
+    QGL_LOAD(PixelStorei);
 
     /* Verify critical functions loaded */
     if (!qglClear || !qglViewport || !qglGetString) {
@@ -221,6 +240,13 @@ int R_Init(void *hinstance, void *hWnd)
     gl_texturemode = Cvar_Get("gl_texturemode", "GL_LINEAR_MIPMAP_LINEAR", CVAR_ARCHIVE);
     gl_modulate = Cvar_Get("gl_modulate", "1", CVAR_ARCHIVE);
     vid_gamma = Cvar_Get("vid_gamma", "1.0", CVAR_ARCHIVE);
+
+    /* Fog cvars */
+    gl_fog = Cvar_Get("gl_fog", "0", CVAR_ARCHIVE);
+    gl_fogdensity = Cvar_Get("gl_fogdensity", "0.001", CVAR_ARCHIVE);
+    gl_fogcolor_r = Cvar_Get("gl_fogcolor_r", "0.5", CVAR_ARCHIVE);
+    gl_fogcolor_g = Cvar_Get("gl_fogcolor_g", "0.5", CVAR_ARCHIVE);
+    gl_fogcolor_b = Cvar_Get("gl_fogcolor_b", "0.5", CVAR_ARCHIVE);
 
     /* SoF-specific renderer cvars */
     ghl_specular = Cvar_Get("ghl_specular", "1", CVAR_ARCHIVE);
@@ -605,6 +631,33 @@ void R_RenderFrame(refdef_t *fd)
     qglEnable(GL_TEXTURE_2D);
     qglClear(GL_DEPTH_BUFFER_BIT);
 
+    /* GL fog setup */
+    if (gl_fog && gl_fog->value > 0) {
+        float fog_color[4];
+        float density = gl_fogdensity ? gl_fogdensity->value : 0.001f;
+
+        /* Parse fog color (default: grey) */
+        fog_color[0] = gl_fogcolor_r ? gl_fogcolor_r->value : 0.5f;
+        fog_color[1] = gl_fogcolor_g ? gl_fogcolor_g->value : 0.5f;
+        fog_color[2] = gl_fogcolor_b ? gl_fogcolor_b->value : 0.5f;
+        fog_color[3] = 1.0f;
+
+        qglEnable(GL_FOG);
+        qglFogi(GL_FOG_MODE, GL_EXP2);
+        qglFogfv(GL_FOG_COLOR, fog_color);
+        qglFogf(GL_FOG_DENSITY, density);
+        qglHint(GL_FOG_HINT, GL_DONT_CARE);
+    }
+
+    /* Underwater fog when player is submerged */
+    if (fd->rdflags & RDF_UNDERWATER) {
+        float water_fog[4] = {0.1f, 0.2f, 0.4f, 1.0f};
+        qglEnable(GL_FOG);
+        qglFogi(GL_FOG_MODE, GL_EXP2);
+        qglFogfv(GL_FOG_COLOR, water_fog);
+        qglFogf(GL_FOG_DENSITY, 0.003f);
+    }
+
     /* Draw skybox (before world, depth writes off so world occludes it) */
     R_DrawSkyBox();
 
@@ -621,6 +674,9 @@ void R_RenderFrame(refdef_t *fd)
 
     /* Draw dynamic lights */
     R_DrawDlights();
+
+    /* Disable fog before 2D rendering */
+    qglDisable(GL_FOG);
 
     /* Full-screen blend (damage flash, underwater tint) */
     if (fd->blend[3] > 0) {
@@ -1484,4 +1540,74 @@ void R_SetMode(void)
         qglViewport(0, 0, w, h);
 
     Com_Printf("Video mode: %dx%d %s\n", w, h, fs ? "fullscreen" : "windowed");
+}
+
+/* ==========================================================================
+   Screenshot
+   ========================================================================== */
+
+void R_Screenshot_f(void)
+{
+    byte *buffer;
+    int w = g_display.width;
+    int h = g_display.height;
+    FILE *f;
+    char filename[64];
+    int i, j;
+    static int screenshot_count = 0;
+
+    if (!qglReadPixels) {
+        Com_Printf("Screenshot: glReadPixels not available\n");
+        return;
+    }
+
+    /* Find next available filename */
+    snprintf(filename, sizeof(filename), "screenshot%04d.tga", screenshot_count++);
+
+    buffer = (byte *)Z_Malloc(w * h * 3);
+    if (!buffer) {
+        Com_Printf("Screenshot: out of memory\n");
+        return;
+    }
+
+    qglPixelStorei(GL_PACK_ALIGNMENT, 1);
+    qglReadPixels(0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, buffer);
+
+    /* Write TGA file */
+    f = fopen(filename, "wb");
+    if (!f) {
+        Com_Printf("Screenshot: couldn't write %s\n", filename);
+        Z_Free(buffer);
+        return;
+    }
+
+    /* TGA header */
+    {
+        byte tga_header[18];
+        memset(tga_header, 0, 18);
+        tga_header[2] = 2;     /* uncompressed true-color */
+        tga_header[12] = w & 0xFF;
+        tga_header[13] = (w >> 8) & 0xFF;
+        tga_header[14] = h & 0xFF;
+        tga_header[15] = (h >> 8) & 0xFF;
+        tga_header[16] = 24;   /* bits per pixel */
+        fwrite(tga_header, 1, 18, f);
+    }
+
+    /* Write pixel data (TGA is BGR bottom-to-top, OpenGL reads bottom-to-top) */
+    for (j = 0; j < h; j++) {
+        for (i = 0; i < w; i++) {
+            int idx = (j * w + i) * 3;
+            byte bgr[3];
+            bgr[0] = buffer[idx + 2]; /* B */
+            bgr[1] = buffer[idx + 1]; /* G */
+            bgr[2] = buffer[idx + 0]; /* R */
+            fwrite(bgr, 1, 3, f);
+        }
+    }
+
+    fclose(f);
+    Z_Free(buffer);
+
+    Com_Printf("Wrote %s (%dx%d)\n", filename, w, h);
 }

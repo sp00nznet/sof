@@ -256,6 +256,7 @@ void Qcommon_Init(int argc, char **argv)
     Cmd_AddCommand("loadgame", Cmd_LoadGame_f);
     Cmd_AddCommand("writeconfig", Cmd_WriteConfig_f);
     Cmd_AddCommand("vid_restart", R_SetMode);
+    Cmd_AddCommand("screenshot", R_Screenshot_f);
 
     /* Register core cvars */
     developer = Cvar_Get("developer", "0", 0);
@@ -586,6 +587,21 @@ void CL_Frame(int msec)
 
                 /* Get damage blend (screen flash effect) */
                 SV_GetPlayerBlend(cl_refdef.blend);
+
+                /* Check underwater for fog effect */
+                {
+                    extern qboolean SV_IsPlayerUnderwater(void);
+                    if (SV_IsPlayerUnderwater()) {
+                        cl_refdef.rdflags |= RDF_UNDERWATER;
+                        /* Add blue tint if not already blending */
+                        if (cl_refdef.blend[3] < 0.1f) {
+                            cl_refdef.blend[0] = 0.0f;
+                            cl_refdef.blend[1] = 0.1f;
+                            cl_refdef.blend[2] = 0.4f;
+                            cl_refdef.blend[3] = 0.15f;
+                        }
+                    }
+                }
             }
         }
     }
