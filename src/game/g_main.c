@@ -309,6 +309,28 @@ static void SpawnEntities(const char *mapname, const char *entstring,
 
     /* Parse entity string and spawn entities */
     G_SpawnEntities(mapname, entstring, spawnpoint);
+
+    /* Initialize level stats */
+    level.level_start_time = level.time;
+    level.killed_monsters = 0;
+    level.found_secrets = 0;
+    level.total_monsters = 0;
+    level.total_secrets = 0;
+
+    /* Count total monsters and secrets */
+    {
+        int i;
+        for (i = 0; i < globals.num_edicts; i++) {
+            edict_t *e = &globals.edicts[i];
+            if (!e->inuse) continue;
+            if (e->svflags & SVF_MONSTER)
+                level.total_monsters++;
+            if (e->classname && Q_stricmp(e->classname, "trigger_secret") == 0)
+                level.total_secrets++;
+        }
+        gi.dprintf("Level: %d monsters, %d secrets\n",
+                   level.total_monsters, level.total_secrets);
+    }
 }
 
 /* ==========================================================================
@@ -453,6 +475,11 @@ static void ClientCommand(edict_t *ent)
         ent->client->pers_weapon = w;
         ent->weapon_index = w;
         ent->client->weapon_change_time = level.time + WEAPON_SWITCH_TIME;
+        /* Cancel zoom on weapon switch */
+        if (ent->client->zoomed) {
+            ent->client->zoomed = qfalse;
+            ent->client->fov = 90.0f;
+        }
         if (snd_weapon_switch)
             gi.sound(ent, CHAN_ITEM, snd_weapon_switch, 1.0f, ATTN_NORM, 0);
         gi.cprintf(ent, PRINT_ALL, "Weapon: %s\n", weapon_names[w]);
@@ -465,9 +492,54 @@ static void ClientCommand(edict_t *ent)
         ent->client->pers_weapon = w;
         ent->weapon_index = w;
         ent->client->weapon_change_time = level.time + WEAPON_SWITCH_TIME;
+        /* Cancel zoom on weapon switch */
+        if (ent->client->zoomed) {
+            ent->client->zoomed = qfalse;
+            ent->client->fov = 90.0f;
+        }
         if (snd_weapon_switch)
             gi.sound(ent, CHAN_ITEM, snd_weapon_switch, 1.0f, ATTN_NORM, 0);
         gi.cprintf(ent, PRINT_ALL, "Weapon: %s\n", weapon_names[w]);
+        return;
+    }
+
+    if (Q_stricmp(cmd, "stats") == 0 || Q_stricmp(cmd, "levelstats") == 0) {
+        float elapsed = level.time - level.level_start_time;
+        int mins = (int)(elapsed / 60.0f);
+        int secs = (int)elapsed % 60;
+        gi.cprintf(ent, PRINT_ALL, "--- Level Stats ---\n");
+        gi.cprintf(ent, PRINT_ALL, "Monsters: %d / %d\n",
+                   level.killed_monsters, level.total_monsters);
+        gi.cprintf(ent, PRINT_ALL, "Secrets:  %d / %d\n",
+                   level.found_secrets, level.total_secrets);
+        gi.cprintf(ent, PRINT_ALL, "Time:     %d:%02d\n", mins, secs);
+        if (ent->client)
+            gi.cprintf(ent, PRINT_ALL, "Score:    %d\n", ent->client->score);
+        return;
+    }
+
+    if (Q_stricmp(cmd, "zoom") == 0 || Q_stricmp(cmd, "+zoom") == 0) {
+        if (ent->client->pers_weapon == WEAP_SNIPER) {
+            ent->client->zoomed = !ent->client->zoomed;
+            if (ent->client->zoomed) {
+                ent->client->zoom_fov = 30.0f;
+                ent->client->fov = 30.0f;
+                gi.cprintf(ent, PRINT_ALL, "Scope: ON\n");
+            } else {
+                ent->client->fov = 90.0f;
+                gi.cprintf(ent, PRINT_ALL, "Scope: OFF\n");
+            }
+        } else {
+            gi.cprintf(ent, PRINT_ALL, "No scope on this weapon\n");
+        }
+        return;
+    }
+
+    if (Q_stricmp(cmd, "-zoom") == 0) {
+        if (ent->client->zoomed) {
+            ent->client->zoomed = qfalse;
+            ent->client->fov = 90.0f;
+        }
         return;
     }
 
@@ -1301,6 +1373,10 @@ static void G_FireHitscan(edict_t *ent)
         if (weap > 0 && weap < WEAP_COUNT)
             spread = weapon_spread[weap];
 
+        /* Zoomed sniper: drastically reduce spread for precision */
+        if (ent->client->zoomed && weap == WEAP_SNIPER)
+            spread *= 0.1f;
+
         if (weap == WEAP_SHOTGUN) {
             num_pellets = 8;
             damage = 10;  /* per pellet */
@@ -1401,6 +1477,10 @@ static void G_FireHitscan(edict_t *ent)
                     ent->client->kills++;
                     ent->client->score += 10;
                 }
+
+                /* Track monster kills for level stats */
+                if (tr.ent->svflags & SVF_MONSTER)
+                    level.killed_monsters++;
             }
         } else {
             /* Bullet impact sparks + ricochet sound */
@@ -1564,6 +1644,50 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
         if (client->viewheight < 22) {
             client->viewheight = 22;  /* standing eye height */
             ent->maxs[2] = 32;  /* full bbox height */
+        }
+    }
+
+    /* Lean handling — offset view position laterally */
+    {
+        int target_lean = 0;
+        float lean_speed = 4.0f * level.frametime;  /* lean rate */
+        float max_lean = 12.0f;  /* max lateral offset in units */
+
+        if (ucmd->buttons & BUTTON_LEAN_LEFT)
+            target_lean = -1;
+        else if (ucmd->buttons & BUTTON_LEAN_RIGHT)
+            target_lean = 1;
+
+        client->lean_state = target_lean;
+
+        if (target_lean < 0) {
+            if (client->lean_offset > -max_lean)
+                client->lean_offset -= lean_speed * 40.0f;
+            if (client->lean_offset < -max_lean)
+                client->lean_offset = -max_lean;
+        } else if (target_lean > 0) {
+            if (client->lean_offset < max_lean)
+                client->lean_offset += lean_speed * 40.0f;
+            if (client->lean_offset > max_lean)
+                client->lean_offset = max_lean;
+        } else {
+            /* Return to center */
+            if (client->lean_offset > 0) {
+                client->lean_offset -= lean_speed * 40.0f;
+                if (client->lean_offset < 0) client->lean_offset = 0;
+            } else if (client->lean_offset < 0) {
+                client->lean_offset += lean_speed * 40.0f;
+                if (client->lean_offset > 0) client->lean_offset = 0;
+            }
+        }
+
+        /* Apply lean as kick_origin lateral offset */
+        if (client->lean_offset != 0) {
+            vec3_t right_dir, fwd_dir, up_dir;
+            G_AngleVectors(client->viewangles, fwd_dir, right_dir, up_dir);
+            VectorScale(right_dir, client->lean_offset, client->kick_origin);
+        } else {
+            VectorClear(client->kick_origin);
         }
     }
 

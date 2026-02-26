@@ -37,6 +37,8 @@ static kbutton_t   in_lookup;
 static kbutton_t   in_lookdown;
 static kbutton_t   in_left;
 static kbutton_t   in_right;
+static kbutton_t   in_leanleft;
+static kbutton_t   in_leanright;
 
 /* ==========================================================================
    Button Press/Release
@@ -132,6 +134,10 @@ static void IN_LeftDown(void)       { KeyDown(&in_left); }
 static void IN_LeftUp(void)         { KeyUp(&in_left); }
 static void IN_RightDown(void)      { KeyDown(&in_right); }
 static void IN_RightUp(void)        { KeyUp(&in_right); }
+static void IN_LeanLeftDown(void)   { KeyDown(&in_leanleft); }
+static void IN_LeanLeftUp(void)     { KeyUp(&in_leanleft); }
+static void IN_LeanRightDown(void)  { KeyDown(&in_leanright); }
+static void IN_LeanRightUp(void)    { KeyUp(&in_leanright); }
 
 /* ==========================================================================
    Build Usercmd
@@ -173,6 +179,10 @@ void CL_CreateCmd(usercmd_t *cmd, int msec)
         cmd->buttons |= BUTTON_USE;
     if (in_movedown.active)
         cmd->buttons |= BUTTON_CROUCH;
+    if (in_leanleft.active)
+        cmd->buttons |= BUTTON_LEAN_LEFT;
+    if (in_leanright.active)
+        cmd->buttons |= BUTTON_LEAN_RIGHT;
     if (in_attack.active || in_attack2.active ||
         in_forward.active || in_back.active ||
         in_moveleft.active || in_moveright.active ||
@@ -214,6 +224,10 @@ void CL_InitInput(void)
     Cmd_AddCommand("-left", IN_LeftUp);
     Cmd_AddCommand("+right", IN_RightDown);
     Cmd_AddCommand("-right", IN_RightUp);
+    Cmd_AddCommand("+leanleft", IN_LeanLeftDown);
+    Cmd_AddCommand("-leanleft", IN_LeanLeftUp);
+    Cmd_AddCommand("+leanright", IN_LeanRightDown);
+    Cmd_AddCommand("-leanright", IN_LeanRightUp);
 
     /* Additional aliases */
     Cmd_AddCommand("+scores", NULL);  /* TODO: scoreboard toggle */

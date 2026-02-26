@@ -306,6 +306,8 @@ typedef struct usercmd_s {
 #define BUTTON_ATTACK       1
 #define BUTTON_USE          2
 #define BUTTON_CROUCH       4
+#define BUTTON_LEAN_LEFT    8
+#define BUTTON_LEAN_RIGHT   16
 #define BUTTON_ANY          128
 
 typedef struct {

@@ -39,6 +39,8 @@ extern qboolean SV_GetPlayerAmmo(int *ammo, int *ammo_max);
 extern void SV_GetPlayerBlend(float *blend);
 extern qboolean SV_GetPlayerArmor(int *armor, int *armor_max);
 extern void SV_GetPlayerScore(int *kills, int *deaths, int *score);
+extern void SV_GetLevelStats(int *killed_monsters, int *total_monsters,
+                             int *found_secrets, int *total_secrets);
 extern int  SV_GetEntityCount(void);
 
 /* Forward declaration — freecam toggle (defined below in client section) */
@@ -747,6 +749,18 @@ static void SCR_DrawHUD(float frametime)
             slen = (int)strlen(scrbuf);
             sx = g_display.width - 8 - slen * 8;
             R_DrawString(sx, 32, scrbuf);
+        }
+
+        /* Level stats — monsters and secrets */
+        {
+            int km, tm, fs, ts;
+            char statbuf[48];
+            int statlen, statx;
+            SV_GetLevelStats(&km, &tm, &fs, &ts);
+            snprintf(statbuf, sizeof(statbuf), "M:%d/%d S:%d/%d", km, tm, fs, ts);
+            statlen = (int)strlen(statbuf);
+            statx = g_display.width - 8 - statlen * 8;
+            R_DrawString(statx, 44, statbuf);
         }
 
         R_SetDrawColor(0.0f, 1.0f, 0.0f, 1.0f);

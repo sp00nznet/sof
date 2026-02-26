@@ -334,6 +334,14 @@ struct gclient_s {
     int             magazine[WEAP_COUNT];    /* current rounds in magazine */
     float           reload_finish_time;     /* level.time when reload completes */
     int             reloading_weapon;       /* weapon being reloaded (0=none) */
+
+    /* Zoom/scope */
+    qboolean        zoomed;                 /* currently zoomed in */
+    float           zoom_fov;               /* target FOV when zoomed */
+
+    /* Lean */
+    int             lean_state;             /* -1=left, 0=none, 1=right */
+    float           lean_offset;            /* current lateral offset */
 };
 
 /* ==========================================================================
@@ -501,6 +509,13 @@ typedef struct {
     float       time;           /* current game time in seconds */
     int         framenum;
     float       frametime;      /* fixed 0.1s for 10Hz */
+
+    /* Level statistics */
+    int         total_monsters;     /* monsters spawned on level start */
+    int         killed_monsters;    /* monsters killed this level */
+    int         total_secrets;      /* secret triggers on this level */
+    int         found_secrets;      /* secrets found this level */
+    float       level_start_time;   /* time when level started */
 } level_t;
 
 extern level_t  level;

@@ -886,6 +886,21 @@ int SV_GetEntityCount(void)
 }
 
 /*
+ * SV_GetLevelStats — Get level statistics for HUD
+ */
+void SV_GetLevelStats(int *killed_monsters, int *total_monsters,
+                      int *found_secrets, int *total_secrets)
+{
+    /* Access level_t through game module — level is extern in g_local.h */
+    extern level_t level;
+
+    *killed_monsters = level.killed_monsters;
+    *total_monsters = level.total_monsters;
+    *found_secrets = level.found_secrets;
+    *total_secrets = level.total_secrets;
+}
+
+/*
  * SV_RunGameFrame — Called from SV_Frame at 10Hz
  * Drives the game module's RunFrame which iterates all entities.
  */

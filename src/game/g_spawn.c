@@ -202,6 +202,7 @@ static void SP_trigger_counter(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_target_earthquake(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_misc_explobox_big(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_target_splash(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_trigger_secret(edict_t *ent, epair_t *pairs, int num_pairs);
 
 /*
  * Spawn function dispatch table
@@ -273,6 +274,9 @@ static spawn_func_t spawn_funcs[] = {
 
     /* Splash effects */
     { "target_splash",              SP_target_splash },
+
+    /* Secret */
+    { "trigger_secret",             SP_trigger_secret },
 
     /* Monsters (g_ai.c) */
     { "monster_soldier",            (void (*)(edict_t *, epair_t *, int))SP_monster_soldier },
@@ -853,20 +857,51 @@ static void plat_go_up(edict_t *self)
     Move_Calc(self, self->moveinfo.start_origin, plat_hit_top);
 }
 
+/* Platform blocked — crush damage when player caught */
+static void plat_blocked(edict_t *self, edict_t *other)
+{
+    if (!other) return;
+
+    /* Deal crush damage */
+    if (other->takedamage && other->health > 0) {
+        other->health -= 10;
+        if (other->client)
+            other->client->pers_health = other->health;
+        if (other->health <= 0 && other->die)
+            other->die(other, self, self, 10, other->s.origin);
+    }
+}
+
+/* Platform wait at bottom, then return to top */
+static void plat_wait_return(edict_t *self)
+{
+    plat_go_up(self);
+}
+
 static void plat_touch(edict_t *self, edict_t *other, void *plane, csurface_t *surf)
 {
     (void)plane; (void)surf;
     if (!other || !other->client) return;
-    if (self->moveinfo.state == MSTATE_TOP)
+
+    if (self->moveinfo.state == MSTATE_TOP) {
+        /* Player touches top of plat — descend */
         plat_go_down(self);
+    } else if (self->moveinfo.state == MSTATE_BOTTOM) {
+        /* At bottom — schedule return with wait time */
+        if (self->wait > 0) {
+            self->nextthink = level.time + self->wait;
+            self->think = plat_wait_return;
+        } else {
+            plat_go_up(self);
+        }
+    }
 }
 
 static void SP_func_plat(edict_t *ent, epair_t *pairs, int num_pairs)
 {
-    float height;
-    const char *height_str;
+    float height, lip;
+    const char *height_str, *lip_str, *wait_str;
 
-    (void)pairs; (void)num_pairs;
     door_precache_sounds();
 
     ent->movetype = MOVETYPE_PUSH;
@@ -875,9 +910,17 @@ static void SP_func_plat(edict_t *ent, epair_t *pairs, int num_pairs)
     if (!ent->speed)
         ent->speed = 200;
 
-    /* Platforms descend by their height (or specified height) */
+    /* Lip: how much of the platform sticks up at the bottom position */
+    lip_str = ED_FindValue(pairs, num_pairs, "lip");
+    lip = lip_str ? (float)atof(lip_str) : 8;
+
+    /* Wait: time at bottom before auto-return (0 = instant) */
+    wait_str = ED_FindValue(pairs, num_pairs, "wait");
+    ent->wait = wait_str ? (float)atof(wait_str) : 3.0f;
+
+    /* Platforms descend by their height minus lip */
     height_str = ED_FindValue(pairs, num_pairs, "height");
-    height = height_str ? (float)atof(height_str) : (ent->size[2] - 8);
+    height = height_str ? (float)atof(height_str) : (ent->size[2] - lip);
     if (height < 0) height = 0;
 
     /* Start at top */
@@ -889,6 +932,7 @@ static void SP_func_plat(edict_t *ent, epair_t *pairs, int num_pairs)
     ent->moveinfo.state = MSTATE_TOP;
 
     ent->touch = plat_touch;
+    ent->blocked = plat_blocked;
     gi.linkentity(ent);
 }
 
@@ -1617,6 +1661,44 @@ static void SP_target_splash(edict_t *ent, epair_t *pairs, int num_pairs)
 
     if (sound_str)
         ent->noise_index = gi.soundindex(sound_str);
+}
+
+/* ==========================================================================
+   trigger_secret — Counts as a found secret when touched
+   ========================================================================== */
+
+extern level_t level;
+
+static void trigger_secret_touch(edict_t *self, edict_t *other,
+                                  void *plane, csurface_t *surf)
+{
+    (void)plane; (void)surf;
+    if (!other || !other->client) return;
+    if (self->count) return;  /* already triggered */
+
+    self->count = 1;
+    level.found_secrets++;
+
+    gi.centerprintf(other, "You found a secret area!");
+    gi.cprintf(other, PRINT_ALL, "Secret %d / %d\n",
+               level.found_secrets, level.total_secrets);
+
+    /* Fire targets if any */
+    if (self->target)
+        G_UseTargets(other, self->target);
+    if (self->message)
+        gi.centerprintf(other, "%s", self->message);
+}
+
+static void SP_trigger_secret(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+
+    ent->solid = SOLID_TRIGGER;
+    ent->touch = trigger_secret_touch;
+    ent->count = 0;  /* not yet found */
+
+    gi.linkentity(ent);
 }
 
 /* ==========================================================================
