@@ -168,6 +168,10 @@ static void SP_target_speaker(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_misc_model(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_item_pickup(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_trigger_changelevel(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_rotating(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_button(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_target_changelevel(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_timer(edict_t *ent, epair_t *pairs, int num_pairs);
 
 /*
  * Spawn function dispatch table
@@ -200,9 +204,13 @@ static spawn_func_t spawn_funcs[] = {
     { "func_door",                  SP_func_door },
     { "func_door_rotating",         SP_func_door },
     { "func_plat",                  SP_func_plat },
-    { "func_rotating",              SP_func_plat },
-    { "func_button",                SP_func_door },
+    { "func_rotating",              SP_func_rotating },
+    { "func_button",                SP_func_button },
     { "func_wall",                  SP_misc_model },
+    { "func_timer",                 SP_func_timer },
+    { "func_train",                 SP_func_plat },
+    { "func_conveyor",              SP_misc_model },
+    { "func_group",                 SP_misc_model },
 
     /* Triggers */
     { "trigger_once",               SP_trigger_once },
@@ -210,9 +218,15 @@ static spawn_func_t spawn_funcs[] = {
     { "trigger_relay",              SP_trigger_once },
     { "trigger_always",             SP_trigger_once },
     { "trigger_changelevel",        SP_trigger_changelevel },
+    { "trigger_push",               SP_trigger_multiple },
+    { "trigger_hurt",               SP_trigger_multiple },
+    { "trigger_gravity",            SP_trigger_multiple },
 
     /* Targets */
     { "target_speaker",             SP_target_speaker },
+    { "target_changelevel",         SP_target_changelevel },
+    { "target_explosion",           SP_target_speaker },
+    { "target_temp_entity",         SP_target_speaker },
 
     /* Misc */
     { "misc_model",                 SP_misc_model },
@@ -805,6 +819,222 @@ static void SP_trigger_changelevel(edict_t *ent, epair_t *pairs, int num_pairs)
     gi.linkentity(ent);
 
     gi.dprintf("  trigger_changelevel -> %s\n", ent->target ? ent->target : "???");
+}
+
+/* ==========================================================================
+   func_rotating — Continuously rotating brush entity
+   ========================================================================== */
+
+static void SP_func_rotating(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+
+    ent->solid = SOLID_BSP;
+    ent->movetype = MOVETYPE_PUSH;
+
+    /* Default rotation around Z axis at speed or default 100 */
+    if (!ent->speed)
+        ent->speed = 100;
+
+    /* Default: rotate around Z (yaw) */
+    if (!ent->avelocity[0] && !ent->avelocity[1] && !ent->avelocity[2])
+        ent->avelocity[1] = ent->speed;
+
+    gi.linkentity(ent);
+}
+
+/* ==========================================================================
+   func_button — Pressable button (like a door that returns)
+   ========================================================================== */
+
+static void button_return(edict_t *self);
+
+static void button_done(edict_t *self)
+{
+    self->moveinfo.state = MSTATE_BOTTOM;
+    self->s.angles[0] = self->moveinfo.start_angles[0];
+    self->s.angles[1] = self->moveinfo.start_angles[1];
+    self->s.angles[2] = self->moveinfo.start_angles[2];
+}
+
+static void button_return(edict_t *self)
+{
+    self->moveinfo.state = MSTATE_DOWN;
+    Move_Calc(self, self->moveinfo.start_origin, button_done);
+}
+
+static void button_wait(edict_t *self)
+{
+    self->moveinfo.state = MSTATE_TOP;
+
+    if (self->target)
+        G_UseTargets(self->activator, self->target);
+
+    if (self->wait >= 0) {
+        self->nextthink = level.time + self->wait;
+        self->think = button_return;
+    }
+}
+
+static void button_fire(edict_t *self, edict_t *activator)
+{
+    if (self->moveinfo.state == MSTATE_UP || self->moveinfo.state == MSTATE_TOP)
+        return;
+
+    self->moveinfo.state = MSTATE_UP;
+    self->activator = activator;
+    Move_Calc(self, self->moveinfo.end_origin, button_wait);
+}
+
+static void button_use(edict_t *self, edict_t *other, edict_t *activator)
+{
+    (void)other;
+    button_fire(self, activator);
+}
+
+static void button_touch(edict_t *self, edict_t *other, void *plane, csurface_t *surf)
+{
+    (void)plane; (void)surf;
+    if (!other || !other->client)
+        return;
+    button_fire(self, other);
+}
+
+static void SP_func_button(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    float dist;
+    int angle_val;
+    const char *angle_str;
+
+    (void)pairs; (void)num_pairs;
+
+    ent->solid = SOLID_BSP;
+    ent->movetype = MOVETYPE_PUSH;
+
+    if (!ent->speed)
+        ent->speed = 40;
+    if (!ent->wait)
+        ent->wait = 1.0f;
+
+    /* Calculate movement direction from "angle" key */
+    angle_str = ED_FindValue(pairs, num_pairs, "angle");
+    angle_val = angle_str ? atoi(angle_str) : 0;
+
+    VectorCopy(ent->s.origin, ent->moveinfo.start_origin);
+    VectorCopy(ent->s.angles, ent->moveinfo.start_angles);
+
+    /* Calculate end position (default: move 4 units in angle direction) */
+    dist = 4.0f;
+    {
+        const char *lip_str = ED_FindValue(pairs, num_pairs, "lip");
+        if (lip_str) dist = (float)atof(lip_str);
+    }
+
+    if (angle_val == -1) {
+        /* up */
+        ent->moveinfo.end_origin[0] = ent->s.origin[0];
+        ent->moveinfo.end_origin[1] = ent->s.origin[1];
+        ent->moveinfo.end_origin[2] = ent->s.origin[2] + dist;
+    } else if (angle_val == -2) {
+        /* down */
+        ent->moveinfo.end_origin[0] = ent->s.origin[0];
+        ent->moveinfo.end_origin[1] = ent->s.origin[1];
+        ent->moveinfo.end_origin[2] = ent->s.origin[2] - dist;
+    } else {
+        float rad = angle_val * (3.14159265f / 180.0f);
+        ent->moveinfo.end_origin[0] = ent->s.origin[0] + (float)cos(rad) * dist;
+        ent->moveinfo.end_origin[1] = ent->s.origin[1] + (float)sin(rad) * dist;
+        ent->moveinfo.end_origin[2] = ent->s.origin[2];
+    }
+
+    VectorCopy(ent->s.angles, ent->moveinfo.end_angles);
+    ent->moveinfo.speed = ent->speed;
+    ent->moveinfo.state = MSTATE_BOTTOM;
+
+    if (ent->targetname) {
+        ent->use = button_use;
+    } else {
+        ent->touch = button_touch;
+    }
+
+    gi.linkentity(ent);
+}
+
+/* ==========================================================================
+   target_changelevel — Use-triggered level transition
+   ========================================================================== */
+
+static void target_changelevel_use(edict_t *self, edict_t *other, edict_t *activator)
+{
+    (void)other; (void)activator;
+
+    if (self->message) {
+        gi.bprintf(PRINT_ALL, "%s\n", self->message);
+    }
+
+    if (self->target) {
+        gi.dprintf("target_changelevel: loading %s\n", self->target);
+        gi.AddCommandString(va("map %s\n", self->target));
+    }
+}
+
+static void SP_target_changelevel(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *map = ED_FindValue(pairs, num_pairs, "map");
+
+    (void)pairs; (void)num_pairs;
+
+    if (map) {
+        ent->target = gi.TagMalloc((int)strlen(map) + 1, Z_TAG_GAME);
+        strcpy(ent->target, map);
+    }
+
+    ent->use = target_changelevel_use;
+}
+
+/* ==========================================================================
+   func_timer — Periodic trigger fire
+   ========================================================================== */
+
+static void func_timer_think(edict_t *self)
+{
+    if (self->target)
+        G_UseTargets(self->activator, self->target);
+    self->nextthink = level.time + self->wait + self->random * gi.flrand(-1.0f, 1.0f);
+}
+
+static void func_timer_use(edict_t *self, edict_t *other, edict_t *activator)
+{
+    (void)other;
+    self->activator = activator;
+
+    /* Toggle */
+    if (self->nextthink > 0) {
+        self->nextthink = 0;
+    } else {
+        self->nextthink = level.time + self->wait;
+        self->think = func_timer_think;
+    }
+}
+
+static void SP_func_timer(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+
+    if (!ent->wait)
+        ent->wait = 1.0f;
+
+    ent->use = func_timer_use;
+    ent->think = func_timer_think;
+
+    /* Start active by default (spawnflags & 1 = start off) */
+    {
+        const char *sf_str = ED_FindValue(pairs, num_pairs, "spawnflags");
+        int sf = sf_str ? atoi(sf_str) : 0;
+        if (!(sf & 1)) {
+            ent->nextthink = level.time + 1.0f + ent->wait + ent->random * gi.flrand(-1.0f, 1.0f);
+        }
+    }
 }
 
 static void target_speaker_use(edict_t *self, edict_t *other, edict_t *activator)
