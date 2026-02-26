@@ -47,7 +47,27 @@
 
 typedef struct edict_s      edict_t;
 typedef struct gclient_s    gclient_t;
-typedef struct moveinfo_s   moveinfo_t;
+/* ==========================================================================
+   Move Info — used by func_door, func_plat, func_rotating
+   ========================================================================== */
+
+typedef struct moveinfo_s {
+    vec3_t      start_origin;
+    vec3_t      end_origin;
+    vec3_t      start_angles;
+    vec3_t      end_angles;
+    float       speed;
+    float       wait;           /* time to wait before reversing */
+    float       remaining_distance;
+    vec3_t      dir;            /* normalized movement direction */
+    int         state;          /* MSTATE_* */
+    void        (*endfunc)(edict_t *self);
+} moveinfo_t;
+
+#define MSTATE_TOP      0
+#define MSTATE_BOTTOM   1
+#define MSTATE_UP       2
+#define MSTATE_DOWN     3
 
 /* ==========================================================================
    Multicast
@@ -387,6 +407,9 @@ struct edict_s {
     int             weapon_index;
     char            *weapon_model;
 
+    /* Door/plat movement state */
+    moveinfo_t      moveinfo;
+
     /* AI state */
     int             ai_flags;
     float           ideal_yaw;
@@ -423,6 +446,18 @@ typedef enum {
     WEAP_FPAK,           /* Field Pack */
     WEAP_COUNT
 } weapon_id_t;
+
+/* ==========================================================================
+   Level State
+   ========================================================================== */
+
+typedef struct {
+    float       time;           /* current game time in seconds */
+    int         framenum;
+    float       frametime;      /* fixed 0.1s for 10Hz */
+} level_t;
+
+extern level_t  level;
 
 /* ==========================================================================
    Game Module API

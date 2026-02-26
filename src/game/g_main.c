@@ -27,8 +27,8 @@ static edict_t  *g_edicts;
 static gclient_t *g_clients;    /* one per maxclients */
 static int      game_maxclients;
 static qboolean cheats_enabled;
-static int      game_framenum;
-static float    game_frametime;
+
+level_t level;
 
 /* ==========================================================================
    Game CVars (85 total registered in original InitGame)
@@ -188,8 +188,8 @@ static void InitGame(void)
     g_edicts[0].s.number = 0;
     g_edicts[0].classname = "worldspawn";
 
-    game_framenum = 0;
-    game_frametime = 0.1f;  /* 10 Hz server tick */
+    level.framenum = 0;
+    level.frametime = 0.1f;  /* 10 Hz server tick */
 
     gi.dprintf("  maxclients: %d\n", game_maxclients);
     gi.dprintf("  maxentities: %d\n", globals.max_edicts);
@@ -240,10 +240,9 @@ static void RunFrame(void)
 {
     int i;
     edict_t *ent;
-    float level_time;
 
-    game_framenum++;
-    level_time = game_framenum * game_frametime;
+    level.framenum++;
+    level.time = level.framenum * level.frametime;
 
     /* Run think functions for all active entities */
     for (i = 0; i < globals.max_edicts; i++) {
@@ -259,7 +258,7 @@ static void RunFrame(void)
             ent->prethink(ent);
 
         /* Run think function if time has come */
-        if (ent->nextthink > 0 && ent->nextthink <= level_time) {
+        if (ent->nextthink > 0 && ent->nextthink <= level.time) {
             ent->nextthink = 0;
             if (ent->think)
                 ent->think(ent);
@@ -387,6 +386,16 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
 
     ent->groundentity = pm.groundentity;
     client->viewheight = pm.viewheight;
+
+    /* Process touch callbacks from Pmove */
+    {
+        int i;
+        for (i = 0; i < pm.numtouch; i++) {
+            edict_t *other = pm.touchents[i];
+            if (other && other->touch)
+                other->touch(other, ent, NULL, NULL);
+        }
+    }
 
     gi.linkentity(ent);
 }

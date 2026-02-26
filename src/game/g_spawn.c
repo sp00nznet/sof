@@ -424,53 +424,318 @@ static void SP_light(edict_t *ent, epair_t *pairs, int num_pairs)
     ent->inuse = qfalse;
 }
 
+/* ==========================================================================
+   Door / Platform Movement Helpers
+   ========================================================================== */
+
+static void door_go_up(edict_t *self);
+static void door_go_down(edict_t *self);
+
+static void Move_Done(edict_t *ent)
+{
+    VectorClear(ent->velocity);
+    if (ent->moveinfo.endfunc)
+        ent->moveinfo.endfunc(ent);
+}
+
+static void Move_Begin(edict_t *ent)
+{
+    float dist;
+
+    /* Compute remaining distance */
+    vec3_t delta;
+    VectorSubtract(ent->moveinfo.end_origin, ent->s.origin, delta);
+    dist = VectorLength(delta);
+
+    if (dist < 0.1f) {
+        Move_Done(ent);
+        return;
+    }
+
+    /* Set velocity toward destination */
+    VectorScale(delta, ent->moveinfo.speed / dist, ent->velocity);
+
+    /* Schedule think to check arrival */
+    ent->nextthink = level.time + (dist / ent->moveinfo.speed);
+    ent->think = Move_Done;
+}
+
+static void Move_Calc(edict_t *ent, vec3_t dest, void (*endfunc)(edict_t *))
+{
+    VectorCopy(dest, ent->moveinfo.end_origin);
+    ent->moveinfo.endfunc = endfunc;
+    Move_Begin(ent);
+}
+
+/* Door reached open position — wait then close */
+static void door_hit_top(edict_t *self)
+{
+    self->moveinfo.state = MSTATE_TOP;
+    VectorClear(self->velocity);
+
+    if (self->moveinfo.wait >= 0) {
+        self->nextthink = level.time + self->moveinfo.wait;
+        self->think = door_go_down;
+    }
+}
+
+/* Door reached closed position */
+static void door_hit_bottom(edict_t *self)
+{
+    self->moveinfo.state = MSTATE_BOTTOM;
+    VectorClear(self->velocity);
+}
+
+static void door_go_up(edict_t *self)
+{
+    if (self->moveinfo.state == MSTATE_UP || self->moveinfo.state == MSTATE_TOP)
+        return;
+
+    self->moveinfo.state = MSTATE_UP;
+    Move_Calc(self, self->moveinfo.end_origin, door_hit_top);
+}
+
+static void door_go_down(edict_t *self)
+{
+    if (self->moveinfo.state == MSTATE_DOWN || self->moveinfo.state == MSTATE_BOTTOM)
+        return;
+
+    self->moveinfo.state = MSTATE_DOWN;
+    Move_Calc(self, self->moveinfo.start_origin, door_hit_bottom);
+}
+
+/* Use callback — toggles door open/close */
+static void door_use(edict_t *self, edict_t *other, edict_t *activator)
+{
+    (void)other; (void)activator;
+
+    if (self->moveinfo.state == MSTATE_BOTTOM || self->moveinfo.state == MSTATE_DOWN)
+        door_go_up(self);
+    else
+        door_go_down(self);
+}
+
+/* Touch callback for doors without targetname (auto-open) */
+static void door_touch(edict_t *self, edict_t *other, void *plane, csurface_t *surf)
+{
+    (void)plane; (void)surf;
+
+    if (!other || !other->client)
+        return;
+
+    if (self->moveinfo.state == MSTATE_BOTTOM)
+        door_go_up(self);
+}
+
 static void SP_func_door(edict_t *ent, epair_t *pairs, int num_pairs)
 {
-    (void)pairs; (void)num_pairs;
+    vec3_t move_dir;
+    float lip;
+    const char *lip_str;
 
-    ent->movetype = 6;  /* MOVETYPE_PUSH */
-    ent->solid = 3;     /* SOLID_BSP */
+    ent->movetype = MOVETYPE_PUSH;
+    ent->solid = SOLID_BSP;
 
     if (!ent->speed)
         ent->speed = 100;
 
-    gi.dprintf("  func_door '%s'\n", ent->targetname ? ent->targetname : "(unnamed)");
+    /* Default: door moves up by its height minus lip */
+    lip_str = ED_FindValue(pairs, num_pairs, "lip");
+    lip = lip_str ? (float)atof(lip_str) : 8.0f;
+
+    VectorSet(move_dir, 0, 0, 1);  /* default: up */
+
+    /* Check for angle-based direction */
+    if (ent->s.angles[1] != 0) {
+        float angle = ent->s.angles[1] * (3.14159265f / 180.0f);
+        move_dir[0] = (float)cos(angle);
+        move_dir[1] = (float)sin(angle);
+        move_dir[2] = 0;
+        VectorClear(ent->s.angles);
+    }
+
+    /* Calculate movement distance from entity size */
+    {
+        float dist = fabs(DotProduct(ent->size, move_dir)) - lip;
+        if (dist < 0) dist = 0;
+
+        VectorCopy(ent->s.origin, ent->moveinfo.start_origin);
+        VectorMA(ent->s.origin, dist, move_dir, ent->moveinfo.end_origin);
+    }
+
+    ent->moveinfo.speed = ent->speed;
+    ent->moveinfo.wait = ent->wait ? ent->wait : 3.0f;
+    ent->moveinfo.state = MSTATE_BOTTOM;
+
+    /* If no targetname, door opens on touch */
+    if (!ent->targetname) {
+        ent->touch = door_touch;
+    }
+    ent->use = door_use;
+
+    gi.linkentity(ent);
+    gi.dprintf("  func_door '%s'\n", ent->targetname ? ent->targetname : "(auto)");
+}
+
+/* Platform: starts at top, descends when touched, returns */
+static void plat_go_down(edict_t *self);
+static void plat_go_up(edict_t *self);
+
+static void plat_hit_top(edict_t *self)
+{
+    self->moveinfo.state = MSTATE_TOP;
+    VectorClear(self->velocity);
+}
+
+static void plat_hit_bottom(edict_t *self)
+{
+    self->moveinfo.state = MSTATE_BOTTOM;
+    VectorClear(self->velocity);
+    /* Wait then return up */
+    self->nextthink = level.time + 1.0f;
+    self->think = plat_go_up;
+}
+
+static void plat_go_down(edict_t *self)
+{
+    if (self->moveinfo.state == MSTATE_DOWN || self->moveinfo.state == MSTATE_BOTTOM)
+        return;
+    self->moveinfo.state = MSTATE_DOWN;
+    Move_Calc(self, self->moveinfo.end_origin, plat_hit_bottom);
+}
+
+static void plat_go_up(edict_t *self)
+{
+    if (self->moveinfo.state == MSTATE_UP || self->moveinfo.state == MSTATE_TOP)
+        return;
+    self->moveinfo.state = MSTATE_UP;
+    Move_Calc(self, self->moveinfo.start_origin, plat_hit_top);
+}
+
+static void plat_touch(edict_t *self, edict_t *other, void *plane, csurface_t *surf)
+{
+    (void)plane; (void)surf;
+    if (!other || !other->client) return;
+    if (self->moveinfo.state == MSTATE_TOP)
+        plat_go_down(self);
 }
 
 static void SP_func_plat(edict_t *ent, epair_t *pairs, int num_pairs)
 {
+    float height;
+    const char *height_str;
+
     (void)pairs; (void)num_pairs;
 
-    ent->movetype = 6;  /* MOVETYPE_PUSH */
-    ent->solid = 3;     /* SOLID_BSP */
+    ent->movetype = MOVETYPE_PUSH;
+    ent->solid = SOLID_BSP;
 
     if (!ent->speed)
         ent->speed = 200;
+
+    /* Platforms descend by their height (or specified height) */
+    height_str = ED_FindValue(pairs, num_pairs, "height");
+    height = height_str ? (float)atof(height_str) : (ent->size[2] - 8);
+    if (height < 0) height = 0;
+
+    /* Start at top */
+    VectorCopy(ent->s.origin, ent->moveinfo.start_origin);
+    VectorCopy(ent->s.origin, ent->moveinfo.end_origin);
+    ent->moveinfo.end_origin[2] -= height;
+
+    ent->moveinfo.speed = ent->speed;
+    ent->moveinfo.state = MSTATE_TOP;
+
+    ent->touch = plat_touch;
+    gi.linkentity(ent);
+}
+
+/* ==========================================================================
+   Trigger System
+   ========================================================================== */
+
+/* Find entities by targetname and call their use() */
+static void G_UseTargets(edict_t *activator, const char *target)
+{
+    int i;
+    if (!target || !target[0]) return;
+
+    for (i = 0; i < globals.max_edicts; i++) {
+        edict_t *t = &globals.edicts[i];
+        if (!t->inuse || !t->targetname)
+            continue;
+        if (Q_stricmp(t->targetname, target) == 0) {
+            if (t->use)
+                t->use(t, activator, activator);
+        }
+    }
+}
+
+static void trigger_touch(edict_t *self, edict_t *other, void *plane, csurface_t *surf)
+{
+    (void)plane; (void)surf;
+
+    if (!other || !other->client)
+        return;
+
+    /* Debounce for trigger_multiple */
+    if (self->dmg_debounce_time > level.time)
+        return;
+
+    self->dmg_debounce_time = level.time + self->wait;
+
+    /* Fire targets */
+    if (self->target)
+        G_UseTargets(other, self->target);
+
+    /* Print message if set */
+    if (self->message)
+        gi.centerprintf(other, "%s", self->message);
+
+    /* trigger_once removes itself after firing */
+    if (!self->wait) {
+        self->touch = NULL;
+        self->nextthink = level.time + level.frametime;
+        self->think = NULL;
+        self->inuse = qfalse;
+    }
 }
 
 static void SP_trigger_once(edict_t *ent, epair_t *pairs, int num_pairs)
 {
     (void)pairs; (void)num_pairs;
 
-    ent->solid = 2;  /* SOLID_TRIGGER */
-    /* TODO: Set touch function */
+    ent->solid = SOLID_TRIGGER;
+    ent->touch = trigger_touch;
+    ent->wait = 0;  /* fire once then remove */
+    gi.linkentity(ent);
 }
 
 static void SP_trigger_multiple(edict_t *ent, epair_t *pairs, int num_pairs)
 {
     (void)pairs; (void)num_pairs;
 
-    ent->solid = 2;  /* SOLID_TRIGGER */
+    ent->solid = SOLID_TRIGGER;
+    ent->touch = trigger_touch;
     if (!ent->wait)
         ent->wait = 0.2f;
+    gi.linkentity(ent);
+}
+
+static void target_speaker_use(edict_t *self, edict_t *other, edict_t *activator)
+{
+    (void)other; (void)activator;
+    if (self->noise_index)
+        gi.sound(self, 0, self->noise_index, 1.0f, 1.0f, 0);
 }
 
 static void SP_target_speaker(edict_t *ent, epair_t *pairs, int num_pairs)
 {
     const char *noise = ED_FindValue(pairs, num_pairs, "noise");
-    if (noise) {
-        ent->noise_index = 0;  /* TODO: gi.soundindex(noise) */
+    if (noise && noise[0]) {
+        ent->noise_index = gi.soundindex(noise);
     }
+    ent->use = target_speaker_use;
 }
 
 static void SP_misc_model(edict_t *ent, epair_t *pairs, int num_pairs)
