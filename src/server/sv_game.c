@@ -556,6 +556,43 @@ void SV_SetConfigstring(int index, const char *val)
 }
 
 /*
+ * SV_ClientThink — Forward usercmd to game's ClientThink for local player
+ * In the unified binary there's no networking, so we call directly.
+ */
+void SV_ClientThink(usercmd_t *cmd)
+{
+    edict_t *player;
+
+    if (!ge || !ge->ClientThink || !ge->edicts)
+        return;
+
+    /* Player entity is always edict[1] */
+    player = (edict_t *)((byte *)ge->edicts + ge->edict_size);
+    if (player->inuse)
+        ge->ClientThink(player, cmd);
+}
+
+/*
+ * SV_GetPlayerOrigin — Get player entity position for camera
+ */
+qboolean SV_GetPlayerState(vec3_t origin, vec3_t angles, float *viewheight)
+{
+    edict_t *player;
+
+    if (!ge || !ge->edicts)
+        return qfalse;
+
+    player = (edict_t *)((byte *)ge->edicts + ge->edict_size);
+    if (!player->inuse || !player->client)
+        return qfalse;
+
+    VectorCopy(player->s.origin, origin);
+    VectorCopy(player->client->viewangles, angles);
+    *viewheight = player->client->viewheight;
+    return qtrue;
+}
+
+/*
  * SV_RunGameFrame — Called from SV_Frame at 10Hz
  * Drives the game module's RunFrame which iterates all entities.
  */

@@ -226,6 +226,7 @@ struct gclient_s {
     float           blend[4];
     float           fov;
     int             rdflags;
+    float           viewheight;     /* eye offset from origin Z */
 
     /* Private to game */
     int             ping;

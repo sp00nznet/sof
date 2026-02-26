@@ -31,6 +31,15 @@ extern void CL_CreateCmd(usercmd_t *cmd, int msec);
 
 /* Forward declarations — server frame (server/sv_game.c) */
 extern void SV_RunGameFrame(void);
+extern void SV_ClientThink(usercmd_t *cmd);
+extern qboolean SV_GetPlayerState(vec3_t origin, vec3_t angles, float *viewheight);
+
+/* Forward declaration — freecam toggle (defined below in client section) */
+static void Cmd_Freecam_f(void);
+
+/* ANGLE2SHORT / SHORT2ANGLE for usercmd angle encoding */
+#define ANGLE2SHORT(x)  ((int)((x)*65536.0f/360.0f) & 65535)
+#define SHORT2ANGLE(x)  ((x)*(360.0f/65536.0f))
 
 /* ==========================================================================
    Global Cvars
@@ -159,6 +168,7 @@ void Qcommon_Init(int argc, char **argv)
     /* Register core commands */
     Cmd_AddCommand("quit", Sys_Quit);
     Cmd_AddCommand("error", NULL);  /* placeholder */
+    Cmd_AddCommand("freecam", Cmd_Freecam_f);
 
     /* Register core cvars */
     developer = Cvar_Get("developer", "0", 0);
@@ -317,12 +327,16 @@ typedef enum {
 static connstate_t  cl_state = CA_DISCONNECTED;
 static refdef_t     cl_refdef;          /* current frame's render view */
 static float        cl_time;            /* accumulated time */
+static vec3_t       cl_viewangles;      /* accumulated mouse look angles */
+static qboolean     cl_use_freecam;     /* toggle: freecam vs player movement */
 
 void CL_Init(void)
 {
     memset(&cl_refdef, 0, sizeof(cl_refdef));
     cl_state = CA_DISCONNECTED;
     cl_time = 0;
+    VectorClear(cl_viewangles);
+    cl_use_freecam = qfalse;
 }
 
 void CL_Drop(void)
@@ -337,6 +351,13 @@ void CL_Shutdown(void)
     R_Shutdown();
 }
 
+/* Toggle freecam console command */
+static void Cmd_Freecam_f(void)
+{
+    cl_use_freecam = !cl_use_freecam;
+    Com_Printf("Freecam: %s\n", cl_use_freecam ? "ON" : "OFF");
+}
+
 /*
  * CL_Frame — Client frame processing
  *
@@ -349,44 +370,94 @@ void CL_Frame(int msec)
     float frametime = msec / 1000.0f;
     cl_time += frametime;
 
-    /* If world is loaded and we're disconnected, go active
-     * (in the unified binary, loading a map means we're ready) */
+    /* If world is loaded and we're disconnected, go active */
     if (R_WorldLoaded() && cl_state < CA_ACTIVE)
         cl_state = CA_ACTIVE;
 
-    /* Process freecam input when active and console is closed */
-    if (cl_state == CA_ACTIVE && !Con_IsVisible()) {
-        extern qboolean key_down[];
-        float fwd = 0, side = 0, up = 0;
+    if (cl_state != CA_ACTIVE)
+        return;
+
+    /* Gather mouse input (always, for both modes) */
+    if (!Con_IsVisible()) {
         int mx, my;
-
-        if (key_down['w']) fwd += 1;
-        if (key_down['s']) fwd -= 1;
-        if (key_down['d']) side += 1;
-        if (key_down['a']) side -= 1;
-        if (key_down[' ']) up += 200.0f * frametime;
-        if (key_down[133]) up -= 200.0f * frametime;  /* K_CTRL */
-
         IN_GetMouseDelta(&mx, &my);
-        R_UpdateCamera(fwd, side, up, (float)mx, (float)my, frametime);
+        cl_viewangles[1] -= mx * 0.15f;    /* yaw */
+        cl_viewangles[0] += my * 0.15f;    /* pitch */
+        if (cl_viewangles[0] > 89) cl_viewangles[0] = 89;
+        if (cl_viewangles[0] < -89) cl_viewangles[0] = -89;
     }
 
-    /* Build refdef from camera state */
-    if (cl_state == CA_ACTIVE) {
-        vec3_t org, ang;
-        R_GetCameraOrigin(org);
-        R_GetCameraAngles(ang);
+    if (cl_use_freecam) {
+        /* Freecam mode — direct camera control */
+        if (!Con_IsVisible()) {
+            extern qboolean key_down[];
+            float fwd = 0, side = 0, up = 0;
+            if (key_down['w']) fwd += 1;
+            if (key_down['s']) fwd -= 1;
+            if (key_down['d']) side += 1;
+            if (key_down['a']) side -= 1;
+            if (key_down[' ']) up += 200.0f * frametime;
+            if (key_down[133]) up -= 200.0f * frametime;
 
-        memset(&cl_refdef, 0, sizeof(cl_refdef));
-        cl_refdef.x = 0;
-        cl_refdef.y = 0;
-        cl_refdef.width = g_display.width;
-        cl_refdef.height = g_display.height;
-        cl_refdef.fov_x = 90.0f;
-        cl_refdef.fov_y = 73.74f;
-        cl_refdef.time = cl_time;
-        VectorCopy(org, cl_refdef.vieworg);
-        VectorCopy(ang, cl_refdef.viewangles);
+            R_SetCameraAngles(cl_viewangles);
+            R_UpdateCamera(fwd, side, up, 0, 0, frametime);
+        }
+
+        /* Build refdef from freecam */
+        {
+            vec3_t org, ang;
+            R_GetCameraOrigin(org);
+            R_GetCameraAngles(ang);
+
+            memset(&cl_refdef, 0, sizeof(cl_refdef));
+            cl_refdef.x = 0;
+            cl_refdef.y = 0;
+            cl_refdef.width = g_display.width;
+            cl_refdef.height = g_display.height;
+            cl_refdef.fov_x = 90.0f;
+            cl_refdef.fov_y = 73.74f;
+            cl_refdef.time = cl_time;
+            VectorCopy(org, cl_refdef.vieworg);
+            VectorCopy(ang, cl_refdef.viewangles);
+        }
+    } else {
+        /* Player movement mode — build usercmd, send to game */
+        usercmd_t cmd;
+        CL_CreateCmd(&cmd, msec);
+
+        /* Pack view angles into usercmd */
+        cmd.angles[0] = (short)ANGLE2SHORT(cl_viewangles[0]);
+        cmd.angles[1] = (short)ANGLE2SHORT(cl_viewangles[1]);
+        cmd.angles[2] = 0;
+
+        /* Send to game module */
+        if (!Con_IsVisible())
+            SV_ClientThink(&cmd);
+
+        /* Build refdef from player entity state */
+        {
+            vec3_t org, ang;
+            float vh = 0;
+
+            if (SV_GetPlayerState(org, ang, &vh)) {
+                org[2] += vh;  /* add viewheight for eye position */
+
+                memset(&cl_refdef, 0, sizeof(cl_refdef));
+                cl_refdef.x = 0;
+                cl_refdef.y = 0;
+                cl_refdef.width = g_display.width;
+                cl_refdef.height = g_display.height;
+                cl_refdef.fov_x = 90.0f;
+                cl_refdef.fov_y = 73.74f;
+                cl_refdef.time = cl_time;
+                VectorCopy(org, cl_refdef.vieworg);
+                VectorCopy(ang, cl_refdef.viewangles);
+
+                /* Sync camera for PVS culling */
+                R_SetCameraOrigin(org);
+                R_SetCameraAngles(ang);
+            }
+        }
     }
 }
 

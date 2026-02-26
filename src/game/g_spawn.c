@@ -379,10 +379,33 @@ static void SP_worldspawn(edict_t *ent, epair_t *pairs, int num_pairs)
 
 static void SP_info_player_start(edict_t *ent, epair_t *pairs, int num_pairs)
 {
+    edict_t *player;
+
     (void)pairs; (void)num_pairs;
 
     gi.dprintf("  Player start at (%.0f %.0f %.0f)\n",
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
+
+    /* Place player entity (edict[1]) at this spawn point */
+    player = &globals.edicts[1];
+    if (player->inuse && player->client) {
+        VectorCopy(ent->s.origin, player->s.origin);
+        VectorCopy(ent->s.angles, player->s.angles);
+        player->client->ps.origin[0] = ent->s.origin[0];
+        player->client->ps.origin[1] = ent->s.origin[1];
+        player->client->ps.origin[2] = ent->s.origin[2];
+        player->client->ps.pm_type = PM_NORMAL;
+        player->health = player->client->pers_health;
+        player->solid = SOLID_BBOX;
+        player->clipmask = MASK_PLAYERSOLID;
+        player->movetype = MOVETYPE_WALK;
+        VectorSet(player->mins, -16, -16, -24);
+        VectorSet(player->maxs, 16, 16, 32);
+        gi.linkentity(player);
+    }
+
+    /* info_player_start is a marker, not a runtime entity */
+    ent->inuse = qfalse;
 }
 
 static void SP_info_player_deathmatch(edict_t *ent, epair_t *pairs, int num_pairs)

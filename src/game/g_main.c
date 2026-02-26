@@ -24,6 +24,7 @@ game_import_t   gi;         /* engine functions available to game */
 game_export_t   globals;    /* game functions provided to engine */
 
 static edict_t  *g_edicts;
+static gclient_t *g_clients;    /* one per maxclients */
 static int      game_maxclients;
 static qboolean cheats_enabled;
 static int      game_framenum;
@@ -161,17 +162,24 @@ static void InitGame(void)
     g_edicts = (edict_t *)gi.TagMalloc(globals.max_edicts * sizeof(edict_t), Z_TAG_GAME);
     memset(g_edicts, 0, globals.max_edicts * sizeof(edict_t));
 
+    g_clients = (gclient_t *)gi.TagMalloc(game_maxclients * sizeof(gclient_t), Z_TAG_GAME);
+    memset(g_clients, 0, game_maxclients * sizeof(gclient_t));
+
     globals.edicts = g_edicts;
     globals.edict_size = sizeof(edict_t);
     globals.num_edicts = game_maxclients + 1;  /* world + clients */
 
-    /* Mark client edicts as in-use */
+    /* Mark client edicts as in-use and assign client structs */
     {
         int i;
         for (i = 0; i < game_maxclients; i++) {
             g_edicts[i + 1].inuse = qtrue;
             g_edicts[i + 1].entity_type = ET_PLAYER;
             g_edicts[i + 1].s.number = i + 1;
+            g_edicts[i + 1].client = &g_clients[i];
+            g_clients[i].ps.gravity = (short)sv_gravity->value;
+            g_clients[i].pers_health = 100;
+            g_clients[i].pers_max_health = 100;
         }
     }
 
@@ -334,16 +342,53 @@ static void ClientCommand(edict_t *ent)
     gi.cprintf(ent, PRINT_ALL, "Unknown command: %s\n", cmd);
 }
 
+/* Pmove trace wrapper — uses player entity as passent */
+static edict_t *pm_passent;
+
+static trace_t PM_trace(vec3_t start, vec3_t mins, vec3_t maxs, vec3_t end)
+{
+    return gi.trace(start, mins, maxs, end, pm_passent, MASK_PLAYERSOLID);
+}
+
+static int PM_pointcontents(vec3_t point)
+{
+    return gi.pointcontents(point);
+}
+
 static void ClientThink(edict_t *ent, usercmd_t *ucmd)
 {
-    (void)ucmd;
+    pmove_t pm;
+    gclient_t *client;
 
-    /* TODO: Player movement
-     * 1. Run Pmove with usercmd
-     * 2. Update view angles
-     * 3. Check weapon fire
-     * 4. Update animation state
-     */
+    if (!ent || !ent->client || !ucmd)
+        return;
+
+    client = ent->client;
+
+    /* Build pmove from entity and client state */
+    memset(&pm, 0, sizeof(pm));
+    pm.s = client->ps;
+    pm.cmd = *ucmd;
+    pm.trace = PM_trace;
+    pm.pointcontents = PM_pointcontents;
+
+    pm_passent = ent;
+
+    /* Run player physics */
+    gi.Pmove(&pm);
+
+    /* Copy results back to entity */
+    client->ps = pm.s;
+    VectorCopy(pm.s.origin, ent->s.origin);
+    VectorCopy(pm.s.velocity, ent->velocity);
+    VectorCopy(pm.viewangles, client->viewangles);
+    VectorCopy(pm.viewangles, ent->s.angles);
+    ent->s.angles[0] = 0;  /* don't pitch the player model */
+
+    ent->groundentity = pm.groundentity;
+    client->viewheight = pm.viewheight;
+
+    gi.linkentity(ent);
 }
 
 static void ClientDisconnect(edict_t *ent)
