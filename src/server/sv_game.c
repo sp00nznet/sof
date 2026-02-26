@@ -829,6 +829,25 @@ qboolean SV_GetPlayerAmmo(int *ammo, int *ammo_max)
 }
 
 /*
+ * SV_GetPlayerArmor — Get player armor for HUD display
+ */
+qboolean SV_GetPlayerArmor(int *armor, int *armor_max)
+{
+    edict_t *player;
+
+    if (!ge || !ge->edicts)
+        return qfalse;
+
+    player = (edict_t *)((byte *)ge->edicts + ge->edict_size);
+    if (!player->inuse || !player->client)
+        return qfalse;
+
+    *armor = player->client->armor;
+    *armor_max = player->client->armor_max;
+    return qtrue;
+}
+
+/*
  * SV_GetEntityCount — Get active entity count for debug HUD
  */
 int SV_GetEntityCount(void)

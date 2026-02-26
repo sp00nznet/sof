@@ -1118,20 +1118,41 @@ static void SP_trigger_changelevel(edict_t *ent, epair_t *pairs, int num_pairs)
 
 static void SP_func_rotating(edict_t *ent, epair_t *pairs, int num_pairs)
 {
+    const char *val;
+
     (void)pairs; (void)num_pairs;
 
     ent->solid = SOLID_BSP;
     ent->movetype = MOVETYPE_PUSH;
 
-    /* Default rotation around Z axis at speed or default 100 */
+    /* Default rotation speed */
     if (!ent->speed)
         ent->speed = 100;
 
-    /* Default: rotate around Z (yaw) */
-    if (!ent->avelocity[0] && !ent->avelocity[1] && !ent->avelocity[2])
-        ent->avelocity[1] = ent->speed;
+    /* Spawnflags: 1=X_AXIS, 2=Y_AXIS, default=Z_AXIS */
+    if (!ent->avelocity[0] && !ent->avelocity[1] && !ent->avelocity[2]) {
+        val = ED_FindValue(pairs, num_pairs, "spawnflags");
+        if (val) {
+            int sf = atoi(val);
+            if (sf & 1)
+                ent->avelocity[0] = ent->speed;    /* pitch */
+            else if (sf & 2)
+                ent->avelocity[2] = ent->speed;    /* roll */
+            else
+                ent->avelocity[1] = ent->speed;    /* yaw (default) */
+        } else {
+            ent->avelocity[1] = ent->speed;
+        }
+    }
+
+    /* Damage on contact (optional) */
+    if (!ent->dmg)
+        ent->dmg = 2;
 
     gi.linkentity(ent);
+
+    gi.dprintf("  func_rotating: speed=%.0f avel=(%.0f %.0f %.0f)\n",
+               ent->speed, ent->avelocity[0], ent->avelocity[1], ent->avelocity[2]);
 }
 
 /* ==========================================================================
@@ -1546,6 +1567,16 @@ static const int ammo_pickup_amount[WEAP_COUNT] = {
     0, 0, 12, 15, 8, 50, 30, 5, 20, 4, 50, 25, 30, 2, 1, 2, 0, 0
 };
 
+static int snd_item_pickup;
+static qboolean item_sounds_cached;
+
+static void item_precache_sounds(void)
+{
+    if (item_sounds_cached) return;
+    snd_item_pickup = gi.soundindex("items/pkup.wav");
+    item_sounds_cached = qtrue;
+}
+
 /* Item respawn think — re-activate after deathmatch respawn delay */
 static void item_respawn_think(edict_t *self)
 {
@@ -1575,6 +1606,20 @@ static void item_touch(edict_t *self, edict_t *other, void *plane, csurface_t *s
             other->health = other->max_health;
         other->client->pers_health = other->health;
     }
+    /* Armor pickup */
+    else if (strstr(self->classname, "armor")) {
+        int give = 50;
+        if (strstr(self->classname, "body")) give = 200;
+        else if (strstr(self->classname, "combat")) give = 100;
+        else if (strstr(self->classname, "jacket")) give = 25;
+
+        if (other->client->armor >= other->client->armor_max)
+            return;
+
+        other->client->armor += give;
+        if (other->client->armor > other->client->armor_max)
+            other->client->armor = other->client->armor_max;
+    }
     /* Weapon/ammo pickup */
     else {
         int weap = item_classname_to_weapon(self->classname);
@@ -1599,6 +1644,10 @@ static void item_touch(edict_t *self, edict_t *other, void *plane, csurface_t *s
     }
 
     gi.cprintf(other, PRINT_ALL, "Picked up %s\n", self->classname);
+
+    /* Play pickup sound */
+    if (snd_item_pickup)
+        gi.sound(other, CHAN_ITEM, snd_item_pickup, 1.0f, ATTN_NORM, 0);
 
     /* Deathmatch: hide and schedule respawn; SP: remove permanently */
     {

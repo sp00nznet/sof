@@ -316,8 +316,12 @@ struct gclient_s {
     float           weapon_change_time;     /* level.time when switch completes */
     float           next_footstep;          /* level.time for next footstep sound */
 
+    /* Armor */
+    int             armor;                  /* current armor points */
+    int             armor_max;              /* max armor (default 200) */
+
     /* Pad to known alignment */
-    byte            _pad[24];
+    byte            _pad[16];
 };
 
 /* ==========================================================================

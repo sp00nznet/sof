@@ -37,6 +37,7 @@ extern qboolean SV_GetPlayerHealth(int *health, int *max_health);
 extern const char *SV_GetPlayerWeapon(void);
 extern qboolean SV_GetPlayerAmmo(int *ammo, int *ammo_max);
 extern void SV_GetPlayerBlend(float *blend);
+extern qboolean SV_GetPlayerArmor(int *armor, int *armor_max);
 extern int  SV_GetEntityCount(void);
 
 /* Forward declaration — freecam toggle (defined below in client section) */
@@ -562,6 +563,25 @@ static void SCR_DrawHUD(float frametime)
 
         snprintf(buf, sizeof(buf), "%d", health);
         R_DrawString(16, g_display.height - 28, buf);
+    }
+
+    /* Armor display - bottom left, next to health */
+    {
+        int armor = 0, armor_max = 0;
+        if (SV_GetPlayerArmor(&armor, &armor_max) && armor_max > 0) {
+            R_SetDrawColor(0.8f, 0.8f, 0.8f, 1.0f);
+            R_DrawString(100, g_display.height - 40, "ARMOR");
+
+            if (armor > 100)
+                R_SetDrawColor(0.3f, 0.5f, 1.0f, 1.0f);
+            else if (armor > 0)
+                R_SetDrawColor(0.5f, 0.7f, 1.0f, 1.0f);
+            else
+                R_SetDrawColor(0.4f, 0.4f, 0.4f, 1.0f);
+
+            snprintf(buf, sizeof(buf), "%d", armor);
+            R_DrawString(100, g_display.height - 28, buf);
+        }
     }
 
     /* Weapon display - bottom right */

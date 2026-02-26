@@ -411,6 +411,13 @@ void monster_pain(edict_t *self, edict_t *other, float kick, int damage)
     }
 }
 
+/* Corpse removal think — called after corpse delay expires */
+static void monster_corpse_remove(edict_t *self)
+{
+    self->inuse = qfalse;
+    gi.unlinkentity(self);
+}
+
 void monster_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
                  int damage, vec3_t point)
 {
@@ -425,16 +432,20 @@ void monster_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
     /* Death explosion of blood */
     R_ParticleEffect(self->s.origin, up, 1, 24);
 
-    /* Remove from world */
+    /* Stop combat, leave corpse visible for a few seconds */
     self->takedamage = DAMAGE_NO;
     self->solid = SOLID_NOT;
     self->movetype = MOVETYPE_NONE;
-    self->think = NULL;
-    self->nextthink = 0;
     self->velocity[0] = self->velocity[1] = self->velocity[2] = 0;
     self->deadflag = 1;
     self->count = AI_STATE_DEAD;
-    gi.unlinkentity(self);
+    self->svflags |= SVF_DEADMONSTER;
+
+    /* Schedule corpse removal after 10 seconds */
+    self->think = monster_corpse_remove;
+    self->nextthink = level.time + 10.0f;
+
+    gi.linkentity(self);
 
     gi.dprintf("Monster killed: %s\n", self->classname ? self->classname : "unknown");
 }

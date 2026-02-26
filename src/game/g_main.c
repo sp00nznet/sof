@@ -329,6 +329,8 @@ static void ClientBegin(edict_t *ent)
     if (ent->client) {
         ent->client->pers_health = 100;
         ent->client->pers_max_health = 100;
+        ent->client->armor = 0;
+        ent->client->armor_max = 200;
     }
 
     ent->health = 100;
@@ -632,6 +634,15 @@ static void G_FireHitscan(edict_t *ent)
             if (snd_hit_flesh)
                 gi.sound(tr.ent, CHAN_BODY, snd_hit_flesh, 1.0f, ATTN_NORM, 0);
 
+            /* Armor absorbs 66% of damage for players */
+            if (tr.ent->client && tr.ent->client->armor > 0) {
+                int armor_absorb = (int)(damage * 0.66f);
+                if (armor_absorb > tr.ent->client->armor)
+                    armor_absorb = tr.ent->client->armor;
+                tr.ent->client->armor -= armor_absorb;
+                damage -= armor_absorb;
+            }
+
             tr.ent->health -= damage;
             gi.dprintf("Hit %s for %d damage (health: %d)\n",
                        tr.ent->classname ? tr.ent->classname : "entity",
@@ -741,6 +752,13 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
                 fall_dmg = (int)((fall_speed - 300) * 0.05f);
 
             if (fall_dmg > 0) {
+                /* Armor absorbs some fall damage */
+                if (client->armor > 0) {
+                    int absorb = (int)(fall_dmg * 0.33f);
+                    if (absorb > client->armor) absorb = client->armor;
+                    client->armor -= absorb;
+                    fall_dmg -= absorb;
+                }
                 ent->health -= fall_dmg;
                 client->pers_health = ent->health;
 
