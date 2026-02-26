@@ -735,6 +735,7 @@ static float weapon_spread[WEAP_COUNT] = {
 };
 
 static float player_next_fire;  /* level.time when player can fire again */
+static qboolean player_alt_fire;  /* true if alt-fire mode active */
 
 /*
  * G_UseUtilityWeapon — Handle non-hitscan weapons (medkit, etc.)
@@ -1377,12 +1378,33 @@ static void G_FireHitscan(edict_t *ent)
         if (ent->client->zoomed && weap == WEAP_SNIPER)
             spread *= 0.1f;
 
-        if (weap == WEAP_SHOTGUN) {
-            num_pellets = 8;
-            damage = 10;  /* per pellet */
-            spread = 0.08f;
-        } else if (weap == WEAP_KNIFE) {
+        /* Weapon-specific parameters */
+        if (weap == WEAP_KNIFE) {
             trace_range = 96;  /* melee range */
+        } else if (weap == WEAP_SHOTGUN) {
+            if (player_alt_fire) {
+                /* Alt: single accurate slug */
+                num_pellets = 1;
+                damage = 70;
+                spread = 0.005f;
+            } else {
+                /* Primary: 8 pellet spread */
+                num_pellets = 8;
+                damage = 10;
+                spread = 0.08f;
+            }
+        } else if (player_alt_fire) {
+            /* Alt-fire modes for other weapons */
+            if (weap == WEAP_PISTOL1) {
+                /* Desert Eagle alt: rapid double-tap, less accurate */
+                spread += 0.03f;
+                player_next_fire = level.time + 0.1f;
+            } else if (weap == WEAP_ASSAULT) {
+                /* M4 alt: 3-round burst */
+                num_pellets = 3;
+                damage = 18;
+                spread = 0.02f;
+            }
         }
 
         for (pellet = 0; pellet < num_pellets; pellet++) {
@@ -1709,6 +1731,30 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
         }
     }
 
+    /* Ladder climbing — check if player is touching CONTENTS_LADDER */
+    {
+        int ladder_contents = gi.pointcontents(ent->s.origin);
+        if (ladder_contents & CONTENTS_LADDER) {
+            /* On ladder: override vertical velocity based on forward movement */
+            float climb_speed = 200.0f;
+
+            if (ucmd->forwardmove > 0) {
+                /* Looking up + forward = climb up */
+                ent->velocity[2] = climb_speed;
+            } else if (ucmd->forwardmove < 0) {
+                /* Back = climb down */
+                ent->velocity[2] = -climb_speed;
+            } else {
+                /* No input = hang on ladder */
+                ent->velocity[2] = 0;
+            }
+
+            /* Reduce horizontal speed on ladder */
+            ent->velocity[0] *= 0.5f;
+            ent->velocity[1] *= 0.5f;
+        }
+    }
+
     /* Environmental damage: lava, slime, drowning */
     {
         int contents = gi.pointcontents(ent->s.origin);
@@ -1807,9 +1853,14 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
         }
         /* Can't fire while reloading */
     } else {
-        /* Fire weapon on attack button */
-        if (ucmd->buttons & BUTTON_ATTACK)
+        /* Fire weapon on attack button (primary or alt-fire) */
+        if (ucmd->buttons & BUTTON_ATTACK) {
+            player_alt_fire = qfalse;
             G_FireHitscan(ent);
+        } else if (ucmd->buttons & BUTTON_ATTACK2) {
+            player_alt_fire = qtrue;
+            G_FireHitscan(ent);
+        }
     }
 
     /* Use interaction — short-range trace to find usable entities */

@@ -183,6 +183,8 @@ void CL_CreateCmd(usercmd_t *cmd, int msec)
         cmd->buttons |= BUTTON_LEAN_LEFT;
     if (in_leanright.active)
         cmd->buttons |= BUTTON_LEAN_RIGHT;
+    if (in_attack2.active)
+        cmd->buttons |= BUTTON_ATTACK2;
     if (in_attack.active || in_attack2.active ||
         in_forward.active || in_back.active ||
         in_moveleft.active || in_moveright.active ||

@@ -203,6 +203,9 @@ static void SP_target_earthquake(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_misc_explobox_big(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_target_splash(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_trigger_secret(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_ladder(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_glass(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_info_npc(edict_t *ent, epair_t *pairs, int num_pairs);
 
 /*
  * Spawn function dispatch table
@@ -240,6 +243,8 @@ static spawn_func_t spawn_funcs[] = {
     { "func_wall",                  SP_func_wall },
     { "func_timer",                 SP_func_timer },
     { "func_train",                 SP_func_train },
+    { "func_ladder",                SP_func_ladder },
+    { "func_glass",                 SP_func_glass },
     { "func_conveyor",              SP_misc_model },
     { "func_group",                 SP_misc_model },
     { "path_corner",                SP_path_corner },
@@ -292,6 +297,8 @@ static spawn_func_t spawn_funcs[] = {
 
     /* Misc */
     { "misc_model",                 SP_misc_model },
+    { "info_npc",                   SP_info_npc },
+    { "info_npc_talk",              SP_info_npc },
 
     /* Weapons (SoF) */
     { "weapon_knife",               SP_item_pickup },
@@ -1697,6 +1704,167 @@ static void SP_trigger_secret(edict_t *ent, epair_t *pairs, int num_pairs)
     ent->solid = SOLID_TRIGGER;
     ent->touch = trigger_secret_touch;
     ent->count = 0;  /* not yet found */
+
+    gi.linkentity(ent);
+}
+
+/* ==========================================================================
+   func_ladder — Ladder brush for climbing
+   BSP brush that sets CONTENTS_LADDER so player can climb
+   ========================================================================== */
+
+static void SP_func_ladder(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+
+    ent->movetype = MOVETYPE_PUSH;
+    ent->solid = SOLID_BSP;
+    ent->svflags |= SVF_NOCLIENT;  /* invisible — just collision */
+
+    gi.linkentity(ent);
+}
+
+/* ==========================================================================
+   func_glass — Breakable glass brush with shatter effects
+   Health: default 10 (very fragile)
+   On break: glass shard particles, break sound, fire target chain
+   ========================================================================== */
+
+static int snd_glass_break;
+static qboolean glass_sounds_cached;
+
+static void glass_precache_sounds(void)
+{
+    if (glass_sounds_cached) return;
+    snd_glass_break = gi.soundindex("world/glass_break.wav");
+    glass_sounds_cached = qtrue;
+}
+
+static void glass_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
+                       int damage, vec3_t point)
+{
+    vec3_t center, up;
+
+    (void)inflictor; (void)damage;
+
+    /* Calculate center of glass */
+    center[0] = (self->absmin[0] + self->absmax[0]) * 0.5f;
+    center[1] = (self->absmin[1] + self->absmax[1]) * 0.5f;
+    center[2] = (self->absmin[2] + self->absmax[2]) * 0.5f;
+    VectorSet(up, 0, 0, 1);
+
+    /* Glass shard particle burst */
+    R_ParticleEffect(center, up, 5, 32);
+    R_AddDlight(center, 0.8f, 0.8f, 1.0f, 200.0f, 0.2f);
+
+    /* Break sound */
+    if (snd_glass_break)
+        gi.positioned_sound(center, NULL, CHAN_AUTO,
+                            snd_glass_break, 1.0f, ATTN_NORM, 0);
+
+    /* Fire target chain */
+    if (self->target)
+        G_UseTargets(attacker, self->target);
+
+    /* Remove glass */
+    self->solid = SOLID_NOT;
+    self->svflags |= SVF_NOCLIENT;
+    self->takedamage = DAMAGE_NO;
+    self->inuse = qfalse;
+    gi.unlinkentity(self);
+}
+
+static void SP_func_glass(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *health_str = ED_FindValue(pairs, num_pairs, "health");
+
+    glass_precache_sounds();
+
+    ent->movetype = MOVETYPE_PUSH;
+    ent->solid = SOLID_BSP;
+    ent->takedamage = DAMAGE_YES;
+    ent->health = health_str ? atoi(health_str) : 10;
+    ent->max_health = ent->health;
+    ent->die = glass_die;
+
+    gi.linkentity(ent);
+}
+
+/* ==========================================================================
+   info_npc — NPC that displays dialogue when player uses them
+   message = dialogue text (semicolons separate pages)
+   count = tracks current dialogue page
+   ========================================================================== */
+
+static void npc_use(edict_t *self, edict_t *other, edict_t *activator)
+{
+    const char *msg;
+    char page[256];
+    int page_num, cur_page, i, start, len;
+
+    (void)other;
+
+    if (!self->message || !activator || !activator->client)
+        return;
+
+    msg = self->message;
+    cur_page = self->count;  /* current page index */
+
+    /* Find the current page (pages separated by semicolons) */
+    page_num = 0;
+    start = 0;
+    for (i = 0; msg[i]; i++) {
+        if (msg[i] == ';') {
+            if (page_num == cur_page) {
+                len = i - start;
+                if (len > 255) len = 255;
+                memcpy(page, msg + start, len);
+                page[len] = '\0';
+                break;
+            }
+            page_num++;
+            start = i + 1;
+        }
+    }
+
+    /* If we didn't find a semicolon, use the rest of the string */
+    if (!msg[i]) {
+        if (page_num == cur_page) {
+            len = i - start;
+            if (len > 255) len = 255;
+            memcpy(page, msg + start, len);
+            page[len] = '\0';
+        } else {
+            /* Past last page — fire target and reset */
+            if (self->target)
+                G_UseTargets(activator, self->target);
+            self->count = 0;
+            return;
+        }
+    }
+
+    /* Display current page */
+    gi.centerprintf(activator, "%s", page);
+
+    /* Advance to next page */
+    self->count++;
+}
+
+static void SP_info_npc(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+
+    ent->solid = SOLID_BBOX;
+    ent->movetype = MOVETYPE_NONE;
+    ent->takedamage = DAMAGE_NO;
+    ent->use = npc_use;
+    ent->count = 0;  /* start at first dialogue page */
+
+    VectorSet(ent->mins, -16, -16, -24);
+    VectorSet(ent->maxs, 16, 16, 32);
+
+    if (ent->model)
+        ent->s.modelindex = gi.modelindex(ent->model);
 
     gi.linkentity(ent);
 }
