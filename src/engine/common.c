@@ -625,6 +625,37 @@ static void SCR_DrawHUD(float frametime)
         R_SetDrawColor(0.0f, 1.0f, 0.0f, 1.0f);
     }
 
+    /* Compass - top center */
+    {
+        vec3_t cpos, cang;
+        float cvh = 0;
+        if (SV_GetPlayerState(cpos, cang, &cvh)) {
+            float yaw = cang[1];
+            const char *dir;
+
+            /* Normalize yaw to 0-360 */
+            while (yaw < 0) yaw += 360;
+            while (yaw >= 360) yaw -= 360;
+
+            if (yaw >= 337.5f || yaw < 22.5f)      dir = "E";
+            else if (yaw < 67.5f)                    dir = "NE";
+            else if (yaw < 112.5f)                   dir = "N";
+            else if (yaw < 157.5f)                   dir = "NW";
+            else if (yaw < 202.5f)                   dir = "W";
+            else if (yaw < 247.5f)                   dir = "SW";
+            else if (yaw < 292.5f)                   dir = "S";
+            else                                     dir = "SE";
+
+            {
+                int clen = (int)strlen(dir);
+                int cx = (g_display.width - clen * 8) / 2;
+                R_SetDrawColor(0.9f, 0.9f, 0.9f, 0.7f);
+                R_DrawString(cx, 8, dir);
+                R_SetDrawColor(0.0f, 1.0f, 0.0f, 1.0f);
+            }
+        }
+    }
+
     /* Pickup message - center screen, fades out */
     if (hud_pickup_time > 0) {
         float alpha = hud_pickup_time > 1.0f ? 1.0f : hud_pickup_time;

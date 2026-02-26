@@ -192,6 +192,8 @@ static void SP_trigger_teleport(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_misc_teleport_dest(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_target_relay(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_wall(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_path_corner(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_train(edict_t *ent, epair_t *pairs, int num_pairs);
 
 /*
  * Spawn function dispatch table
@@ -228,9 +230,10 @@ static spawn_func_t spawn_funcs[] = {
     { "func_button",                SP_func_button },
     { "func_wall",                  SP_func_wall },
     { "func_timer",                 SP_func_timer },
-    { "func_train",                 SP_func_plat },
+    { "func_train",                 SP_func_train },
     { "func_conveyor",              SP_misc_model },
     { "func_group",                 SP_misc_model },
+    { "path_corner",                SP_path_corner },
 
     /* Triggers */
     { "trigger_once",               SP_trigger_once },
@@ -1548,6 +1551,126 @@ static void SP_func_wall(edict_t *ent, epair_t *pairs, int num_pairs)
         ent->svflags |= SVF_NOCLIENT;
     } else {
         ent->solid = SOLID_BSP;
+    }
+
+    gi.linkentity(ent);
+}
+
+/* ==========================================================================
+   path_corner — Waypoint for func_train and patrol paths
+   ========================================================================== */
+
+static void SP_path_corner(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+    /* path_corner is just a point entity with targetname and target */
+    /* No solid, no think — just data */
+}
+
+/* ==========================================================================
+   func_train — BSP brush that follows path_corner chain
+   ========================================================================== */
+
+static void train_next(edict_t *self);
+
+static void train_arrived(edict_t *self)
+{
+    /* Fire targets at this path_corner */
+    if (self->enemy && self->enemy->target)
+        G_UseTargets(self, self->enemy->target);
+
+    /* Wait, then move to next corner */
+    if (self->enemy && self->enemy->wait > 0) {
+        self->nextthink = level.time + self->enemy->wait;
+        self->think = train_next;
+    } else {
+        /* No wait, immediately proceed */
+        self->nextthink = level.time + level.frametime;
+        self->think = train_next;
+    }
+}
+
+static void train_move_think(edict_t *self)
+{
+    vec3_t delta;
+    float dist;
+
+    if (!self->enemy) return;
+
+    VectorSubtract(self->enemy->s.origin, self->s.origin, delta);
+    dist = VectorLength(delta);
+
+    if (dist < 8.0f) {
+        /* Arrived at destination */
+        VectorCopy(self->enemy->s.origin, self->s.origin);
+        VectorClear(self->velocity);
+        gi.linkentity(self);
+        train_arrived(self);
+        return;
+    }
+
+    /* Continue moving toward target */
+    {
+        float move_dist = self->speed * level.frametime;
+        if (move_dist > dist) move_dist = dist;
+        VectorScale(delta, move_dist / dist, self->velocity);
+        VectorMA(self->s.origin, level.frametime, self->velocity, self->s.origin);
+    }
+
+    gi.linkentity(self);
+    self->nextthink = level.time + level.frametime;
+    self->think = train_move_think;
+}
+
+static void train_next(edict_t *self)
+{
+    edict_t *next;
+
+    if (!self->enemy || !self->enemy->target) {
+        /* No next path_corner — stop */
+        VectorClear(self->velocity);
+        return;
+    }
+
+    next = G_FindByTargetname(self->enemy->target);
+    if (!next) {
+        gi.dprintf("func_train: can't find path_corner '%s'\n", self->enemy->target);
+        VectorClear(self->velocity);
+        return;
+    }
+
+    self->enemy = next;
+    train_move_think(self);
+}
+
+static void train_use(edict_t *self, edict_t *other, edict_t *activator)
+{
+    (void)other; (void)activator;
+    train_next(self);
+}
+
+static void SP_func_train(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+
+    ent->solid = SOLID_BSP;
+    ent->movetype = MOVETYPE_PUSH;
+
+    if (!ent->speed)
+        ent->speed = 100;
+
+    ent->use = train_use;
+
+    /* Find initial path_corner target */
+    if (ent->target) {
+        edict_t *first = G_FindByTargetname(ent->target);
+        if (first) {
+            ent->enemy = first;
+            VectorCopy(first->s.origin, ent->s.origin);
+            /* Auto-start: begin moving immediately */
+            ent->think = train_next;
+            ent->nextthink = level.time + level.frametime;
+        }
     }
 
     gi.linkentity(ent);

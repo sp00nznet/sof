@@ -184,6 +184,20 @@ static qboolean AI_FindTarget(edict_t *self)
    AI State Handlers
    ========================================================================== */
 
+/* Helper: find entity by targetname (same as g_spawn.c version) */
+static edict_t *AI_FindByTargetname(const char *targetname)
+{
+    extern game_export_t globals;
+    int i;
+    if (!targetname || !targetname[0]) return NULL;
+    for (i = 0; i < globals.max_edicts; i++) {
+        edict_t *e = &globals.edicts[i];
+        if (e->inuse && e->targetname && Q_stricmp(e->targetname, targetname) == 0)
+            return e;
+    }
+    return NULL;
+}
+
 static void ai_think_idle(edict_t *self)
 {
     /* Look for player */
@@ -195,6 +209,52 @@ static void ai_think_idle(edict_t *self)
         self->count = AI_STATE_ALERT;
         self->nextthink = level.time + 0.5f;   /* brief alert pause */
         return;
+    }
+
+    /* Patrol: if monster has a target, follow path_corner chain */
+    if (self->target && !self->enemy) {
+        edict_t *goal = self->chain;  /* current patrol waypoint */
+
+        if (!goal) {
+            /* Find initial path_corner */
+            goal = AI_FindByTargetname(self->target);
+            self->chain = goal;
+        }
+
+        if (goal) {
+            vec3_t diff;
+            VectorSubtract(goal->s.origin, self->s.origin, diff);
+            diff[2] = 0;
+
+            if (VectorLength(diff) < 32.0f) {
+                /* Reached waypoint, move to next */
+                if (goal->target) {
+                    edict_t *next = AI_FindByTargetname(goal->target);
+                    if (next) {
+                        self->chain = next;
+                        goal = next;
+                    } else {
+                        /* No next corner — loop back to first */
+                        self->chain = AI_FindByTargetname(self->target);
+                    }
+                } else {
+                    /* Last corner — loop back */
+                    self->chain = AI_FindByTargetname(self->target);
+                }
+            }
+
+            /* Walk toward current waypoint */
+            if (goal) {
+                float patrol_speed = self->speed * 0.4f;  /* slower patrol */
+                AI_MoveToward(self, goal->s.origin, patrol_speed);
+
+                /* Face movement direction */
+                {
+                    float yaw = (float)(atan2(diff[1], diff[0]) * 180.0 / 3.14159265);
+                    self->s.angles[1] = yaw;
+                }
+            }
+        }
     }
 
     self->nextthink = level.time + 0.5f;

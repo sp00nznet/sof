@@ -930,9 +930,33 @@ static void G_FireHitscan(edict_t *ent)
     if (weap > 0 && weap < WEAP_COUNT && snd_weapons[weap])
         gi.sound(ent, CHAN_WEAPON, snd_weapons[weap], 1.0f, ATTN_NORM, 0);
 
-    /* Trace 8192 units forward */
-    VectorMA(start, 8192, forward, end);
-    tr = gi.trace(start, NULL, NULL, end, ent, MASK_SHOT);
+    /* Weapon-specific trace parameters */
+    {
+        int num_pellets = 1;
+        float trace_range = 8192;
+        float spread = 0;
+        int pellet;
+
+        if (weap == WEAP_SHOTGUN) {
+            num_pellets = 8;
+            damage = 10;  /* per pellet */
+            spread = 0.08f;
+        } else if (weap == WEAP_KNIFE) {
+            trace_range = 96;  /* melee range */
+        }
+
+        for (pellet = 0; pellet < num_pellets; pellet++) {
+            vec3_t pellet_dir;
+
+            VectorCopy(forward, pellet_dir);
+            if (spread > 0) {
+                pellet_dir[0] += gi.flrand(-spread, spread);
+                pellet_dir[1] += gi.flrand(-spread, spread);
+                pellet_dir[2] += gi.flrand(-spread, spread);
+            }
+
+            VectorMA(start, trace_range, pellet_dir, end);
+            tr = gi.trace(start, NULL, NULL, end, ent, MASK_SHOT);
 
     if (tr.fraction < 1.0f) {
         /* Spawn impact particles at hit point */
@@ -1005,6 +1029,9 @@ static void G_FireHitscan(edict_t *ent)
             }
         }
     }
+
+        } /* end for pellet */
+    } /* end weapon-specific block */
 }
 
 /* Pmove trace wrapper — uses player entity as passent */
