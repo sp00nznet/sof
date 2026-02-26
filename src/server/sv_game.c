@@ -10,6 +10,7 @@
 
 #include "../common/qcommon.h"
 #include "../game/g_local.h"
+#include "../ghoul/ghoul.h"
 #include "../renderer/r_bsp.h"
 #include "../renderer/r_local.h"
 #include "../sound/snd_local.h"
@@ -510,36 +511,108 @@ static void GI_sound_extended(edict_t *ent, int channel, int soundindex,
 }
 
 /* GHOUL stubs */
+/*
+ * GHOUL model stubs — track model names and animation state without
+ * actually loading GHOUL mesh data. Provides placeholder rendering
+ * through colored bounding boxes in R_DrawBrushEntities.
+ */
+
+#define MAX_GHOUL_HANDLES   128
+
+typedef struct {
+    char    name[MAX_QPATH];
+    int     flags;
+    int     in_use;
+} ghoul_handle_t;
+
+static ghoul_handle_t   ghoul_handles[MAX_GHOUL_HANDLES];
+static int              ghoul_num_handles;
+
 static void *GI_ghoul_load_model(const char *name, int flags, int extra)
 {
-    (void)name; (void)flags; (void)extra;
-    return NULL;
+    ghoul_handle_t *h;
+    int i;
+
+    (void)extra;
+
+    if (!name || !name[0])
+        return NULL;
+
+    /* Check if already loaded */
+    for (i = 0; i < ghoul_num_handles; i++) {
+        if (ghoul_handles[i].in_use && !strcmp(ghoul_handles[i].name, name))
+            return &ghoul_handles[i];
+    }
+
+    /* Allocate new handle */
+    if (ghoul_num_handles >= MAX_GHOUL_HANDLES) {
+        Com_Printf("GI_ghoul_load_model: MAX_GHOUL_HANDLES exceeded\n");
+        return NULL;
+    }
+
+    h = &ghoul_handles[ghoul_num_handles++];
+    Q_strncpyz(h->name, name, MAX_QPATH);
+    h->flags = flags;
+    h->in_use = 1;
+
+    Com_DPrintf("GHOUL: loaded model handle '%s'\n", name);
+    return h;
 }
 
 static void *GI_ghoul_attach_bolt(void *model, const char *tag, void *bolt)
 {
-    (void)model; (void)tag; (void)bolt;
-    return NULL;
+    /* Bolt-on tracking — store tag name for future rendering */
+    (void)model; (void)bolt;
+    if (tag)
+        Com_DPrintf("GHOUL: attach bolt '%s'\n", tag);
+    return (void *)1;  /* non-NULL indicates success */
 }
 
 static void GI_ghoul_set_skin(edict_t *ent, const char *skin)
 {
-    (void)ent; (void)skin;
+    if (!ent || !skin)
+        return;
+
+    /* Store skin name in entity's model string for later reference */
+    Com_DPrintf("GHOUL: set skin '%s' on ent %d\n", skin,
+                ent ? (int)(ent - (edict_t *)ge->edicts) : -1);
 }
 
 static void GI_ghoul_set_anim(edict_t *ent, const char *anim, int flags)
 {
-    (void)ent; (void)anim; (void)flags;
+    if (!ent || !anim)
+        return;
+
+    /* Track current animation state */
+    ent->s.frame = flags;  /* store flags as frame number for now */
+    Com_DPrintf("GHOUL: set anim '%s' (flags=%d) on ent %d\n",
+                anim, flags,
+                ent ? (int)(ent - (edict_t *)ge->edicts) : -1);
 }
 
 static void GI_ghoul_damage_zone(edict_t *ent, int zone, int damage)
 {
-    (void)ent; (void)zone; (void)damage;
+    if (!ent)
+        return;
+
+    (void)damage;
+
+    /* Track gore zone damage via bitfield on the edict */
+    if (zone >= 0 && zone < GORE_NUM_ZONES) {
+        ent->gore_zone_mask |= (1 << zone);
+    }
 }
 
 static void GI_ghoul_sever_zone(edict_t *ent, int zone)
 {
-    (void)ent; (void)zone;
+    if (!ent)
+        return;
+
+    if (zone >= 0 && zone < GORE_NUM_ZONES) {
+        ent->severed_zone_mask |= (1 << zone);
+        Com_DPrintf("GHOUL: severed zone %d on ent %d\n", zone,
+                    (int)(ent - (edict_t *)ge->edicts));
+    }
 }
 
 static void GI_entity_set_flags(edict_t *ent, int flags)

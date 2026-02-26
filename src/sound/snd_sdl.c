@@ -17,6 +17,7 @@
  */
 
 #include "snd_local.h"
+#include <math.h>
 
 /* ==========================================================================
    Global State
@@ -270,9 +271,42 @@ static void S_AudioCallback(void *userdata, Uint8 *stream, int len)
 
         src = (int16_t *)ch->sfx->data;
 
-        /* Simple stereo pan based on volume (no full HRTF) */
-        vol_l = ch->master_vol * snd.master_volume;
-        vol_r = vol_l;
+        /* Spatial attenuation and stereo panning */
+        {
+            float base_vol = ch->master_vol * snd.master_volume;
+            float dist_atten = 1.0f;
+            float pan = 0.0f;  /* -1 = full left, +1 = full right */
+
+            if (ch->dist_mult > 0) {
+                vec3_t delta;
+                float dist;
+
+                delta[0] = ch->origin[0] - snd.listener_origin[0];
+                delta[1] = ch->origin[1] - snd.listener_origin[1];
+                delta[2] = ch->origin[2] - snd.listener_origin[2];
+                dist = (float)sqrt(delta[0]*delta[0] + delta[1]*delta[1] + delta[2]*delta[2]);
+
+                /* Distance attenuation */
+                dist_atten = 1.0f - dist * ch->dist_mult;
+                if (dist_atten < 0.0f) dist_atten = 0.0f;
+                if (dist_atten > 1.0f) dist_atten = 1.0f;
+
+                /* Stereo panning via dot product with listener right vector */
+                if (dist > 1.0f) {
+                    float inv_dist = 1.0f / dist;
+                    pan = (delta[0] * snd.listener_right[0] +
+                           delta[1] * snd.listener_right[1] +
+                           delta[2] * snd.listener_right[2]) * inv_dist;
+                    if (pan > 1.0f) pan = 1.0f;
+                    if (pan < -1.0f) pan = -1.0f;
+                }
+            }
+
+            vol_l = base_vol * dist_atten * (1.0f - pan * 0.35f);
+            vol_r = base_vol * dist_atten * (1.0f + pan * 0.35f);
+            if (vol_l < 0.001f && vol_r < 0.001f)
+                continue;   /* too quiet to hear */
+        }
 
         /* Mix samples */
         for (j = 0; j < samples_needed; j++) {

@@ -20,6 +20,12 @@
 #include "../client/console.h"
 
 #include <time.h>
+#define _USE_MATH_DEFINES
+#include <math.h>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 /* Forward declarations — input system (client/in_sdl.c) */
 extern void IN_Init(void);
@@ -366,6 +372,36 @@ void Qcommon_Frame(int msec)
             }
         }
 
+        /* Update sound listener position */
+        {
+            vec3_t snd_origin, snd_forward, snd_right, snd_up;
+            float angles[3];
+            float sp, sy, cp, cy, sr, cr;
+
+            R_GetCameraOrigin(snd_origin);
+            R_GetCameraAngles(angles);
+
+            /* AngleVectors: pitch=angles[0], yaw=angles[1], roll=angles[2] */
+            sp = (float)sin(angles[0] * M_PI / 180.0);
+            cp = (float)cos(angles[0] * M_PI / 180.0);
+            sy = (float)sin(angles[1] * M_PI / 180.0);
+            cy = (float)cos(angles[1] * M_PI / 180.0);
+            sr = (float)sin(angles[2] * M_PI / 180.0);
+            cr = (float)cos(angles[2] * M_PI / 180.0);
+
+            snd_forward[0] = cp * cy;
+            snd_forward[1] = cp * sy;
+            snd_forward[2] = -sp;
+            snd_right[0] = (-1 * sr * sp * cy + -1 * cr * -sy);
+            snd_right[1] = (-1 * sr * sp * sy + -1 * cr * cy);
+            snd_right[2] = -1 * sr * cp;
+            snd_up[0] = (cr * sp * cy + -sr * -sy);
+            snd_up[1] = (cr * sp * sy + -sr * cy);
+            snd_up[2] = cr * cp;
+
+            S_Update(snd_origin, snd_forward, snd_right, snd_up);
+        }
+
         /* Render frame */
         R_BeginFrame(0.0f);
         SCR_DrawHUD(msec / 1000.0f);
@@ -547,6 +583,9 @@ void CL_Frame(int msec)
                 /* Sync camera for PVS culling */
                 R_SetCameraOrigin(org);
                 R_SetCameraAngles(ang);
+
+                /* Get damage blend (screen flash effect) */
+                SV_GetPlayerBlend(cl_refdef.blend);
             }
         }
     }

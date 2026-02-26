@@ -416,6 +416,54 @@ static void R_Setup3DModelview(refdef_t *fd)
 extern game_export_t *SV_GetGameExport(void);
 extern const char *SV_GetConfigstring(int index);
 
+/*
+ * Draw a colored wireframe box at an entity's position
+ * Used as placeholder rendering for non-BSP entities (monsters, items, etc.)
+ */
+static void R_DrawEntityBox(vec3_t origin, vec3_t mins, vec3_t maxs,
+                            float r, float g, float b)
+{
+    vec3_t p1, p2;
+
+    VectorAdd(origin, mins, p1);
+    VectorAdd(origin, maxs, p2);
+
+    qglDisable(GL_TEXTURE_2D);
+    qglColor4f(r, g, b, 0.8f);
+    qglEnable(GL_BLEND);
+    qglBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    qglBegin(GL_LINE_STRIP);
+    /* Bottom face */
+    qglVertex3f(p1[0], p1[1], p1[2]);
+    qglVertex3f(p2[0], p1[1], p1[2]);
+    qglVertex3f(p2[0], p2[1], p1[2]);
+    qglVertex3f(p1[0], p2[1], p1[2]);
+    qglVertex3f(p1[0], p1[1], p1[2]);
+    qglEnd();
+
+    qglBegin(GL_LINE_STRIP);
+    /* Top face */
+    qglVertex3f(p1[0], p1[1], p2[2]);
+    qglVertex3f(p2[0], p1[1], p2[2]);
+    qglVertex3f(p2[0], p2[1], p2[2]);
+    qglVertex3f(p1[0], p2[1], p2[2]);
+    qglVertex3f(p1[0], p1[1], p2[2]);
+    qglEnd();
+
+    qglBegin(GL_LINES);
+    /* Vertical edges */
+    qglVertex3f(p1[0], p1[1], p1[2]); qglVertex3f(p1[0], p1[1], p2[2]);
+    qglVertex3f(p2[0], p1[1], p1[2]); qglVertex3f(p2[0], p1[1], p2[2]);
+    qglVertex3f(p2[0], p2[1], p1[2]); qglVertex3f(p2[0], p2[1], p2[2]);
+    qglVertex3f(p1[0], p2[1], p1[2]); qglVertex3f(p1[0], p2[1], p2[2]);
+    qglEnd();
+
+    qglDisable(GL_BLEND);
+    qglEnable(GL_TEXTURE_2D);
+    qglColor4f(1, 1, 1, 1);
+}
+
 static void R_DrawBrushEntities(void)
 {
     game_export_t *ge = SV_GetGameExport();
@@ -430,16 +478,37 @@ static void R_DrawBrushEntities(void)
 
         if (!ent->inuse)
             continue;
-        if (ent->s.modelindex <= 0)
-            continue;
 
-        /* Check if this is an inline BSP model (*N) */
-        model_name = SV_GetConfigstring(CS_MODELS + ent->s.modelindex);
-        if (!model_name || model_name[0] != '*')
-            continue;
+        /* Entities with models */
+        if (ent->s.modelindex > 0) {
+            model_name = SV_GetConfigstring(CS_MODELS + ent->s.modelindex);
+            if (model_name && model_name[0] == '*') {
+                /* Inline BSP model (doors, platforms, etc.) */
+                R_DrawBrushModel(atoi(model_name + 1), ent->s.origin, ent->s.angles);
+                continue;
+            }
+        }
 
-        /* Extract BSP submodel index from "*N" name */
-        R_DrawBrushModel(atoi(model_name + 1), ent->s.origin, ent->s.angles);
+        /* Non-BSP entities — draw placeholder boxes */
+        if (ent->solid != SOLID_NOT && ent->svflags != SVF_NOCLIENT) {
+            float r_c = 1.0f, g_c = 1.0f, b_c = 0.0f;
+
+            /* Color by entity type */
+            if (ent->svflags & SVF_MONSTER) {
+                r_c = 1.0f; g_c = 0.0f; b_c = 0.0f;   /* red = monster */
+            } else if (ent->client) {
+                r_c = 0.0f; g_c = 1.0f; b_c = 0.0f;   /* green = player */
+            } else if (ent->solid == SOLID_TRIGGER) {
+                continue;   /* don't draw triggers */
+            }
+
+            /* Only draw if entity has nonzero bounds */
+            if (ent->mins[0] != 0 || ent->maxs[0] != 0 ||
+                ent->mins[2] != 0 || ent->maxs[2] != 0) {
+                R_DrawEntityBox(ent->s.origin, ent->mins, ent->maxs,
+                                r_c, g_c, b_c);
+            }
+        }
     }
 }
 
