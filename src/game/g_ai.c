@@ -347,6 +347,46 @@ static void ai_think_attack(edict_t *self)
         return;
     }
 
+    /* Melee attack if within close range */
+    if (dist < AI_MELEE_RANGE && self->dmg_debounce_time <= level.time) {
+        int melee_dmg = self->dmg ? (int)(self->dmg * 1.5f) : 15;
+        vec3_t lunge_dir;
+
+        /* Lunge toward target */
+        VectorSubtract(self->enemy->s.origin, self->s.origin, lunge_dir);
+        VectorNormalize(lunge_dir);
+        self->velocity[0] = lunge_dir[0] * 150.0f;
+        self->velocity[1] = lunge_dir[1] * 150.0f;
+
+        if (self->enemy->takedamage && self->enemy->health > 0) {
+            /* Spawn invuln check */
+            if (self->enemy->client && self->enemy->client->invuln_time > level.time) {
+                /* Blocked */
+            } else {
+                self->enemy->health -= melee_dmg;
+                R_ParticleEffect(self->enemy->s.origin, lunge_dir, 1, 6);
+
+                if (self->enemy->client) {
+                    self->enemy->client->pers_health = self->enemy->health;
+                    self->enemy->client->blend[0] = 1.0f;
+                    self->enemy->client->blend[1] = 0.0f;
+                    self->enemy->client->blend[2] = 0.0f;
+                    self->enemy->client->blend[3] = 0.4f;
+                }
+
+                if (self->enemy->health <= 0 && !self->enemy->deadflag) {
+                    self->enemy->deadflag = 1;
+                    if (self->enemy->client)
+                        self->enemy->client->ps.pm_type = PM_DEAD;
+                }
+            }
+        }
+
+        self->dmg_debounce_time = level.time + 0.8f;  /* melee cooldown */
+        self->nextthink = level.time + FRAMETIME;
+        return;
+    }
+
     /* Fire hitscan attack at the player */
     if (self->dmg_debounce_time <= level.time) {
         vec3_t start, end, dir;
@@ -377,21 +417,26 @@ static void ai_think_attack(edict_t *self)
             }
 
             if (tr.ent && tr.ent->takedamage && tr.ent->health > 0) {
-                tr.ent->health -= damage;
-                R_ParticleEffect(tr.endpos, tr.plane.normal, 1, 4);
+                /* Spawn invuln check */
+                if (tr.ent->client && tr.ent->client->invuln_time > level.time) {
+                    R_ParticleEffect(tr.endpos, tr.plane.normal, 3, 4);
+                } else {
+                    tr.ent->health -= damage;
+                    R_ParticleEffect(tr.endpos, tr.plane.normal, 1, 4);
 
-                /* Apply damage blend to player */
-                if (tr.ent->client) {
-                    tr.ent->client->blend[0] = 1.0f;
-                    tr.ent->client->blend[1] = 0.0f;
-                    tr.ent->client->blend[2] = 0.0f;
-                    tr.ent->client->blend[3] = 0.3f;
-                }
-
-                if (tr.ent->health <= 0 && tr.ent->deadflag == 0) {
-                    tr.ent->deadflag = 1;
+                    /* Apply damage blend and sync pers_health */
                     if (tr.ent->client) {
-                        tr.ent->client->ps.pm_type = PM_DEAD;
+                        tr.ent->client->pers_health = tr.ent->health;
+                        tr.ent->client->blend[0] = 1.0f;
+                        tr.ent->client->blend[1] = 0.0f;
+                        tr.ent->client->blend[2] = 0.0f;
+                        tr.ent->client->blend[3] = 0.3f;
+                    }
+
+                    if (tr.ent->health <= 0 && tr.ent->deadflag == 0) {
+                        tr.ent->deadflag = 1;
+                        if (tr.ent->client)
+                            tr.ent->client->ps.pm_type = PM_DEAD;
                     }
                 }
             } else {
@@ -442,7 +487,7 @@ void monster_think(edict_t *self)
 
 void monster_pain(edict_t *self, edict_t *other, float kick, int damage)
 {
-    (void)other; (void)kick; (void)damage;
+    (void)kick;
 
     if (self->health <= 0)
         return;
@@ -454,15 +499,26 @@ void monster_pain(edict_t *self, edict_t *other, float kick, int damage)
             gi.sound(self, CHAN_VOICE, snd, 1.0f, ATTN_NORM, 0);
     }
 
-    /* Brief pain stun */
+    /* Brief pain stun — longer for heavy hits */
     self->count = AI_STATE_PAIN;
     self->velocity[0] = self->velocity[1] = 0;
-    self->nextthink = level.time + AI_PAIN_TIME;
+    self->nextthink = level.time + (damage > 30 ? AI_PAIN_TIME * 2.0f : AI_PAIN_TIME);
+
+    /* Knockback on heavy damage */
+    if (damage > 30 && other) {
+        vec3_t knockback;
+        VectorSubtract(self->s.origin, other->s.origin, knockback);
+        knockback[2] = 0;
+        VectorNormalize(knockback);
+        self->velocity[0] = knockback[0] * (float)damage * 3.0f;
+        self->velocity[1] = knockback[1] * (float)damage * 3.0f;
+        self->velocity[2] = 100.0f;  /* slight upward pop */
+    }
 
     /* Spawn blood at impact */
     {
         vec3_t up = {0, 0, 1};
-        R_ParticleEffect(self->s.origin, up, 1, 6);
+        R_ParticleEffect(self->s.origin, up, 1, 6 + damage / 5);
     }
 
     /* If no enemy yet, target attacker */
