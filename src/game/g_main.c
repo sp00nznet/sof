@@ -33,6 +33,8 @@ static void WriteGame(const char *filename, qboolean autosave);
 static void ReadGame(const char *filename);
 static void WriteLevel(const char *filename);
 static void ReadLevel(const char *filename);
+static void G_UpdateDecals(void);
+static void G_AddDecal(vec3_t origin, vec3_t normal, int type);
 
 /* ==========================================================================
    Globals
@@ -412,6 +414,9 @@ static void RunFrame(void)
         /* Run physics based on movetype */
         G_RunEntity(ent);
     }
+
+    /* Update persistent decals */
+    G_UpdateDecals();
 }
 
 /* ==========================================================================
@@ -1212,6 +1217,60 @@ static int gore_zone_sever_threshold[GORE_NUM_ZONES] = {
 #define MAX_GORE_EDICTS 256
 static int gore_zone_damage[MAX_GORE_EDICTS][GORE_NUM_ZONES];
 
+/* ==========================================================================
+   Bullet Decal System — persistent impact marks on world surfaces
+   Ring buffer of up to 256 decals, each with position, normal, and spawn time.
+   Decals expire after 30 seconds.
+   ========================================================================== */
+
+#define MAX_DECALS  256
+#define DECAL_LIFETIME  30.0f
+
+typedef struct {
+    vec3_t  origin;
+    vec3_t  normal;
+    float   spawn_time;
+    int     type;       /* 0=bullet, 1=blood, 2=scorch */
+    qboolean active;
+} decal_t;
+
+static decal_t  g_decals[MAX_DECALS];
+static int      g_decal_index;  /* next write position */
+
+static void G_AddDecal(vec3_t origin, vec3_t normal, int type)
+{
+    decal_t *d = &g_decals[g_decal_index];
+
+    VectorCopy(origin, d->origin);
+    VectorCopy(normal, d->normal);
+    d->spawn_time = level.time;
+    d->type = type;
+    d->active = qtrue;
+
+    g_decal_index = (g_decal_index + 1) % MAX_DECALS;
+}
+
+/* Called from RunFrame to expire old decals and render persistent ones */
+static void G_UpdateDecals(void)
+{
+    int i;
+    for (i = 0; i < MAX_DECALS; i++) {
+        decal_t *d = &g_decals[i];
+        if (!d->active) continue;
+
+        if (level.time - d->spawn_time > DECAL_LIFETIME) {
+            d->active = qfalse;
+            continue;
+        }
+
+        /* Spawn a faint persistent particle to represent the decal */
+        if (((int)(level.time * 2.0f) % 4) == (i % 4)) {
+            /* Stagger rendering to avoid spawning all 256 every frame */
+            R_ParticleEffect(d->origin, d->normal, d->type, 1);
+        }
+    }
+}
+
 /*
  * G_HitToGoreZone — Determine gore zone from hit point relative to target
  *
@@ -1576,6 +1635,7 @@ static void G_FireHitscan(edict_t *ent)
         } else {
             /* Bullet impact sparks + ricochet sound */
             R_ParticleEffect(tr.endpos, tr.plane.normal, 0, 6);
+            G_AddDecal(tr.endpos, tr.plane.normal, 0);  /* bullet decal */
             {
                 int ric_snd = 0;
                 int r = gi.irand(0, 2);

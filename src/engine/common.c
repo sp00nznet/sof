@@ -523,21 +523,42 @@ void HUD_SetPickupMessage(const char *msg)
     hud_pickup_time = 3.0f;  /* display for 3 seconds */
 }
 
+/* Crosshair spread expansion — set by game when firing */
+static float crosshair_spread_extra;  /* extra gap from weapon spread */
+static float crosshair_spread_decay;  /* decay timer */
+
+void SCR_SetCrosshairSpread(float spread)
+{
+    crosshair_spread_extra = spread * 200.0f;  /* scale to pixels */
+    if (crosshair_spread_extra > 20) crosshair_spread_extra = 20;
+}
+
 static void SCR_DrawCrosshair(void)
 {
     int cx = g_display.width / 2;
     int cy = g_display.height / 2;
     int size = 2;
-    int gap = 3;
+    int gap = 3 + (int)crosshair_spread_extra;
     int len = 6;
-    /* Pack white color as ARGB for R_DrawFill */
-    int white = (int)(0xFF000000 | 0x00FFFFFF);
+    int color;
 
-    /* Crosshair: four lines forming a + with a gap in the center */
-    R_DrawFill(cx - gap - len, cy - size/2, len, size, white);  /* left */
-    R_DrawFill(cx + gap + 1,  cy - size/2, len, size, white);  /* right */
-    R_DrawFill(cx - size/2, cy - gap - len, size, len, white);  /* top */
-    R_DrawFill(cx - size/2, cy + gap + 1,  size, len, white);  /* bottom */
+    /* Decay spread expansion over time */
+    if (crosshair_spread_extra > 0) {
+        crosshair_spread_extra -= 0.5f;
+        if (crosshair_spread_extra < 0) crosshair_spread_extra = 0;
+    }
+
+    /* Green crosshair normally */
+    color = (int)(0xFF00FF00);
+
+    /* Style 1: cross with gap */
+    R_DrawFill(cx - gap - len, cy - size/2, len, size, color);  /* left */
+    R_DrawFill(cx + gap + 1,  cy - size/2, len, size, color);  /* right */
+    R_DrawFill(cx - size/2, cy - gap - len, size, len, color);  /* top */
+    R_DrawFill(cx - size/2, cy + gap + 1,  size, len, color);  /* bottom */
+
+    /* Center dot */
+    R_DrawFill(cx, cy, 1, 1, color);
 }
 
 static void SCR_DrawHUD(float frametime)

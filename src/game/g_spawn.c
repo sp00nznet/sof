@@ -207,6 +207,8 @@ static void SP_func_ladder(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_glass(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_info_npc(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_conveyor_real(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_water(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_pendulum(edict_t *ent, epair_t *pairs, int num_pairs);
 
 /*
  * Spawn function dispatch table
@@ -246,6 +248,8 @@ static spawn_func_t spawn_funcs[] = {
     { "func_train",                 SP_func_train },
     { "func_ladder",                SP_func_ladder },
     { "func_glass",                 SP_func_glass },
+    { "func_water",                 SP_func_water },
+    { "func_pendulum",              SP_func_pendulum },
     { "func_conveyor",              SP_func_conveyor_real },
     { "func_group",                 SP_misc_model },
     { "path_corner",                SP_path_corner },
@@ -1844,6 +1848,92 @@ static void SP_func_conveyor_real(edict_t *ent, epair_t *pairs, int num_pairs)
 
     /* Spawnflag 1 = start off */
     ent->count = (sf & 1) ? 0 : 1;
+
+    gi.linkentity(ent);
+}
+
+/* ==========================================================================
+   func_water — Water volume brush
+   Entities inside this brush experience water physics.
+   Handled by engine content detection, but we set it up for visibility.
+   ========================================================================== */
+
+static void water_touch(edict_t *self, edict_t *other,
+                         void *plane, csurface_t *surf)
+{
+    (void)self; (void)plane; (void)surf;
+
+    if (!other || !other->client) return;
+
+    /* Blue water tint when player enters */
+    if (other->client->blend[3] < 0.1f) {
+        other->client->blend[0] = 0.0f;
+        other->client->blend[1] = 0.1f;
+        other->client->blend[2] = 0.4f;
+        other->client->blend[3] = 0.15f;
+    }
+}
+
+static void SP_func_water(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+
+    ent->movetype = MOVETYPE_PUSH;
+    ent->solid = SOLID_BSP;
+    ent->touch = water_touch;
+
+    /* Mark as non-solid trigger volume so entities pass through */
+    ent->solid = SOLID_TRIGGER;
+
+    gi.linkentity(ent);
+}
+
+/* ==========================================================================
+   func_pendulum — Swinging brush entity
+   speed = swing speed (default 30)
+   dmg = damage on contact (0 = none)
+   ========================================================================== */
+
+static void pendulum_think(edict_t *self)
+{
+    float phase = level.time * self->speed * (3.14159265f / 180.0f);
+    float swing = (float)sin(phase) * self->count;  /* count = max angle */
+
+    self->avelocity[2] = swing - self->s.angles[2];
+    self->s.angles[2] = swing;
+
+    self->nextthink = level.time + level.frametime;
+}
+
+static void pendulum_blocked(edict_t *self, edict_t *other)
+{
+    if (!other || self->dmg <= 0) return;
+    if (!other->takedamage || other->health <= 0) return;
+
+    other->health -= self->dmg;
+    if (other->client)
+        other->client->pers_health = other->health;
+    if (other->health <= 0 && other->die)
+        other->die(other, self, self, self->dmg, other->s.origin);
+}
+
+static void SP_func_pendulum(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *dmg_str = ED_FindValue(pairs, num_pairs, "dmg");
+    const char *angle_str = ED_FindValue(pairs, num_pairs, "count");
+
+    ent->movetype = MOVETYPE_PUSH;
+    ent->solid = SOLID_BSP;
+
+    if (!ent->speed)
+        ent->speed = 30;
+
+    ent->dmg = dmg_str ? atoi(dmg_str) : 0;
+    ent->count = angle_str ? atoi(angle_str) : 30;  /* max swing angle */
+
+    ent->think = pendulum_think;
+    ent->nextthink = level.time + level.frametime;
+    ent->blocked = pendulum_blocked;
 
     gi.linkentity(ent);
 }
