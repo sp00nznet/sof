@@ -510,6 +510,10 @@ static float cl_shake_intensity;       /* current shake strength */
 static float cl_shake_duration;        /* remaining shake time */
 static float cl_shake_time;            /* total shake duration for decay */
 
+/* Footstep sounds */
+static float cl_footstep_accum;        /* accumulated step distance */
+#define FOOTSTEP_INTERVAL 3.5f         /* bob cycles between footsteps */
+
 /* View smoothing — stair stepping, crouch transitions, landing recovery */
 static float cl_smooth_viewheight;     /* smoothed viewheight (lerps to target) */
 static float cl_smooth_z_offset;       /* smoothed stair step Z offset */
@@ -727,6 +731,21 @@ void CL_Frame(int msec)
 
                         /* Apply view bob to eye height */
                         org[2] += (float)sin(cl_bob_cycle) * cl_bob_amount * 1.5f;
+
+                        /* Footstep sounds — play at bob cycle intervals */
+                        cl_footstep_accum += frametime * bob_speed * 12.0f;
+                        if (cl_footstep_accum >= FOOTSTEP_INTERVAL) {
+                            static int step_idx;
+                            static const char *step_sounds[] = {
+                                "player/step1.wav",
+                                "player/step2.wav",
+                                "player/step3.wav",
+                                "player/step4.wav"
+                            };
+                            S_StartLocalSound(step_sounds[step_idx & 3]);
+                            step_idx++;
+                            cl_footstep_accum -= FOOTSTEP_INTERVAL;
+                        }
                     } else {
                         /* Standing still — decay bob */
                         cl_bob_amount *= 0.9f;
