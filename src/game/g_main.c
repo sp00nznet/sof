@@ -155,6 +155,17 @@ static int snd_ladder_step;            /* ladder climbing sound */
 #define WEAPON_SWITCH_TIME  0.5f        /* 500ms weapon switch delay */
 static int player_prev_weapon;  /* previous weapon for quick-switch (Q key) */
 
+/* Quicksave state */
+static struct {
+    int health, max_health, armor, armor_max;
+    int weapon;
+    int ammo[WEAP_COUNT];
+    int magazine[WEAP_COUNT];
+    int score, kills, xp, rank;
+    vec3_t origin, angles;
+    qboolean valid;
+} quicksave_data;
+
 /* Magazine capacity per weapon (0 = no magazine / unlimited) */
 static int weapon_magazine_size[WEAP_COUNT] = {
     0,      /* WEAP_NONE */
@@ -1559,6 +1570,56 @@ static void ClientCommand(edict_t *ent)
                            ent->client->magazine[i]);
             }
         }
+        return;
+    }
+
+    /* Quicksave — snapshot player state */
+    if (Q_stricmp(cmd, "quicksave") == 0 || Q_stricmp(cmd, "save") == 0) {
+        quicksave_data.health = ent->health;
+        quicksave_data.max_health = ent->max_health;
+        quicksave_data.armor = ent->client->armor;
+        quicksave_data.armor_max = ent->client->armor_max;
+        quicksave_data.weapon = ent->client->pers_weapon;
+        quicksave_data.score = ent->client->score;
+        quicksave_data.kills = ent->client->kills;
+        quicksave_data.xp = ent->client->xp;
+        quicksave_data.rank = ent->client->rank;
+        memcpy(quicksave_data.ammo, ent->client->ammo, sizeof(quicksave_data.ammo));
+        memcpy(quicksave_data.magazine, ent->client->magazine, sizeof(quicksave_data.magazine));
+        VectorCopy(ent->s.origin, quicksave_data.origin);
+        VectorCopy(ent->client->viewangles, quicksave_data.angles);
+        quicksave_data.valid = qtrue;
+        gi.cprintf(ent, PRINT_ALL, "Game saved.\n");
+        SCR_AddPickupMessage("QUICKSAVE");
+        return;
+    }
+
+    if (Q_stricmp(cmd, "quickload") == 0 || Q_stricmp(cmd, "load") == 0) {
+        if (!quicksave_data.valid) {
+            gi.cprintf(ent, PRINT_ALL, "No quicksave found.\n");
+            return;
+        }
+        ent->health = quicksave_data.health;
+        ent->max_health = quicksave_data.max_health;
+        ent->client->pers_health = quicksave_data.health;
+        ent->client->armor = quicksave_data.armor;
+        ent->client->armor_max = quicksave_data.armor_max;
+        ent->client->pers_weapon = quicksave_data.weapon;
+        ent->weapon_index = quicksave_data.weapon;
+        ent->client->score = quicksave_data.score;
+        ent->client->kills = quicksave_data.kills;
+        ent->client->xp = quicksave_data.xp;
+        ent->client->rank = quicksave_data.rank;
+        memcpy(ent->client->ammo, quicksave_data.ammo, sizeof(quicksave_data.ammo));
+        memcpy(ent->client->magazine, quicksave_data.magazine, sizeof(quicksave_data.magazine));
+        VectorCopy(quicksave_data.origin, ent->s.origin);
+        VectorCopy(quicksave_data.angles, ent->client->viewangles);
+        ent->deadflag = 0;
+        ent->client->ps.pm_type = PM_NORMAL;
+        ent->client->blend[3] = 0;
+        gi.linkentity(ent);
+        gi.cprintf(ent, PRINT_ALL, "Game loaded.\n");
+        SCR_AddPickupMessage("QUICKLOAD");
         return;
     }
 
@@ -3173,6 +3234,13 @@ static void G_FireHitscan(edict_t *ent)
                             weapon_names[w] : "unknown";
                         SCR_AddKillFeed("Player", victim_name, weap_name);
                     }
+
+                    /* Kill cam: brief bullet-time and green flash on kill */
+                    if (ent->client->bullet_time_charge < 100.0f)
+                        ent->client->bullet_time_charge += 15.0f;
+                    ent->client->blend[1] = 0.3f;  /* green tint flash */
+                    ent->client->blend[3] = 0.15f;
+                    G_ExplosionShakeNearby(tr.ent->s.origin, 0.3f, 0.2f, 200.0f);
                 }
 
                 /* Drop victim's weapon as a pickup */

@@ -997,6 +997,13 @@ static void ai_think_attack(edict_t *self)
     if (level.time > self->move_angles[0] + 5.0f) {
         self->move_angles[0] = level.time;
         AI_AlertNearby(self, self->enemy);
+
+        /* AI taunt: periodically taunt the player during combat */
+        if (gi.irand(0, 3) == 0 && self->enemy->client) {
+            int snd = gi.soundindex("npc/taunt.wav");
+            if (snd)
+                gi.sound(self, CHAN_VOICE, snd, 0.9f, ATTN_NORM, 0);
+        }
     }
 
     /* Strafe while attacking (change direction periodically) */
