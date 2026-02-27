@@ -1182,6 +1182,38 @@ qboolean SV_IsPlayerReloading(void)
 }
 
 /*
+ * SV_GetReloadProgress — Returns reload progress 0.0 to 1.0
+ */
+float SV_GetReloadProgress(void)
+{
+    edict_t *player;
+    extern level_t level;
+
+    if (!ge || !ge->edicts)
+        return 0.0f;
+
+    player = (edict_t *)((byte *)ge->edicts + ge->edict_size);
+    if (!player->inuse || !player->client)
+        return 0.0f;
+
+    if (player->client->reloading_weapon == 0)
+        return 0.0f;
+
+    {
+        float finish = player->client->reload_finish_time;
+        float remain = finish - level.time;
+        float total = 1.5f;  /* approximate total reload time */
+
+        if (remain <= 0.0f)
+            return 1.0f;
+        if (remain > total)
+            return 0.0f;
+
+        return 1.0f - (remain / total);
+    }
+}
+
+/*
  * SV_RunGameFrame — Called from SV_Frame at 10Hz
  * Drives the game module's RunFrame which iterates all entities.
  */

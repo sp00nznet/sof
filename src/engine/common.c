@@ -2085,6 +2085,25 @@ static void SCR_DrawHUD(float frametime)
             }
         }
 
+        /* Reload progress bar */
+        if (SV_IsPlayerReloading()) {
+            extern float SV_GetReloadProgress(void);
+            float prog = SV_GetReloadProgress();
+            int bar_w = 60;
+            int bar_h = 4;
+            int bx = g_display.width - 16 - bar_w;
+            int by = g_display.height - 16;
+            int filled = (int)(bar_w * prog);
+
+            /* Background */
+            R_DrawFill(bx, by, bar_w, bar_h, (int)0x99333333);
+            /* Progress */
+            R_DrawFill(bx, by, filled, bar_h, (int)0xE6FFCC33);
+            /* Label */
+            R_SetDrawColor(1.0f, 0.8f, 0.2f, 0.9f);
+            R_DrawString(bx, by - 12, "RELOADING");
+        }
+
         /* Reset to default green for console */
         R_SetDrawColor(0.0f, 1.0f, 0.0f, 1.0f);
     }

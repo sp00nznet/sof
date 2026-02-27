@@ -1937,8 +1937,9 @@ static void R_DrawSprites(void)
 }
 
 /*
- * R_DrawDlights - Render dynamic lights as additive billboards
- * Simple GL 1.1 approach: draw a bright point-sprite at each light pos.
+ * R_DrawDlights - Render dynamic lights as additive flares
+ * Draws axis-aligned diamond quads at each light position with additive
+ * blending. Bright center fading to transparent edges simulates a glow.
  */
 static void R_DrawDlights(void)
 {
@@ -1951,19 +1952,73 @@ static void R_DrawDlights(void)
     qglEnable(GL_BLEND);
     qglBlendFunc(GL_ONE, GL_ONE);   /* additive blending */
     qglDepthMask(GL_FALSE);
-    if (qglPointSize) qglPointSize(8.0f);
 
-    qglBegin(GL_POINTS);
     for (i = 0; i < r_num_dlights; i++) {
         r_dlight_t *dl = &r_dlights[i];
-        float scale = dl->intensity / 200.0f;
-        qglColor4f(dl->color[0] * scale, dl->color[1] * scale,
-                    dl->color[2] * scale, 1.0f);
-        qglVertex3f(dl->origin[0], dl->origin[1], dl->origin[2]);
-    }
-    qglEnd();
+        float rad = dl->intensity * 0.35f;
+        float cr = dl->color[0] * 0.4f;
+        float cg = dl->color[1] * 0.4f;
+        float cb = dl->color[2] * 0.4f;
 
-    if (qglPointSize) qglPointSize(1.0f);
+        if (rad < 4.0f) rad = 4.0f;
+        if (rad > 48.0f) rad = 48.0f;
+
+        /* Draw 3 axis-aligned quads (XY, XZ, YZ planes) for omnidirectional glow */
+        qglBegin(GL_TRIANGLES);
+
+        /* XY quad (horizontal) */
+        qglColor4f(cr, cg, cb, 1.0f);
+        qglVertex3f(dl->origin[0], dl->origin[1], dl->origin[2]);
+        qglColor4f(0, 0, 0, 1.0f);
+        qglVertex3f(dl->origin[0] + rad, dl->origin[1], dl->origin[2]);
+        qglVertex3f(dl->origin[0], dl->origin[1] + rad, dl->origin[2]);
+
+        qglColor4f(cr, cg, cb, 1.0f);
+        qglVertex3f(dl->origin[0], dl->origin[1], dl->origin[2]);
+        qglColor4f(0, 0, 0, 1.0f);
+        qglVertex3f(dl->origin[0], dl->origin[1] + rad, dl->origin[2]);
+        qglVertex3f(dl->origin[0] - rad, dl->origin[1], dl->origin[2]);
+
+        qglColor4f(cr, cg, cb, 1.0f);
+        qglVertex3f(dl->origin[0], dl->origin[1], dl->origin[2]);
+        qglColor4f(0, 0, 0, 1.0f);
+        qglVertex3f(dl->origin[0] - rad, dl->origin[1], dl->origin[2]);
+        qglVertex3f(dl->origin[0], dl->origin[1] - rad, dl->origin[2]);
+
+        qglColor4f(cr, cg, cb, 1.0f);
+        qglVertex3f(dl->origin[0], dl->origin[1], dl->origin[2]);
+        qglColor4f(0, 0, 0, 1.0f);
+        qglVertex3f(dl->origin[0], dl->origin[1] - rad, dl->origin[2]);
+        qglVertex3f(dl->origin[0] + rad, dl->origin[1], dl->origin[2]);
+
+        /* XZ quad (vertical front-back) */
+        qglColor4f(cr, cg, cb, 1.0f);
+        qglVertex3f(dl->origin[0], dl->origin[1], dl->origin[2]);
+        qglColor4f(0, 0, 0, 1.0f);
+        qglVertex3f(dl->origin[0] + rad, dl->origin[1], dl->origin[2]);
+        qglVertex3f(dl->origin[0], dl->origin[1], dl->origin[2] + rad);
+
+        qglColor4f(cr, cg, cb, 1.0f);
+        qglVertex3f(dl->origin[0], dl->origin[1], dl->origin[2]);
+        qglColor4f(0, 0, 0, 1.0f);
+        qglVertex3f(dl->origin[0], dl->origin[1], dl->origin[2] + rad);
+        qglVertex3f(dl->origin[0] - rad, dl->origin[1], dl->origin[2]);
+
+        qglColor4f(cr, cg, cb, 1.0f);
+        qglVertex3f(dl->origin[0], dl->origin[1], dl->origin[2]);
+        qglColor4f(0, 0, 0, 1.0f);
+        qglVertex3f(dl->origin[0] - rad, dl->origin[1], dl->origin[2]);
+        qglVertex3f(dl->origin[0], dl->origin[1], dl->origin[2] - rad);
+
+        qglColor4f(cr, cg, cb, 1.0f);
+        qglVertex3f(dl->origin[0], dl->origin[1], dl->origin[2]);
+        qglColor4f(0, 0, 0, 1.0f);
+        qglVertex3f(dl->origin[0], dl->origin[1], dl->origin[2] - rad);
+        qglVertex3f(dl->origin[0] + rad, dl->origin[1], dl->origin[2]);
+
+        qglEnd();
+    }
+
     qglDepthMask(GL_TRUE);
     qglDisable(GL_BLEND);
     qglEnable(GL_TEXTURE_2D);

@@ -2537,11 +2537,17 @@ typedef struct {
     int         count;          /* AI state for monsters */
     float       nextthink;
     int         ai_flags;
+    int         dmg;
+    int         style;
+    float       speed;
+    float       wait;
     char        classname[64];
+    char        target[64];
+    char        targetname[64];
 } save_entity_t;
 
 /* Saved client/game state */
-#define SAVE_VERSION    3   /* bumped for magazine fields */
+#define SAVE_VERSION    4   /* bumped for entity target/dmg/speed/wait fields */
 typedef struct {
     int         health;
     int         max_health;
@@ -2685,8 +2691,16 @@ static void WriteLevel(const char *filename)
             se.count = ent->count;
             se.nextthink = ent->nextthink;
             se.ai_flags = ent->ai_flags;
+            se.dmg = ent->dmg;
+            se.style = ent->style;
+            se.speed = ent->speed;
+            se.wait = ent->wait;
             if (ent->classname)
                 Q_strncpyz(se.classname, ent->classname, sizeof(se.classname));
+            if (ent->target)
+                Q_strncpyz(se.target, ent->target, sizeof(se.target));
+            if (ent->targetname)
+                Q_strncpyz(se.targetname, ent->targetname, sizeof(se.targetname));
         }
 
         fwrite(&se, sizeof(se), 1, f);
@@ -2750,6 +2764,41 @@ static void ReadLevel(const char *filename)
         ent->count = se.count;
         ent->nextthink = se.nextthink;
         ent->ai_flags = se.ai_flags;
+        ent->dmg = se.dmg;
+        ent->style = se.style;
+        ent->speed = se.speed;
+        ent->wait = se.wait;
+
+        /* Restore think/callback functions based on classname */
+        if (se.classname[0]) {
+            if (strncmp(se.classname, "monster_", 8) == 0) {
+                /* Monster entities: restore AI callbacks */
+                extern void monster_think(edict_t *self);
+                extern void monster_pain(edict_t *self, edict_t *other,
+                                         float kick, int damage);
+                extern void monster_die(edict_t *self, edict_t *inflictor,
+                                        edict_t *attacker, int damage,
+                                        vec3_t point);
+                ent->think = monster_think;
+                ent->pain = monster_pain;
+                ent->die = monster_die;
+                if (se.deadflag) {
+                    /* Dead monster: schedule corpse removal */
+                    ent->think = NULL;
+                    ent->takedamage = DAMAGE_NO;
+                    ent->solid = SOLID_NOT;
+                } else if (se.nextthink <= level.time) {
+                    ent->nextthink = level.time + 0.1f;
+                }
+            } else if (strcmp(se.classname, "func_door") == 0 ||
+                       strcmp(se.classname, "func_plat") == 0) {
+                /* Doors/plats keep their BSP-assigned callbacks */
+            } else if (strncmp(se.classname, "item_", 5) == 0 ||
+                       strncmp(se.classname, "weapon_", 7) == 0 ||
+                       strncmp(se.classname, "ammo_", 5) == 0) {
+                /* Pickup items: keep existing think from spawn */
+            }
+        }
 
         /* Re-link entity with updated position */
         if (ent->inuse)
