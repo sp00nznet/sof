@@ -1495,6 +1495,15 @@ static void changelevel_touch(edict_t *self, edict_t *other, void *plane, csurfa
         gi.bprintf(PRINT_ALL, "%s\n", self->message);
     }
 
+    /* Autosave checkpoint before level transition */
+    {
+        extern void WriteGame(const char *filename, qboolean autosave);
+        extern void WriteLevel(const char *filename);
+        WriteGame("autosave.sav", qtrue);
+        WriteLevel("autosave.sv2");
+        gi.dprintf("Autosave checkpoint created\n");
+    }
+
     /* Save player state for level transition */
     G_SaveTransitionState();
 

@@ -42,9 +42,9 @@ static void G_AngleVectors(vec3_t angles, vec3_t fwd, vec3_t rt, vec3_t up_out);
 static void G_FireProjectile(edict_t *ent, qboolean is_grenade);
 static void T_RadiusDamage(edict_t *inflictor, edict_t *attacker,
                             float damage, float radius);
-static void WriteGame(const char *filename, qboolean autosave);
+void WriteGame(const char *filename, qboolean autosave);
 static void ReadGame(const char *filename);
-static void WriteLevel(const char *filename);
+void WriteLevel(const char *filename);
 static void ReadLevel(const char *filename);
 static void G_UpdateDecals(void);
 static void G_AddDecal(vec3_t origin, vec3_t normal, int type);
@@ -2765,7 +2765,7 @@ typedef struct {
     int         magazine[WEAP_COUNT];
 } save_game_t;
 
-static void WriteGame(const char *filename, qboolean autosave)
+void WriteGame(const char *filename, qboolean autosave)
 {
     FILE *f;
     save_game_t sg;
@@ -2854,7 +2854,7 @@ static void ReadGame(const char *filename)
     gi.dprintf("Game loaded: %s\n", filename);
 }
 
-static void WriteLevel(const char *filename)
+void WriteLevel(const char *filename)
 {
     FILE *f;
     int magic = SAVE_MAGIC, version = SAVE_VERSION;

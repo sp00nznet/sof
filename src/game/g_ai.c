@@ -741,6 +741,162 @@ static void ai_think_attack(edict_t *self)
     self->nextthink = level.time + FRAMETIME;
 }
 
+/*
+ * Boss-specific attack think — multi-phase combat:
+ * Phase 1 (>50% HP): 3-round burst fire + grenades
+ * Phase 2 (<=50% HP): ground stomp AoE + charge attacks
+ */
+static void boss_think_attack(edict_t *self)
+{
+    float dist, health_pct;
+
+    if (!self->enemy || !self->enemy->inuse || self->enemy->health <= 0) {
+        self->enemy = NULL;
+        self->count = AI_STATE_IDLE;
+        self->nextthink = level.time + 0.5f;
+        return;
+    }
+
+    AI_FaceEnemy(self);
+    dist = AI_Range(self, self->enemy);
+    health_pct = (float)self->health / (float)(self->max_health > 0 ? self->max_health : 500);
+
+    /* Attack animation */
+    self->s.frame++;
+    if (self->s.frame < FRAME_ATTACK_START || self->s.frame > FRAME_ATTACK_END)
+        self->s.frame = FRAME_ATTACK_START;
+
+    /* Chase if target out of range */
+    if (dist > AI_ATTACK_RANGE * 1.5f || !AI_Visible(self, self->enemy)) {
+        self->count = AI_STATE_CHASE;
+        VectorCopy(self->enemy->s.origin, self->move_origin);
+        self->nextthink = level.time + FRAMETIME;
+        return;
+    }
+
+    /* Strafe while attacking */
+    if (dist > AI_MELEE_RANGE * 2) {
+        if (level.time > self->move_angles[2]) {
+            self->move_angles[2] = level.time + 1.0f;
+            self->ai_flags ^= 0x0100;
+        }
+        AI_Strafe(self, (self->ai_flags & 0x0100) ? 1 : -1);
+    }
+
+    /* Phase 2: Ground stomp AoE when hurt and close */
+    if (health_pct <= 0.5f && dist < 192.0f && level.time > self->move_angles[0]) {
+        /* Ground stomp — AoE damage around boss */
+        vec3_t up = {0, 0, 1};
+        R_ParticleEffect(self->s.origin, up, 13, 30);   /* ground dust */
+        R_ParticleEffect(self->s.origin, up, 11, 12);   /* debris */
+        R_AddDlight(self->s.origin, 1.0f, 0.4f, 0.1f, 300.0f, 0.3f);
+
+        if (self->enemy->client && dist < 192.0f) {
+            int stomp_dmg = 25;
+            float knockup;
+            if (self->enemy->client->invuln_time <= level.time) {
+                self->enemy->health -= stomp_dmg;
+                self->enemy->client->pers_health = self->enemy->health;
+                self->enemy->client->blend[0] = 1.0f;
+                self->enemy->client->blend[1] = 0.2f;
+                self->enemy->client->blend[2] = 0.0f;
+                self->enemy->client->blend[3] = 0.5f;
+                /* Knockback upward */
+                knockup = 200.0f * (1.0f - dist / 192.0f);
+                self->enemy->velocity[2] += knockup;
+            }
+        }
+
+        {
+            extern void SCR_AddScreenShake(float intensity, float duration);
+            SCR_AddScreenShake(0.8f, 0.4f);
+        }
+
+        self->move_angles[0] = level.time + 3.0f;  /* stomp cooldown */
+        self->nextthink = level.time + FRAMETIME;
+        return;
+    }
+
+    /* Phase 2: Charge attack when hurt and at mid range */
+    if (health_pct <= 0.5f && dist > 128.0f && dist < 400.0f &&
+        level.time > self->move_angles[1] + 5.0f) {
+        vec3_t charge_dir;
+        VectorSubtract(self->enemy->s.origin, self->s.origin, charge_dir);
+        charge_dir[2] = 0;
+        VectorNormalize(charge_dir);
+        self->velocity[0] = charge_dir[0] * 500.0f;
+        self->velocity[1] = charge_dir[1] * 500.0f;
+        self->move_angles[1] = level.time;  /* charge cooldown */
+        self->nextthink = level.time + FRAMETIME;
+        return;
+    }
+
+    /* Burst fire — 3 rapid shots */
+    if (self->dmg_debounce_time <= level.time) {
+        int burst;
+        for (burst = 0; burst < 3; burst++) {
+            vec3_t start, end, dir;
+            trace_t tr;
+
+            VectorCopy(self->s.origin, start);
+            start[2] += 20;
+
+            VectorSubtract(self->enemy->s.origin, start, dir);
+            dir[0] += ((float)(rand() % 80) - 40) * 0.01f;
+            dir[1] += ((float)(rand() % 80) - 40) * 0.01f;
+            VectorNormalize(dir);
+            VectorMA(start, 8192, dir, end);
+
+            tr = gi.trace(start, NULL, NULL, end, self, MASK_SHOT);
+
+            if (tr.fraction < 1.0f) {
+                vec3_t tracer_start, muzzle;
+                VectorMA(start, 16, dir, tracer_start);
+                R_AddTracer(tracer_start, tr.endpos, 1.0f, 0.5f, 0.2f);
+
+                VectorMA(start, 16, dir, muzzle);
+                R_ParticleEffect(muzzle, dir, 3, 2);
+                R_AddDlight(muzzle, 1.0f, 0.7f, 0.3f, 150.0f, 0.05f);
+
+                if (tr.ent && tr.ent->takedamage && tr.ent->health > 0) {
+                    if (!tr.ent->client || tr.ent->client->invuln_time <= level.time) {
+                        tr.ent->health -= self->dmg;
+                        R_ParticleEffect(tr.endpos, tr.plane.normal, 1, 4);
+                        if (tr.ent->client) {
+                            tr.ent->client->pers_health = tr.ent->health;
+                            tr.ent->client->blend[0] = 1.0f;
+                            tr.ent->client->blend[1] = 0.0f;
+                            tr.ent->client->blend[2] = 0.0f;
+                            tr.ent->client->blend[3] = 0.3f;
+                            AI_DamageDirectionToPlayer(tr.ent, self->s.origin);
+                        }
+                        if (tr.ent->health <= 0 && !tr.ent->deadflag) {
+                            tr.ent->deadflag = 1;
+                            if (tr.ent->client)
+                                tr.ent->client->ps.pm_type = PM_DEAD;
+                        }
+                    }
+                } else {
+                    R_ParticleEffect(tr.endpos, tr.plane.normal, 0, 4);
+                }
+            }
+        }
+
+        if (snd_monster_fire)
+            gi.sound(self, CHAN_WEAPON, snd_monster_fire, 1.0f, ATTN_NORM, 0);
+
+        self->dmg_debounce_time = level.time + 0.5f;  /* faster than normal */
+    }
+
+    /* Throw grenades at range */
+    if (dist > AI_GRENADE_RANGE && level.time > self->move_angles[1]) {
+        AI_ThrowGrenade(self, self->enemy->s.origin);
+        self->move_angles[1] = level.time + AI_GRENADE_COOLDOWN * 0.5f;
+    }
+
+    self->nextthink = level.time + FRAMETIME;
+}
+
 static void ai_think_pain(edict_t *self)
 {
     /* Advance pain animation frame */
@@ -772,7 +928,12 @@ void monster_think(edict_t *self)
     case AI_STATE_IDLE:     ai_think_idle(self); break;
     case AI_STATE_ALERT:    ai_think_alert(self); break;
     case AI_STATE_CHASE:    ai_think_chase(self); break;
-    case AI_STATE_ATTACK:   ai_think_attack(self); break;
+    case AI_STATE_ATTACK:
+        if (self->classname && Q_stricmp(self->classname, "monster_boss") == 0)
+            boss_think_attack(self);
+        else
+            ai_think_attack(self);
+        break;
     case AI_STATE_PAIN:     ai_think_pain(self); break;
     default:                self->nextthink = level.time + 1.0f; break;
     }

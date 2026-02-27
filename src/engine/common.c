@@ -1007,6 +1007,9 @@ static const char *map_titles[MAP_COUNT] = {
 static int  menu_active = 0;    /* 0=hidden, 1=main, 2=options, 3=map select */
 static int  menu_cursor = 0;
 static int  map_cursor = 0;
+static int  opt_cursor = 0;
+
+#define OPT_ITEMS 5  /* sensitivity, volume, resolution, fullscreen, gore */
 
 /* Exposed to key handler */
 int  M_IsActive(void) { return menu_active; }
@@ -1025,10 +1028,53 @@ void M_Close(void)
 void M_Keydown(int key)
 {
     if (menu_active == 2) {
-        /* Options sub-menu — ESC returns to main */
+        /* Options sub-menu — interactive settings */
         if (key == K_ESCAPE) {
             menu_active = 1;
             menu_cursor = 2;
+        } else if (key == K_UPARROW || key == 'k') {
+            opt_cursor--;
+            if (opt_cursor < 0) opt_cursor = OPT_ITEMS - 1;
+        } else if (key == K_DOWNARROW || key == 'j') {
+            opt_cursor++;
+            if (opt_cursor >= OPT_ITEMS) opt_cursor = 0;
+        } else if (key == K_LEFTARROW || key == K_RIGHTARROW) {
+            float dir = (key == K_RIGHTARROW) ? 1.0f : -1.0f;
+            switch (opt_cursor) {
+            case 0: { /* Sensitivity */
+                float s = Cvar_VariableValue("sensitivity") + dir * 0.5f;
+                if (s < 0.5f) s = 0.5f;
+                if (s > 20.0f) s = 20.0f;
+                Cvar_SetValue("sensitivity", s);
+                break;
+            }
+            case 1: { /* Volume */
+                float v = Cvar_VariableValue("s_volume") + dir * 0.1f;
+                if (v < 0.0f) v = 0.0f;
+                if (v > 1.0f) v = 1.0f;
+                Cvar_SetValue("s_volume", v);
+                break;
+            }
+            case 2: { /* Resolution */
+                int mode = (int)Cvar_VariableValue("r_mode") + (int)dir;
+                if (mode < 0) mode = 14;
+                if (mode > 14) mode = 0;
+                Cvar_SetValue("r_mode", (float)mode);
+                break;
+            }
+            case 3: { /* Fullscreen */
+                float fs = Cvar_VariableValue("vid_fullscreen");
+                Cvar_SetValue("vid_fullscreen", fs > 0 ? 0.0f : 1.0f);
+                break;
+            }
+            case 4: { /* Gore */
+                float g = Cvar_VariableValue("gore_detail");
+                if (dir > 0) { if (g < 2) g += 1; }
+                else { if (g > 0) g -= 1; }
+                Cvar_SetValue("gore_detail", g);
+                break;
+            }
+            }
         }
         return;
     }
@@ -1121,25 +1167,63 @@ static void SCR_DrawMenu(void)
             R_DrawString(x + 30, item_y, menu_labels[i]);
         }
     } else if (menu_active == 2) {
-        /* Options sub-menu */
+        /* Interactive options sub-menu */
         char val[64];
+        static const char *opt_labels[OPT_ITEMS] = {
+            "Sensitivity", "Volume", "Resolution", "Fullscreen", "Gore"
+        };
+        static const char *res_names[] = {
+            "320x240", "400x300", "512x384", "640x480", "800x600",
+            "960x720", "1024x768", "1152x864", "1280x960", "1280x720",
+            "1280x1024", "1600x1200", "1920x1080", "2560x1440", "3840x2160"
+        };
 
         R_SetDrawColor(1.0f, 1.0f, 0.0f, 1.0f);
-        R_DrawString(x + 40, y + 80, "OPTIONS");
+        R_DrawString(x + 40, y + 60, "OPTIONS");
 
-        R_SetDrawColor(0.8f, 0.8f, 0.8f, 1.0f);
-        Com_sprintf(val, sizeof(val), "Sensitivity: %.1f", Cvar_VariableValue("sensitivity"));
-        R_DrawString(x + 40, y + 120, val);
+        for (i = 0; i < OPT_ITEMS; i++) {
+            int item_y = y + 90 + i * 28;
 
-        Com_sprintf(val, sizeof(val), "Volume: %.1f", Cvar_VariableValue("s_volume"));
-        R_DrawString(x + 40, y + 140, val);
+            if (i == opt_cursor) {
+                R_DrawFill(x + 20, item_y - 2, menu_w - 40, 22, (int)0x40FFFFFF);
+                R_SetDrawColor(1.0f, 1.0f, 0.0f, 1.0f);
+                R_DrawString(x + 10, item_y, ">");
+            } else {
+                R_SetDrawColor(0.8f, 0.8f, 0.8f, 1.0f);
+            }
 
-        Com_sprintf(val, sizeof(val), "Gore: %s",
-                    Cvar_VariableValue("gore_detail") >= 2 ? "Full" : "Reduced");
-        R_DrawString(x + 40, y + 160, val);
+            switch (i) {
+            case 0:
+                Com_sprintf(val, sizeof(val), "%-12s < %.1f >", opt_labels[i],
+                            Cvar_VariableValue("sensitivity"));
+                break;
+            case 1:
+                Com_sprintf(val, sizeof(val), "%-12s < %.0f%% >", opt_labels[i],
+                            Cvar_VariableValue("s_volume") * 100.0f);
+                break;
+            case 2: {
+                int mode = (int)Cvar_VariableValue("r_mode");
+                if (mode < 0 || mode > 14) mode = 6;
+                Com_sprintf(val, sizeof(val), "%-12s < %s >", opt_labels[i], res_names[mode]);
+                break;
+            }
+            case 3:
+                Com_sprintf(val, sizeof(val), "%-12s < %s >", opt_labels[i],
+                            Cvar_VariableValue("vid_fullscreen") > 0 ? "ON" : "OFF");
+                break;
+            case 4: {
+                int gd = (int)Cvar_VariableValue("gore_detail");
+                Com_sprintf(val, sizeof(val), "%-12s < %s >", opt_labels[i],
+                            gd >= 2 ? "Full" : (gd >= 1 ? "Reduced" : "Off"));
+                break;
+            }
+            }
+
+            R_DrawString(x + 30, item_y, val);
+        }
 
         R_SetDrawColor(0.53f, 0.53f, 0.53f, 1.0f);
-        R_DrawString(x + 40, y + 200, "Press ESC to return");
+        R_DrawString(x + 30, y + 90 + OPT_ITEMS * 28 + 10, "LEFT/RIGHT to change");
     } else if (menu_active == 3) {
         /* Map selection sub-menu */
         R_SetDrawColor(1.0f, 1.0f, 0.0f, 1.0f);
@@ -2402,6 +2486,38 @@ static void SCR_DrawHUD(float frametime)
 
     /* Minimap radar */
     SCR_DrawMinimap();
+
+    /* Compass heading — shows cardinal direction above minimap */
+    {
+        vec3_t view_pos, view_ang;
+        float vh_unused;
+        if (SV_GetPlayerState(view_pos, view_ang, &vh_unused)) {
+            float yaw = view_ang[1];
+            int heading;
+            const char *dir_label;
+            char compass_str[16];
+            int cx;
+
+            while (yaw < 0) yaw += 360.0f;
+            while (yaw >= 360.0f) yaw -= 360.0f;
+            heading = (int)yaw;
+
+            if (yaw >= 337.5f || yaw < 22.5f) dir_label = "E";
+            else if (yaw < 67.5f)  dir_label = "NE";
+            else if (yaw < 112.5f) dir_label = "N";
+            else if (yaw < 157.5f) dir_label = "NW";
+            else if (yaw < 202.5f) dir_label = "W";
+            else if (yaw < 247.5f) dir_label = "SW";
+            else if (yaw < 292.5f) dir_label = "S";
+            else                   dir_label = "SE";
+
+            Com_sprintf(compass_str, sizeof(compass_str), "%s %d", dir_label, heading);
+            cx = g_display.width - 112 + 50 - (int)(strlen(compass_str) * 4);
+            R_SetDrawColor(0.8f, 0.9f, 1.0f, 0.8f);
+            R_DrawString(cx, g_display.height - 170, compass_str);
+            R_SetDrawColor(1.0f, 1.0f, 1.0f, 1.0f);
+        }
+    }
 
     /* Developer HUD — FPS, position, entity count */
     if (developer && developer->value) {
