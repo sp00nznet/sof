@@ -30,6 +30,7 @@ extern void SCR_AddKillFeed(const char *attacker, const char *victim, const char
 extern void SCR_AddScreenShake(float intensity, float duration);
 extern void SCR_TriggerHitMarker(void);
 extern void SCR_AddDamageDirection(float angle);
+extern void SCR_AddBloodSplatter(int damage);
 extern void R_AddSprite(vec3_t origin, float size, float r, float g, float b,
                          float alpha, float lifetime, float rotation_speed);
 extern void R_AddTracer(vec3_t start, vec3_t end, float r, float g, float b);
@@ -1242,6 +1243,7 @@ static void T_RadiusDamage(edict_t *inflictor, edict_t *attacker,
             t->client->blend[3] = 0.3f;
             t->client->pers_health = t->health;
             G_DamageDirectionToPlayer(t, inflictor->s.origin);
+            SCR_AddBloodSplatter((int)dmg_applied);
         }
 
         if (t->health <= 0 && t->die) {
@@ -1966,13 +1968,15 @@ static void G_FireHitscan(edict_t *ent)
                            zone, zone_mult, zone_dmg, tr.ent->health);
             }
 
-            /* Player pain sound + damage flash */
+            /* Player pain sound + damage flash + blood splatter */
             if (tr.ent->client) {
                 tr.ent->client->pers_health = tr.ent->health;
                 tr.ent->client->blend[0] = 1.0f;
                 tr.ent->client->blend[1] = 0.0f;
                 tr.ent->client->blend[2] = 0.0f;
                 tr.ent->client->blend[3] = 0.3f;
+
+                SCR_AddBloodSplatter(damage);
 
                 if (level.time >= tr.ent->client->next_pain_sound) {
                     int psnd = gi.irand(0, 1) ? snd_player_pain1 : snd_player_pain2;

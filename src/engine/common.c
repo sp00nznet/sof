@@ -135,6 +135,7 @@ static void SCR_DrawMinimap(void);
 static void SCR_DrawDeathScreen(void);
 static void SCR_DrawHitMarker(void);
 static void SCR_DrawDamageDirection(void);
+static void SCR_DrawBloodSplatters(void);
 static void SCR_DrawObjectives(void);
 static void SCR_DrawIntermission(void);
 
@@ -433,6 +434,7 @@ void Qcommon_Frame(int msec)
             SCR_DrawIntermission();
         } else {
             SCR_DrawHUD(msec / 1000.0f);
+            SCR_DrawBloodSplatters();
             SCR_DrawDamageNumbers();
             SCR_DrawHitMarker();
             SCR_DrawDamageDirection();
@@ -1478,6 +1480,95 @@ static void SCR_DrawDamageDirection(void)
     }
 
     R_SetDrawColor(1.0f, 1.0f, 1.0f, 1.0f);
+}
+
+/* ==========================================================================
+   Screen Blood Splatter
+   ========================================================================== */
+
+/*
+ * When the player takes damage, red splotches appear at random screen
+ * positions and fade out over a few seconds. More damage = more splotches.
+ * This supplements the existing red damage flash with visceral detail.
+ */
+
+#define MAX_BLOOD_SPLATTERS 12
+#define SPLATTER_LIFETIME   3.0f
+
+typedef struct {
+    int     x, y;           /* screen position */
+    int     w, h;           /* splotch size */
+    float   birth_time;
+    float   alpha;          /* initial alpha */
+    qboolean active;
+} blood_splatter_t;
+
+static blood_splatter_t blood_splatters[MAX_BLOOD_SPLATTERS];
+static int blood_splatter_idx;
+
+void SCR_AddBloodSplatter(int damage)
+{
+    int count, i;
+    int sw = g_display.width;
+    int sh = g_display.height;
+
+    /* Scale splotch count by damage: 1 per 10 damage, min 1, max 4 */
+    count = damage / 10;
+    if (count < 1) count = 1;
+    if (count > 4) count = 4;
+
+    for (i = 0; i < count; i++) {
+        blood_splatter_t *s = &blood_splatters[blood_splatter_idx % MAX_BLOOD_SPLATTERS];
+        s->x = rand() % sw;
+        s->y = rand() % sh;
+        /* Bias toward edges — more dramatic */
+        if (rand() % 3 == 0) {
+            /* Place near an edge */
+            int edge = rand() % 4;
+            if (edge == 0) s->x = rand() % (sw / 4);
+            else if (edge == 1) s->x = sw - rand() % (sw / 4);
+            else if (edge == 2) s->y = rand() % (sh / 4);
+            else s->y = sh - rand() % (sh / 4);
+        }
+        s->w = 20 + rand() % 40;
+        s->h = 15 + rand() % 30;
+        s->alpha = 0.3f + (rand() % 20) * 0.01f;
+        s->birth_time = (float)Sys_Milliseconds() / 1000.0f;
+        s->active = qtrue;
+        blood_splatter_idx++;
+    }
+}
+
+static void SCR_DrawBloodSplatters(void)
+{
+    int i;
+    float now = (float)Sys_Milliseconds() / 1000.0f;
+
+    for (i = 0; i < MAX_BLOOD_SPLATTERS; i++) {
+        blood_splatter_t *s = &blood_splatters[i];
+        float age, a;
+        int color;
+
+        if (!s->active) continue;
+
+        age = now - s->birth_time;
+        if (age > SPLATTER_LIFETIME) {
+            s->active = qfalse;
+            continue;
+        }
+
+        /* Fade out over lifetime */
+        a = s->alpha * (1.0f - age / SPLATTER_LIFETIME);
+        if (a < 0.01f) continue;
+
+        /* Dark red splotch with transparency */
+        color = (int)(((int)(a * 255.0f) << 24) | 0x200000);
+        R_DrawFill(s->x, s->y, s->w, s->h, color);
+        /* Smaller darker center for depth */
+        color = (int)(((int)(a * 200.0f) << 24) | 0x100000);
+        R_DrawFill(s->x + s->w / 4, s->y + s->h / 4,
+                   s->w / 2, s->h / 2, color);
+    }
 }
 
 /* ==========================================================================
