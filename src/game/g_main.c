@@ -140,6 +140,8 @@ static int snd_player_pain1, snd_player_pain2;
 static int snd_player_die;
 static int snd_drown;
 static int snd_reload;                  /* reload sound */
+static int snd_splash_in;              /* water entry splash */
+static int snd_splash_out;             /* water exit splash */
 
 #define WEAPON_SWITCH_TIME  0.5f        /* 500ms weapon switch delay */
 static int player_prev_weapon;  /* previous weapon for quick-switch (Q key) */
@@ -626,6 +628,36 @@ static void ClientCommand(edict_t *ent)
         ent->client->flashlight_on = !ent->client->flashlight_on;
         gi.cprintf(ent, PRINT_ALL, "Flashlight: %s\n",
                    ent->client->flashlight_on ? "ON" : "OFF");
+        return;
+    }
+
+    if (Q_stricmp(cmd, "weather") == 0) {
+        const char *arg = gi.argv(1);
+        if (arg && arg[0]) {
+            if (Q_stricmp(arg, "rain") == 0) {
+                level.weather = 1;
+                level.weather_density = 1.0f;
+            } else if (Q_stricmp(arg, "snow") == 0) {
+                level.weather = 2;
+                level.weather_density = 1.0f;
+            } else if (Q_stricmp(arg, "off") == 0 || Q_stricmp(arg, "none") == 0) {
+                level.weather = 0;
+            } else {
+                level.weather = atoi(arg);
+                if (level.weather < 0) level.weather = 0;
+                if (level.weather > 2) level.weather = 2;
+                if (level.weather > 0 && level.weather_density < 0.1f)
+                    level.weather_density = 1.0f;
+            }
+        } else {
+            /* Toggle: none → rain → snow → none */
+            level.weather = (level.weather + 1) % 3;
+            if (level.weather > 0 && level.weather_density < 0.1f)
+                level.weather_density = 1.0f;
+        }
+        gi.cprintf(ent, PRINT_ALL, "Weather: %s\n",
+                   level.weather == 1 ? "rain" :
+                   level.weather == 2 ? "snow" : "none");
         return;
     }
 
@@ -2092,9 +2124,10 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
 
     pm_passent = ent;
 
-    /* Save old velocity for fall damage detection */
+    /* Save old state for transition detection */
     {
         float old_z_vel = ent->velocity[2];
+        int old_wl = client->old_waterlevel;
 
         /* Run player physics */
         gi.Pmove(&pm);
@@ -2175,6 +2208,38 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
 
         ent->groundentity = pm.groundentity;
         client->viewheight = pm.viewheight;
+
+        /* Water splash effects — detect water entry/exit transitions */
+        {
+            int new_wl = pm.waterlevel;
+
+            if (old_wl == 0 && new_wl >= 1) {
+                /* Entering water — big splash */
+                vec3_t splash_org, splash_up;
+                VectorCopy(ent->s.origin, splash_org);
+                VectorSet(splash_up, 0, 0, 1);
+                R_ParticleEffect(splash_org, splash_up, 6, 16);   /* water drips */
+                R_ParticleEffect(splash_org, splash_up, 10, 4);   /* mist/spray */
+                if (snd_splash_in)
+                    gi.sound(ent, CHAN_BODY, snd_splash_in, 1.0f, ATTN_NORM, 0);
+            } else if (old_wl >= 1 && new_wl == 0) {
+                /* Exiting water — smaller splash + dripping */
+                vec3_t splash_org, splash_up;
+                VectorCopy(ent->s.origin, splash_org);
+                VectorSet(splash_up, 0, 0, 1);
+                R_ParticleEffect(splash_org, splash_up, 6, 8);    /* water drips */
+                if (snd_splash_out)
+                    gi.sound(ent, CHAN_BODY, snd_splash_out, 0.8f, ATTN_NORM, 0);
+            } else if (old_wl < 3 && new_wl >= 3) {
+                /* Going fully underwater — submerge */
+                vec3_t splash_org, splash_up;
+                VectorCopy(ent->s.origin, splash_org);
+                VectorSet(splash_up, 0, 0, 1);
+                R_ParticleEffect(splash_org, splash_up, 6, 12);
+            }
+
+            client->old_waterlevel = new_wl;
+        }
     }
 
     /* Crouch handling */
@@ -2393,6 +2458,37 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
         } else {
             /* Above water — reset breath */
             client->air_finished = 0;
+        }
+    }
+
+    /* Weather particle effects — spawn rain or snow around the player */
+    if (level.weather > 0) {
+        /* Check if player is outdoors by tracing up to sky */
+        vec3_t sky_start, sky_end;
+        trace_t sky_tr;
+        VectorCopy(ent->s.origin, sky_start);
+        sky_start[2] += 32;
+        VectorCopy(sky_start, sky_end);
+        sky_end[2] += 4096;
+        sky_tr = gi.trace(sky_start, NULL, NULL, sky_end, ent, MASK_SOLID);
+
+        if (sky_tr.surface && (sky_tr.surface->flags & SURF_SKY)) {
+            /* Player is outdoors — spawn weather particles */
+            vec3_t weather_org, weather_dir;
+            int particle_count;
+            VectorCopy(ent->s.origin, weather_org);
+            VectorSet(weather_dir, 0, 0, -1);
+
+            particle_count = (int)(level.weather_density * 8);
+            if (particle_count < 1) particle_count = 1;
+
+            if (level.weather == 1) {
+                /* Rain */
+                R_ParticleEffect(weather_org, weather_dir, 14, particle_count);
+            } else if (level.weather == 2) {
+                /* Snow */
+                R_ParticleEffect(weather_org, weather_dir, 15, particle_count);
+            }
         }
     }
 
@@ -2884,6 +2980,10 @@ static void G_RegisterWeapons(void)
 
     /* Reload sound */
     snd_reload = gi.soundindex("weapons/reload.wav");
+
+    /* Water splash sounds */
+    snd_splash_in = gi.soundindex("player/watr_in.wav");
+    snd_splash_out = gi.soundindex("player/watr_out.wav");
 }
 
 static const char *G_GetGameVersion(void)

@@ -1685,6 +1685,44 @@ void R_ParticleEffect(vec3_t org, vec3_t dir, int type, int count)
                                6.0f + (rand()%4), 1.0f);
         }
         break;
+
+    case 14: /* rain drop — fast-falling thin streaks */
+        for (i = 0; i < count; i++) {
+            vec3_t rain_org;
+            VectorCopy(org, rain_org);
+            rain_org[0] += ((float)(rand()%400) - 200);
+            rain_org[1] += ((float)(rand()%400) - 200);
+            rain_org[2] += 200.0f + (float)(rand()%100);
+            /* Rain falls fast with slight wind drift */
+            vel[0] = 10.0f + ((float)(rand()%20) - 10);
+            vel[1] = ((float)(rand()%20) - 10);
+            vel[2] = -600.0f - (float)(rand()%200);
+            VectorSet(accel, 0, 0, -200);
+            R_AddParticleSized(rain_org, vel, accel,
+                               0.6f, 0.65f, 0.75f, 0.5f,
+                               0.3f, 1.0f,
+                               2.0f, 0.0f);
+        }
+        break;
+
+    case 15: /* snowflake — slow drifting flakes */
+        for (i = 0; i < count; i++) {
+            vec3_t snow_org;
+            VectorCopy(org, snow_org);
+            snow_org[0] += ((float)(rand()%500) - 250);
+            snow_org[1] += ((float)(rand()%500) - 250);
+            snow_org[2] += 150.0f + (float)(rand()%100);
+            /* Snow drifts slowly, wobbles side to side */
+            vel[0] = ((float)(rand()%40) - 20);
+            vel[1] = ((float)(rand()%40) - 20);
+            vel[2] = -40.0f - (float)(rand()%30);
+            VectorSet(accel, (float)(rand()%20) - 10, (float)(rand()%20) - 10, -10);
+            R_AddParticleSized(snow_org, vel, accel,
+                               0.9f, 0.92f, 0.95f, 0.7f,
+                               0.15f, 4.0f,
+                               3.0f + (rand()%3), 0.0f);
+        }
+        break;
     }
 }
 

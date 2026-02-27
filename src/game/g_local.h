@@ -372,6 +372,9 @@ struct gclient_s {
 
     /* Keys */
     int             keys;                   /* bitmask of collected keys */
+
+    /* Water state tracking */
+    int             old_waterlevel;         /* waterlevel from previous frame */
 };
 
 /* ==========================================================================
@@ -546,6 +549,10 @@ typedef struct {
     int         total_secrets;      /* secret triggers on this level */
     int         found_secrets;      /* secrets found this level */
     float       level_start_time;   /* time when level started */
+
+    /* Weather */
+    int         weather;            /* 0=none, 1=rain, 2=snow */
+    float       weather_density;    /* particle density multiplier (1.0 = normal) */
 } level_t;
 
 extern level_t  level;

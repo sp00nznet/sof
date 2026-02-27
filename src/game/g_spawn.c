@@ -550,6 +550,26 @@ static void SP_worldspawn(edict_t *ent, epair_t *pairs, int num_pairs)
         gi.cvar_set("sv_gravity", val);
     }
 
+    /* Weather — set via "weather" key: 0=none, 1=rain, 2=snow */
+    val = ED_FindValue(pairs, num_pairs, "weather");
+    if (val) {
+        level.weather = atoi(val);
+        if (level.weather < 0) level.weather = 0;
+        if (level.weather > 2) level.weather = 2;
+        level.weather_density = 1.0f;
+        gi.dprintf("Weather: %s\n",
+                   level.weather == 1 ? "rain" :
+                   level.weather == 2 ? "snow" : "none");
+    }
+
+    /* Weather density override */
+    val = ED_FindValue(pairs, num_pairs, "weather_density");
+    if (val) {
+        level.weather_density = (float)atof(val);
+        if (level.weather_density < 0.1f) level.weather_density = 0.1f;
+        if (level.weather_density > 3.0f) level.weather_density = 3.0f;
+    }
+
     /* Precache common sounds */
     item_precache_sounds();
     door_precache_sounds();
