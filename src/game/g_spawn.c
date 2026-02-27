@@ -224,6 +224,7 @@ static void SP_env_dust(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_pushable(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_light_breakable(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_misc_throwable(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_misc_ambient_creature(edict_t *ent, epair_t *pairs, int num_pairs);
 
 /*
  * Spawn function dispatch table
@@ -337,6 +338,10 @@ static spawn_func_t spawn_funcs[] = {
     { "misc_barrel_small",          SP_misc_throwable },
     { "info_npc",                   SP_info_npc },
     { "info_npc_talk",              SP_info_npc },
+    { "misc_rat",                   SP_misc_ambient_creature },
+    { "misc_bat",                   SP_misc_ambient_creature },
+    { "misc_bird",                  SP_misc_ambient_creature },
+    { "misc_cockroach",             SP_misc_ambient_creature },
 
     /* Weapons (SoF) */
     { "weapon_knife",               SP_item_pickup },
@@ -826,6 +831,77 @@ static void SP_misc_throwable(edict_t *ent, epair_t *pairs, int num_pairs)
     VectorSet(ent->maxs, 4, 4, 4);
 
     gi.linkentity(ent);
+}
+
+/* ==========================================================================
+   Ambient Creatures — misc_rat, misc_bat, misc_bird, misc_cockroach
+   Small entities that flee from the player for atmosphere.
+   ========================================================================== */
+
+static void ambient_creature_think(edict_t *self)
+{
+    edict_t *player = &globals.edicts[1];
+    vec3_t diff;
+    float dist;
+
+    if (!self->inuse) return;
+
+    if (player && player->inuse && player->client) {
+        VectorSubtract(self->s.origin, player->s.origin, diff);
+        diff[2] = 0;
+        dist = VectorLength(diff);
+
+        /* Flee when player gets close */
+        if (dist < 200.0f && dist > 1.0f) {
+            float flee_speed = self->speed > 0 ? self->speed : 120.0f;
+            VectorScale(diff, 1.0f / dist, diff);  /* normalize */
+            self->velocity[0] = diff[0] * flee_speed;
+            self->velocity[1] = diff[1] * flee_speed;
+
+            /* Bats fly upward when disturbed */
+            if (strstr(self->classname, "bat") || strstr(self->classname, "bird"))
+                self->velocity[2] = 80.0f;
+        } else if (dist >= 200.0f) {
+            /* Stop fleeing */
+            self->velocity[0] *= 0.8f;
+            self->velocity[1] *= 0.8f;
+            self->velocity[2] *= 0.8f;
+        }
+    }
+
+    /* Random scurry — small random movement while idle */
+    if (gi.irand(0, 20) == 0) {
+        self->velocity[0] += gi.flrand(-30.0f, 30.0f);
+        self->velocity[1] += gi.flrand(-30.0f, 30.0f);
+    }
+
+    self->nextthink = level.time + 0.2f;
+    gi.linkentity(self);
+}
+
+static void SP_misc_ambient_creature(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *speed_str = ED_FindValue(pairs, num_pairs, "speed");
+    int is_flying;
+    (void)pairs; (void)num_pairs;
+
+    is_flying = (strstr(ent->classname, "bat") || strstr(ent->classname, "bird")) ? 1 : 0;
+
+    ent->movetype = is_flying ? MOVETYPE_FLY : MOVETYPE_STEP;
+    ent->solid = SOLID_NOT;  /* non-solid: just visual */
+    ent->takedamage = DAMAGE_YES;
+    ent->health = 1;  /* one-shot kill */
+    ent->max_health = 1;
+    ent->speed = speed_str ? (float)atof(speed_str) : 120.0f;
+    ent->think = ambient_creature_think;
+    ent->nextthink = level.time + 1.0f + gi.flrand(0, 2.0f);  /* stagger start */
+
+    VectorSet(ent->mins, -4, -4, 0);
+    VectorSet(ent->maxs, 4, 4, is_flying ? 4 : 8);
+
+    gi.linkentity(ent);
+    gi.dprintf("  %s at (%.0f %.0f %.0f)\n", ent->classname,
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
 }
 
 /* ==========================================================================

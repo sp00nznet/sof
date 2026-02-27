@@ -359,6 +359,48 @@ static void AI_Strafe(edict_t *self, int strafe_dir)
 }
 
 /*
+ * AI_Dodge — Quick sidestep when player is aiming at this monster.
+ * Traces from player's view to see if monster is in crosshair.
+ */
+static void AI_Dodge(edict_t *self)
+{
+    edict_t *player;
+    vec3_t fwd, aim_end, to_me;
+    float dot, dist;
+
+    if (!self->enemy || !self->enemy->client)
+        return;
+
+    player = self->enemy;
+
+    /* Check if player is aiming toward this monster */
+    {
+        float yaw_rad = player->client->viewangles[1] * 3.14159265f / 180.0f;
+        float pitch_rad = player->client->viewangles[0] * 3.14159265f / 180.0f;
+        fwd[0] = cosf(yaw_rad) * cosf(pitch_rad);
+        fwd[1] = sinf(yaw_rad) * cosf(pitch_rad);
+        fwd[2] = -sinf(pitch_rad);
+    }
+
+    VectorSubtract(self->s.origin, player->s.origin, to_me);
+    dist = VectorLength(to_me);
+    if (dist < 1.0f) return;
+
+    VectorScale(to_me, 1.0f / dist, to_me);
+    dot = DotProduct(fwd, to_me);
+
+    /* Player aiming within ~15 degrees of this monster */
+    if (dot > 0.96f && dist < 600.0f) {
+        /* Dodge: quick strafe sideways */
+        int dir = (rand() & 1) ? 1 : -1;
+        AI_Strafe(self, dir);
+        /* Extra speed burst for dodge */
+        self->velocity[0] *= 1.8f;
+        self->velocity[1] *= 1.8f;
+    }
+}
+
+/*
  * AI_SeekCover - Try to move behind nearby geometry to break LOS
  * Tests 8 compass directions, picks one that blocks LOS to enemy.
  */
@@ -674,6 +716,11 @@ static void ai_think_attack(edict_t *self)
             self->nextthink = level.time + FRAMETIME;
             return;
         }
+    }
+
+    /* Dodge: react when player is aiming directly (skilled monsters) */
+    if (self->max_health >= 80 && gi.irand(0, 10) == 0) {
+        AI_Dodge(self);
     }
 
     /* Strafe while attacking (change direction periodically) */
@@ -1116,8 +1163,21 @@ void monster_pain(edict_t *self, edict_t *other, float kick, int damage)
         R_ParticleEffect(self->s.origin, up, 1, 6 + damage / 5);
     }
 
+    /* Monster infighting: if hit by another monster, fight back */
+    if (other && (other->svflags & SVF_MONSTER) && other != self) {
+        if (!self->enemy || self->enemy == other) {
+            self->enemy = other;
+            self->count = AI_STATE_CHASE;
+            self->nextthink = level.time + FRAMETIME;
+        } else if (damage > 20) {
+            /* Heavy damage from another monster overrides current target */
+            self->enemy = other;
+            self->count = AI_STATE_CHASE;
+            self->nextthink = level.time + FRAMETIME;
+        }
+    }
     /* If no enemy yet, target attacker */
-    if (!self->enemy && other && other->client) {
+    else if (!self->enemy && other && other->client) {
         self->enemy = other;
     }
 }
