@@ -1106,6 +1106,85 @@ static void ClientCommand(edict_t *ent)
     }
 
     /* Slow-motion dive: bullet time + jump for cinematic dive */
+    if (Q_stricmp(cmd, "flashbang") == 0) {
+        if (ent->deadflag)
+            return;
+
+        /* Throw a flashbang — blinds all entities within 400 units in LOS */
+        {
+            extern game_export_t globals;
+            vec3_t fwd_f;
+            vec3_t bang_origin;
+            int snd, i;
+
+            G_AngleVectors(ent->client->viewangles, fwd_f, NULL, NULL);
+            bang_origin[0] = ent->s.origin[0] + fwd_f[0] * 200.0f;
+            bang_origin[1] = ent->s.origin[1] + fwd_f[1] * 200.0f;
+            bang_origin[2] = ent->s.origin[2] + fwd_f[2] * 200.0f + 40.0f;
+
+            /* Flash effect — bright white particles */
+            {
+                vec3_t up = {0, 0, 1};
+                R_ParticleEffect(bang_origin, up, 0, 20);  /* white burst */
+            }
+
+            snd = gi.soundindex("weapons/flashbang.wav");
+            if (snd)
+                gi.sound(ent, CHAN_WEAPON, snd, 1.0f, ATTN_NONE, 0);
+
+            /* Blind nearby entities */
+            for (i = 1; i < globals.num_edicts; i++) {
+                edict_t *e = &globals.edicts[i];
+                vec3_t d;
+                float dist;
+                trace_t tr;
+
+                if (e == ent || !e->inuse || e->health <= 0)
+                    continue;
+
+                VectorSubtract(e->s.origin, bang_origin, d);
+                dist = VectorLength(d);
+                if (dist > 400.0f)
+                    continue;
+
+                /* LOS check */
+                tr = gi.trace(bang_origin, NULL, NULL, e->s.origin,
+                               ent, MASK_OPAQUE);
+                if (tr.fraction < 1.0f && tr.ent != e)
+                    continue;
+
+                /* Scale duration by distance (closer = longer) */
+                {
+                    float dur = 3.0f * (1.0f - dist / 400.0f);
+                    if (dur < 0.5f) dur = 0.5f;
+
+                    if (e->client) {
+                        e->client->flash_end = level.time + dur;
+                    } else if (e->svflags & SVF_MONSTER) {
+                        /* Stun monsters: stop them briefly */
+                        e->nextthink = level.time + dur;
+                    }
+                }
+            }
+
+            SCR_AddPickupMessage("Flashbang!");
+        }
+        return;
+    }
+
+    if (Q_stricmp(cmd, "+leanleft") == 0) {
+        ent->client->lean_state = -1;
+        return;
+    }
+    if (Q_stricmp(cmd, "+leanright") == 0) {
+        ent->client->lean_state = 1;
+        return;
+    }
+    if (Q_stricmp(cmd, "-leanleft") == 0 || Q_stricmp(cmd, "-leanright") == 0) {
+        ent->client->lean_state = 0;
+        return;
+    }
+
     if (Q_stricmp(cmd, "dive") == 0) {
         if (ent->client->dive_end > level.time || ent->deadflag)
             return;
@@ -3814,6 +3893,38 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
                 SCR_AddKillFeed("Player", "poison", "environment");
                 client->deaths++;
             }
+        }
+    }
+
+    /* Flashbang blindness */
+    if (!ent->deadflag && client->flash_end > level.time) {
+        /* White-out screen */
+        float intensity = (client->flash_end - level.time) / 3.0f;
+        if (intensity > 1.0f) intensity = 1.0f;
+        client->blend[0] = 1.0f;
+        client->blend[1] = 1.0f;
+        client->blend[2] = 1.0f;
+        client->blend[3] = intensity * 0.9f;
+    }
+
+    /* Lean system — smoothly interpolate lean offset */
+    if (!ent->deadflag) {
+        float target = (client->lean_state != 0) ? 1.0f : 0;
+
+        if (client->lean_offset < target)
+            client->lean_offset += 4.0f * level.frametime;
+        else if (client->lean_offset > target)
+            client->lean_offset -= 4.0f * level.frametime;
+
+        if (client->lean_offset < 0) client->lean_offset = 0;
+        if (client->lean_offset > 1.0f) client->lean_offset = 1.0f;
+
+        /* Apply lean as roll angle */
+        if (client->lean_offset > 0.01f) {
+            float lean_angle = client->lean_offset * 15.0f * client->lean_state;
+            client->viewangles[2] = lean_angle;  /* roll */
+        } else {
+            client->viewangles[2] = 0;
         }
     }
 

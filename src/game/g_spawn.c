@@ -236,6 +236,9 @@ static void SP_misc_corpse(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_trap_pressure_plate(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_trap_swinging_blade(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_info_checkpoint(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_item_medkit(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_misc_security_camera(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_env_smoke(edict_t *ent, epair_t *pairs, int num_pairs);
 static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
                            int damage, vec3_t point);
 
@@ -377,6 +380,19 @@ static spawn_func_t spawn_funcs[] = {
     { "trap_pressure_plate",        SP_trap_pressure_plate },
     { "trap_swinging_blade",        SP_trap_swinging_blade },
     { "trap_blade",                 SP_trap_swinging_blade },
+
+    /* Pickups */
+    { "item_medkit",                SP_item_medkit },
+    { "item_health",                SP_item_medkit },
+    { "item_health_large",          SP_item_medkit },
+
+    /* Surveillance */
+    { "misc_security_camera",       SP_misc_security_camera },
+    { "misc_camera",                SP_misc_security_camera },
+
+    /* Smoke/fog volumes */
+    { "env_smoke",                  SP_env_smoke },
+    { "env_fog_volume",             SP_env_smoke },
 
     /* Weapons (SoF) */
     { "weapon_knife",               SP_item_pickup },
@@ -4163,6 +4179,222 @@ static void SP_target_monster_maker(edict_t *ent, epair_t *pairs, int num_pairs)
 
     ent->count = count_str ? atoi(count_str) : 0;
     ent->dmg = 0;  /* spawn counter */
+}
+
+/* ==========================================================================
+   item_medkit — Health pickup, restores 25HP on touch, respawns after 30s
+   ========================================================================== */
+
+static void medkit_touch(edict_t *self, edict_t *other, void *plane, csurface_t *surf)
+{
+    (void)plane; (void)surf;
+
+    if (!other || !other->client || other->deadflag)
+        return;
+    if (other->health >= 100)
+        return;  /* already full health */
+
+    other->health += 25;
+    if (other->health > 100)
+        other->health = 100;
+    other->client->pers_health = other->health;
+
+    /* Pickup sound */
+    {
+        int snd = gi.soundindex("items/health.wav");
+        if (snd)
+            gi.sound(other, CHAN_ITEM, snd, 1.0f, ATTN_NORM, 0);
+    }
+
+    SCR_AddPickupMessage("Medkit (+25 Health)");
+
+    /* Hide and respawn after 30 seconds */
+    self->solid = SOLID_NOT;
+    self->svflags |= SVF_NOCLIENT;
+    self->nextthink = level.time + 30.0f;
+    gi.linkentity(self);
+}
+
+static void medkit_respawn(edict_t *self)
+{
+    self->solid = SOLID_TRIGGER;
+    self->svflags &= ~SVF_NOCLIENT;
+    self->nextthink = 0;
+    gi.linkentity(self);
+}
+
+static void SP_item_medkit(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+
+    ent->solid = SOLID_TRIGGER;
+    ent->touch = medkit_touch;
+    ent->think = medkit_respawn;
+    ent->s.modelindex = gi.modelindex("models/items/medkit/tris.md2");
+
+    VectorSet(ent->mins, -16, -16, 0);
+    VectorSet(ent->maxs, 16, 16, 16);
+
+    gi.linkentity(ent);
+    gi.dprintf("  item_medkit at (%.0f %.0f %.0f)\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
+}
+
+/* ==========================================================================
+   misc_security_camera — Rotating camera that alerts nearby monsters when
+   it detects the player. Can be destroyed (50 HP).
+   ========================================================================== */
+
+static void camera_think(edict_t *self)
+{
+    extern game_export_t globals;
+    edict_t *player;
+    vec3_t diff, fwd;
+    float dist, dot, angle;
+    int i;
+
+    self->nextthink = level.time + 0.5f;
+
+    /* Rotate slowly */
+    self->s.angles[1] += 15.0f;  /* 30 deg/sec at 2 calls/sec */
+    if (self->s.angles[1] >= 360.0f)
+        self->s.angles[1] -= 360.0f;
+
+    /* Check for visible player */
+    player = &globals.edicts[1];
+    if (!player->inuse || !player->client || player->deadflag)
+        return;
+
+    VectorSubtract(player->s.origin, self->s.origin, diff);
+    dist = VectorLength(diff);
+    if (dist > 512.0f)
+        return;
+
+    /* Check if player is in camera's FOV (90 degree cone) */
+    angle = self->s.angles[1] * (3.14159265f / 180.0f);
+    fwd[0] = (float)cos(angle);
+    fwd[1] = (float)sin(angle);
+    fwd[2] = 0;
+    VectorNormalize(diff);
+    dot = diff[0] * fwd[0] + diff[1] * fwd[1];
+    if (dot < 0.707f)  /* ~45 degree half-angle */
+        return;
+
+    /* Trace visibility */
+    {
+        trace_t tr = gi.trace(self->s.origin, NULL, NULL, player->s.origin,
+                               self, MASK_OPAQUE);
+        if (tr.fraction < 1.0f && tr.ent != player)
+            return;
+    }
+
+    /* Detected! Alert nearby monsters */
+    {
+        int snd = gi.soundindex("world/alarm.wav");
+        if (snd)
+            gi.sound(self, CHAN_AUTO, snd, 1.0f, ATTN_NORM, 0);
+    }
+
+    for (i = 1; i < globals.num_edicts; i++) {
+        edict_t *e = &globals.edicts[i];
+        vec3_t d2;
+        if (!e->inuse || e->health <= 0 || !(e->svflags & SVF_MONSTER) || e->enemy)
+            continue;
+        VectorSubtract(e->s.origin, self->s.origin, d2);
+        if (VectorLength(d2) > 800.0f)
+            continue;
+        e->enemy = player;
+        e->count = 2;  /* AI_STATE_ALERT */
+        VectorCopy(player->s.origin, e->move_origin);
+    }
+}
+
+static void camera_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
+                        int damage, vec3_t point)
+{
+    (void)inflictor; (void)attacker; (void)damage; (void)point;
+
+    /* Spark particles */
+    {
+        vec3_t up = {0, 0, 1};
+        R_ParticleEffect(self->s.origin, up, 3, 8);  /* sparks */
+    }
+
+    {
+        int snd = gi.soundindex("world/spark.wav");
+        if (snd)
+            gi.sound(self, CHAN_AUTO, snd, 1.0f, ATTN_NORM, 0);
+    }
+
+    self->think = NULL;
+    self->nextthink = 0;
+    self->solid = SOLID_NOT;
+    self->svflags |= SVF_NOCLIENT;
+    gi.linkentity(self);
+}
+
+static void SP_misc_security_camera(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+
+    ent->solid = SOLID_BBOX;
+    ent->movetype = MOVETYPE_NONE;
+    ent->health = 50;
+    ent->takedamage = DAMAGE_YES;
+    ent->die = camera_die;
+    ent->think = camera_think;
+    ent->nextthink = level.time + 1.0f;
+
+    VectorSet(ent->mins, -8, -8, -8);
+    VectorSet(ent->maxs, 8, 8, 8);
+
+    gi.linkentity(ent);
+    gi.dprintf("  misc_security_camera at (%.0f %.0f %.0f)\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
+}
+
+/* ==========================================================================
+   env_smoke — Smoke/fog volume that reduces visibility and slows movement
+   ========================================================================== */
+
+static void smoke_touch(edict_t *self, edict_t *other, void *plane, csurface_t *surf)
+{
+    (void)plane; (void)surf;
+
+    if (!other || !other->client || other->deadflag)
+        return;
+
+    /* Slow movement by 40% while inside smoke */
+    other->velocity[0] *= 0.6f;
+    other->velocity[1] *= 0.6f;
+
+    /* Grey screen tint for obscured vision */
+    other->client->blend[0] = 0.5f;
+    other->client->blend[1] = 0.5f;
+    other->client->blend[2] = 0.5f;
+    other->client->blend[3] = 0.3f;
+
+    /* Smoke particles on player */
+    {
+        vec3_t up = {0, 0, 1};
+        R_ParticleEffect(other->s.origin, up, 8, 2);  /* grey/white */
+    }
+}
+
+static void SP_env_smoke(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+
+    ent->solid = SOLID_TRIGGER;
+    ent->touch = smoke_touch;
+    ent->movetype = MOVETYPE_NONE;
+
+    VectorSet(ent->mins, -64, -64, -32);
+    VectorSet(ent->maxs, 64, 64, 64);
+
+    gi.linkentity(ent);
+    gi.dprintf("  env_smoke at (%.0f %.0f %.0f)\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
 }
 
 /* ==========================================================================

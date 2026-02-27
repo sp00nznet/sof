@@ -486,6 +486,9 @@ struct gclient_s {
 
     /* Alternate fire mode */
     qboolean        alt_fire;              /* alternate fire mode active */
+
+    /* Flashbang blindness */
+    float           flash_end;             /* level.time when flash blindness clears */
 };
 
 /* ==========================================================================
