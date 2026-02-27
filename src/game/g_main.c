@@ -145,6 +145,7 @@ static int snd_splash_in;              /* water entry splash */
 static int snd_splash_out;             /* water exit splash */
 static int snd_ambient_wind;           /* outdoor wind ambience */
 static int snd_ambient_drip;           /* water area dripping */
+static int snd_ladder_step;            /* ladder climbing sound */
 
 #define WEAPON_SWITCH_TIME  0.5f        /* 500ms weapon switch delay */
 static int player_prev_weapon;  /* previous weapon for quick-switch (Q key) */
@@ -2160,6 +2161,13 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
                 ent->velocity[2] = 0;
             }
 
+            /* Ladder climbing sound — metallic step every 0.4s while moving */
+            if (ucmd->forwardmove != 0 && level.time >= client->next_footstep) {
+                if (snd_ladder_step)
+                    gi.sound(ent, CHAN_BODY, snd_ladder_step, 0.6f, ATTN_NORM, 0);
+                client->next_footstep = level.time + 0.4f;
+            }
+
             /* Jump off ladder */
             if (ucmd->upmove > 0) {
                 vec3_t fwd, rt, u;
@@ -3025,6 +3033,9 @@ static void G_RegisterWeapons(void)
     /* Ambient environment sounds */
     snd_ambient_wind = gi.soundindex("world/wind1.wav");
     snd_ambient_drip = gi.soundindex("world/drip1.wav");
+
+    /* Ladder climbing sound */
+    snd_ladder_step = gi.soundindex("player/ladder1.wav");
 }
 
 static const char *G_GetGameVersion(void)

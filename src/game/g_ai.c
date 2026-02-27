@@ -24,6 +24,7 @@ extern void R_AddTracer(vec3_t start, vec3_t end, float r, float g, float b);
 extern void SCR_AddDamageDirection(float angle);
 extern edict_t *G_AllocEdict(void);
 extern void grenade_explode(edict_t *self);
+extern edict_t *G_DropItem(vec3_t origin, const char *classname);
 
 /* Monster sound indices — precached in monster_start */
 static int snd_monster_pain1;
@@ -820,6 +821,46 @@ void monster_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
     /* Schedule corpse removal after 10 seconds */
     self->think = monster_corpse_remove;
     self->nextthink = level.time + 10.0f;
+
+    /* Death drops — monsters drop ammo based on their weapon type */
+    if (self->weapon_index > 0 && self->weapon_index < WEAP_COUNT) {
+        static const char *ammo_drop_names[] = {
+            NULL,               /* WEAP_NONE */
+            NULL,               /* WEAP_KNIFE (melee) */
+            "ammo_pistol",      /* WEAP_PISTOL1 */
+            "ammo_pistol",      /* WEAP_PISTOL2 */
+            "ammo_shotgun",     /* WEAP_SHOTGUN */
+            "ammo_machinegun",  /* WEAP_MACHINEGUN */
+            "ammo_assault",     /* WEAP_ASSAULT */
+            "ammo_sniper",      /* WEAP_SNIPER */
+            "ammo_slugger",     /* WEAP_SLUGGER */
+            "ammo_rockets",     /* WEAP_ROCKET */
+            "ammo_fuel",        /* WEAP_FLAMEGUN */
+            "ammo_cells",       /* WEAP_MPG */
+            "ammo_grenades",    /* WEAP_GRENADE */
+        };
+        const char *drop = ammo_drop_names[self->weapon_index];
+        if (drop) {
+            /* 60% chance to drop ammo, 20% chance to drop weapon instead */
+            int roll = rand() % 100;
+            if (roll < 60) {
+                G_DropItem(self->s.origin, drop);
+            } else if (roll < 80) {
+                /* Drop weapon — map weapon_index to weapon classname */
+                static const char *weap_drop_names[] = {
+                    NULL, NULL,
+                    "weapon_pistol1", "weapon_pistol2",
+                    "weapon_shotgun", "weapon_machinegun",
+                    "weapon_assault", "weapon_sniper",
+                    "weapon_slugger", "weapon_rocket",
+                    "weapon_flamegun", "weapon_mpg",
+                    "weapon_grenade",
+                };
+                G_DropItem(self->s.origin, weap_drop_names[self->weapon_index]);
+            }
+            /* 20% chance: drop nothing */
+        }
+    }
 
     gi.linkentity(self);
 

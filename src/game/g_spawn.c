@@ -2959,6 +2959,41 @@ static void SP_item_pickup(edict_t *ent, epair_t *pairs, int num_pairs)
     gi.linkentity(ent);
 }
 
+/*
+ * G_DropItem — Spawn an item pickup at a world position
+ * Used for monster death drops. The item bobs and can be picked up.
+ */
+edict_t *G_DropItem(vec3_t origin, const char *classname)
+{
+    edict_t *drop;
+
+    drop = G_AllocEdict();
+    if (!drop) return NULL;
+
+    drop->classname = (char *)classname;
+    VectorCopy(origin, drop->s.origin);
+    drop->s.origin[2] += 16;  /* pop up slightly */
+
+    drop->solid = SOLID_TRIGGER;
+    drop->movetype = MOVETYPE_NONE;
+    drop->touch = item_touch;
+
+    VectorSet(drop->mins, -16, -16, -16);
+    VectorSet(drop->maxs, 16, 16, 16);
+
+    VectorCopy(drop->s.origin, drop->move_origin);
+    drop->speed = ((float)(rand() % 628)) * 0.01f;
+
+    drop->think = item_bob_think;
+    drop->nextthink = level.time + 0.1f;
+
+    /* In DM mode, disappear after 30s; in SP mode, stay */
+    drop->wait = 0;  /* persistent */
+
+    gi.linkentity(drop);
+    return drop;
+}
+
 /* ==========================================================================
    target_monster_maker — Spawns a monster at its location when triggered
    Keys: monstertype (classname), count (max spawns, 0=infinite)
