@@ -2673,6 +2673,11 @@ static void G_FireHitscan(edict_t *ent)
         if (ent->client->zoomed && weap == WEAP_SNIPER)
             spread *= 0.1f;
 
+        /* Dual wielding: reduced accuracy (one-handed shooting) */
+        if (ent->client->dual_wield &&
+            (weap == WEAP_PISTOL1 || weap == WEAP_PISTOL2))
+            spread *= 1.5f;
+
         /* Crouching reduces spread (steadier aim) */
         if (ent->client->viewheight < 20.0f)
             spread *= 0.6f;
@@ -3549,9 +3554,20 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
             else
                 client->kick_angles[2] *= 0.9f;  /* decay back to center */
         } else {
-            /* Idle sway — very subtle */
+            /* Idle sway — breathing cycle affects pitch and roll */
             client->bob_time += level.frametime * 2.0f;
             client->kick_angles[2] = sinf(client->bob_time) * 0.1f;
+            client->kick_angles[0] += sinf(client->bob_time * 0.5f) * 0.08f; /* breathe pitch */
+
+            /* Scoped sway: amplified when zoomed (unsteady hold) */
+            if (client->zoomed) {
+                float sway_amp = 0.25f;
+                /* Crouching reduces scope sway */
+                if (client->viewheight < 20)
+                    sway_amp = 0.12f;
+                client->kick_angles[0] += sinf(client->bob_time * 1.7f) * sway_amp;
+                client->kick_angles[1] += cosf(client->bob_time * 1.3f) * sway_amp * 0.7f;
+            }
         }
     }
 

@@ -253,6 +253,8 @@ static void SP_misc_supply_crate(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_trigger_audio_zone(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_item_shield(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_info_landmark(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_mirror(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_env_fog(edict_t *ent, epair_t *pairs, int num_pairs);
 static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
                            int damage, vec3_t point);
 
@@ -461,6 +463,13 @@ static spawn_func_t spawn_funcs[] = {
 
     /* Map transition landmarks */
     { "info_landmark",              SP_info_landmark },
+
+    /* Reflective surfaces */
+    { "func_mirror",                SP_func_mirror },
+
+    /* Fog volume */
+    { "env_fog",                    SP_env_fog },
+    { "env_fog_global",             SP_env_fog },
 
     /* Weapons (SoF) */
     { "weapon_knife",               SP_item_pickup },
@@ -5249,6 +5258,78 @@ static void SP_info_landmark(edict_t *ent, epair_t *pairs, int num_pairs)
     gi.dprintf("  info_landmark '%s' at (%.0f %.0f %.0f)\n",
                ent->targetname ? ent->targetname : "(unnamed)",
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
+}
+
+/* ==========================================================================
+   func_mirror — Reflective BSP surface (marks brush for env-map rendering)
+   ========================================================================== */
+
+static void SP_func_mirror(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+
+    ent->movetype = MOVETYPE_PUSH;
+    ent->solid = SOLID_BSP;
+    ent->s.renderfx |= RF_TRANSLUCENT;  /* hint to renderer: reflective surface */
+
+    gi.linkentity(ent);
+
+    gi.dprintf("  func_mirror at (%.0f %.0f %.0f)\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
+}
+
+/* ==========================================================================
+   env_fog — Fog volume or global fog settings
+   color = RGB (0-255), density = fog thickness (0.0-1.0)
+   ========================================================================== */
+
+static void env_fog_touch(edict_t *self, edict_t *other,
+                           void *plane, csurface_t *surf)
+{
+    (void)plane; (void)surf;
+
+    if (!other || !other->client)
+        return;
+
+    /* Apply fog tint to player's view blend */
+    other->client->blend[0] = self->move_angles[0];  /* fog R (0-1) */
+    other->client->blend[1] = self->move_angles[1];  /* fog G (0-1) */
+    other->client->blend[2] = self->move_angles[2];  /* fog B (0-1) */
+    other->client->blend[3] = self->speed * 0.3f;  /* density->alpha */
+}
+
+static void SP_env_fog(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *color_str = ED_FindValue(pairs, num_pairs, "color");
+    const char *density_str = ED_FindValue(pairs, num_pairs, "density");
+
+    ent->solid = SOLID_TRIGGER;
+    ent->movetype = MOVETYPE_NONE;
+    ent->svflags |= SVF_NOCLIENT;
+    ent->touch = env_fog_touch;
+
+    /* Parse fog color (0-255 -> 0-1) */
+    if (color_str) {
+        int r = 128, g = 128, b = 128;
+        sscanf(color_str, "%d %d %d", &r, &g, &b);
+        ent->move_angles[0] = r / 255.0f;
+        ent->move_angles[1] = g / 255.0f;
+        ent->move_angles[2] = b / 255.0f;
+    } else {
+        ent->move_angles[0] = 0.5f;
+        ent->move_angles[1] = 0.5f;
+        ent->move_angles[2] = 0.5f;
+    }
+
+    /* Fog density */
+    ent->speed = density_str ? (float)atof(density_str) : 0.3f;
+    if (ent->speed > 1.0f) ent->speed = 1.0f;
+    if (ent->speed < 0.01f) ent->speed = 0.01f;
+
+    gi.linkentity(ent);
+
+    gi.dprintf("  env_fog at (%.0f %.0f %.0f) density=%.2f\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2], ent->speed);
 }
 
 /* ==========================================================================

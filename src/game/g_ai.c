@@ -28,6 +28,7 @@ extern edict_t *G_DropItem(vec3_t origin, const char *classname);
 
 /* Forward declarations */
 static void AI_FormationSpread(edict_t *self);
+void AI_AllyDied(vec3_t death_origin);
 
 /* Monster sound indices — precached in monster_start */
 static int snd_monster_pain1;
@@ -901,8 +902,23 @@ static void ai_think_attack(edict_t *self)
         return;
     }
 
-    /* Lost LOS: try peeking from cover before giving up */
+    /* Lost LOS: suppressive fire then peek/chase */
     if (!AI_Visible(self, self->enemy)) {
+        /* Tough soldiers fire a burst toward last known position */
+        if (self->max_health >= 80 && self->move_angles[2] < level.time) {
+            vec3_t aim_dir, aim_end, spray;
+            trace_t tr;
+            VectorSubtract(self->move_origin, self->s.origin, aim_dir);
+            VectorNormalize(aim_dir);
+            /* Add random spread for suppressive fire */
+            spray[0] = aim_dir[0] + ((float)(rand() % 100) - 50.0f) * 0.002f;
+            spray[1] = aim_dir[1] + ((float)(rand() % 100) - 50.0f) * 0.002f;
+            spray[2] = aim_dir[2];
+            VectorMA(self->s.origin, 1024.0f, spray, aim_end);
+            tr = gi.trace(self->s.origin, NULL, NULL, aim_end, self, MASK_SHOT);
+            R_AddTracer(self->s.origin, tr.endpos, 1.0f, 0.7f, 0.3f);
+            self->move_angles[2] = level.time + 0.15f; /* suppress cooldown */
+        }
         AI_CoverPeek(self);
         self->count = AI_STATE_CHASE;
         VectorCopy(self->enemy->s.origin, self->move_origin);
@@ -1466,6 +1482,9 @@ void monster_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
     self->think = monster_corpse_remove;
     self->nextthink = level.time + 10.0f;
 
+    /* Notify nearby allies — may break morale */
+    AI_AllyDied(self->s.origin);
+
     /* Death drops — monsters drop ammo based on their weapon type */
     if (self->weapon_index > 0 && self->weapon_index < WEAP_COUNT) {
         static const char *ammo_drop_names[] = {
@@ -1718,6 +1737,74 @@ static void AI_FormationSpread(edict_t *self)
     /* Apply push to velocity */
     self->velocity[0] += push[0];
     self->velocity[1] += push[1];
+}
+
+/* ==========================================================================
+   AI Morale — nearby ally deaths cause remaining monsters to flee
+   ========================================================================== */
+
+#define AI_MORALE_RANGE     512.0f  /* range to notice ally deaths */
+#define AI_MORALE_FLEE_PCT  0.5f    /* flee if >50% of nearby allies dead */
+
+void AI_AllyDied(vec3_t death_origin)
+{
+    extern game_export_t globals;
+    int i;
+
+    for (i = 1; i < globals.num_edicts; i++) {
+        edict_t *e = &globals.edicts[i];
+        vec3_t diff;
+        float dist;
+        int alive_nearby, dead_nearby;
+        int j;
+
+        if (!e->inuse || e->health <= 0)
+            continue;
+        if (!(e->svflags & SVF_MONSTER))
+            continue;
+
+        VectorSubtract(e->s.origin, death_origin, diff);
+        dist = VectorLength(diff);
+        if (dist > AI_MORALE_RANGE)
+            continue;
+
+        /* Count alive vs dead monsters nearby */
+        alive_nearby = 0;
+        dead_nearby = 0;
+        for (j = 1; j < globals.num_edicts; j++) {
+            edict_t *other = &globals.edicts[j];
+            vec3_t d2;
+            float d2_len;
+            if (other == e || !other->inuse)
+                continue;
+            if (!(other->svflags & SVF_MONSTER))
+                continue;
+            VectorSubtract(other->s.origin, e->s.origin, d2);
+            d2_len = VectorLength(d2);
+            if (d2_len > AI_MORALE_RANGE)
+                continue;
+            if (other->health > 0)
+                alive_nearby++;
+            else
+                dead_nearby++;
+        }
+
+        /* If too many allies dead, break and flee */
+        if (dead_nearby > 0 && alive_nearby > 0 &&
+            (float)dead_nearby / (float)(alive_nearby + dead_nearby) > AI_MORALE_FLEE_PCT) {
+            /* Low-health soldiers flee; tougher ones hold ground */
+            if (e->max_health < 120) {
+                vec3_t flee_dir;
+                VectorSubtract(e->s.origin, death_origin, flee_dir);
+                flee_dir[2] = 0;
+                VectorNormalize(flee_dir);
+                VectorCopy(flee_dir, e->move_origin);
+                VectorMA(e->s.origin, 300.0f, flee_dir, e->move_origin);
+                e->count = AI_STATE_CHASE; /* will chase toward flee point */
+                e->enemy = NULL;           /* disengage */
+            }
+        }
+    }
 }
 
 /* ==========================================================================
