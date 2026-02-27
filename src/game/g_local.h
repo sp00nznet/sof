@@ -461,6 +461,14 @@ struct gclient_s {
     float           weapon_heat;           /* 0..1, builds with sustained fire */
     qboolean        weapon_overheated;     /* in overheat cooldown state */
     float           overheat_end;          /* level.time when overheat clears */
+
+    /* Armor-piercing toggle */
+    qboolean        ap_rounds;             /* using armor-piercing ammo */
+
+    /* Revive system (coop) */
+    qboolean        downed;                /* player is downed, waiting for revive */
+    float           downed_time;           /* level.time when downed */
+    float           bleedout_end;          /* level.time when bleedout kills */
 };
 
 /* ==========================================================================

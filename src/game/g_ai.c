@@ -1243,6 +1243,17 @@ void monster_pain(edict_t *self, edict_t *other, float kick, int damage)
     else if (!self->enemy && other && other->client) {
         self->enemy = other;
     }
+
+    /* Suppression: rapid hits force monster into extended cover */
+    if (self->dmg_debounce_time > level.time - 1.0f) {
+        /* Hit again within 1s — suppressed, seek cover longer */
+        if (AI_SeekCover(self)) {
+            AI_MoveToward(self, self->move_origin, AI_CHASE_SPEED);
+            self->count = AI_STATE_PAIN;
+            self->nextthink = level.time + 1.5f;  /* stay down longer */
+        }
+    }
+    self->dmg_debounce_time = level.time;
 }
 
 /* Corpse sink think — gradually lowers corpse into ground before removal */

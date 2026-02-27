@@ -1039,6 +1039,51 @@ static void ClientCommand(edict_t *ent)
         return;
     }
 
+    /* Armor-piercing rounds toggle */
+    if (Q_stricmp(cmd, "ap") == 0 || Q_stricmp(cmd, "armorpiercing") == 0) {
+        ent->client->ap_rounds = !ent->client->ap_rounds;
+        gi.cprintf(ent, PRINT_ALL, "Armor-piercing: %s\n",
+                   ent->client->ap_rounds ? "ON" : "OFF");
+        if (ent->client->ap_rounds)
+            SCR_AddPickupMessage("AP ROUNDS");
+        return;
+    }
+
+    /* Revive downed teammate — look at them and press USE */
+    if (Q_stricmp(cmd, "revive") == 0) {
+        extern game_export_t globals;
+        extern int game_maxclients;
+        vec3_t forward2, rt2, up2, eye;
+        trace_t rev_tr;
+        int j;
+
+        G_AngleVectors(ent->client->viewangles, forward2, rt2, up2);
+        VectorCopy(ent->s.origin, eye);
+        eye[2] += ent->client->viewheight;
+
+        {
+            vec3_t rev_end;
+            VectorMA(eye, 96, forward2, rev_end);
+            rev_tr = gi.trace(eye, NULL, NULL, rev_end, ent, MASK_SHOT);
+        }
+
+        if (rev_tr.ent && rev_tr.ent->client && rev_tr.ent->client->downed) {
+            /* Revive this player */
+            rev_tr.ent->client->downed = qfalse;
+            rev_tr.ent->health = 30;
+            rev_tr.ent->client->pers_health = 30;
+            rev_tr.ent->deadflag = 0;
+            rev_tr.ent->client->ps.pm_type = PM_NORMAL;
+            rev_tr.ent->takedamage = DAMAGE_AIM;
+            gi.cprintf(ent, PRINT_ALL, "Teammate revived!\n");
+            gi.cprintf(rev_tr.ent, PRINT_ALL, "You have been revived!\n");
+            SCR_AddPickupMessage("REVIVE!");
+        } else {
+            gi.cprintf(ent, PRINT_ALL, "No downed teammate in front of you.\n");
+        }
+        return;
+    }
+
     gi.cprintf(ent, PRINT_ALL, "Unknown command: %s\n", cmd);
 }
 
@@ -2362,8 +2407,9 @@ static void G_FireHitscan(edict_t *ent)
                 zone_dmg = (int)(damage * zone_mult);
                 if (ent->client) ent->client->last_damage_zone = zone;
 
-                /* Armor absorbs 66% of damage for players */
-                if (tr.ent->client && tr.ent->client->armor > 0) {
+                /* Armor absorbs 66% of damage — unless AP rounds bypass it */
+                if (tr.ent->client && tr.ent->client->armor > 0 &&
+                    !(ent->client && ent->client->ap_rounds)) {
                     int armor_absorb = (int)(zone_dmg * 0.66f);
                     if (armor_absorb > tr.ent->client->armor)
                         armor_absorb = tr.ent->client->armor;
@@ -3326,6 +3372,21 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
     if (client->weapon_heat > 0 && !client->weapon_overheated) {
         client->weapon_heat -= 0.15f * level.frametime;  /* cools in ~6.5s idle */
         if (client->weapon_heat < 0) client->weapon_heat = 0;
+    }
+
+    /* Coop revive: downed player bleedout timer */
+    if (client->downed) {
+        if (level.time >= client->bleedout_end) {
+            /* Bleedout — actually die */
+            client->downed = qfalse;
+            ent->health = -1;
+            ent->deadflag = 1;
+            client->ps.pm_type = PM_DEAD;
+            client->pers_health = 0;
+        }
+        /* Can't move or shoot while downed */
+        ent->velocity[0] = ent->velocity[1] = 0;
+        return;
     }
 
     /* Reload completion check */
