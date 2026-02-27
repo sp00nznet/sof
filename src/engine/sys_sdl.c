@@ -436,8 +436,17 @@ int Sys_RegDeleteKey(const char *key)
  * (Track 1 is typically the data track on a game CD.)
  */
 
+typedef struct sfx_s sfx_t;
 extern void S_StartLocalSound(const char *name);
 extern void S_StopAllSounds(void);
+extern sfx_t *S_RegisterSound(const char *name);
+extern void S_StartSound(float *origin, int entnum, int entchannel,
+                          sfx_t *sfx, float vol, float attenuation,
+                          float timeofs);
+extern void S_StartLoopingSound(float *origin, int entnum, int entchannel,
+                                 sfx_t *sfx, float vol, float attenuation);
+#define ATTN_NONE   0
+#define CHAN_BODY    4
 
 static int  cdaudio_track;
 static int  cdaudio_looping;
@@ -459,6 +468,7 @@ void CDAudio_Shutdown(void)
 int CDAudio_Play(int track, int looping)
 {
     char trackname[64];
+    sfx_t *sfx;
 
     cdaudio_track = track;
     cdaudio_looping = looping;
@@ -469,7 +479,15 @@ int CDAudio_Play(int track, int looping)
     Com_Printf("CD Audio: play track %d (%s) %s\n", track, trackname,
                looping ? "[looping]" : "");
 
-    S_StartLocalSound(trackname);
+    sfx = S_RegisterSound(trackname);
+    if (sfx) {
+        if (looping) {
+            /* Use looping sound channel for continuous music playback */
+            S_StartLoopingSound(NULL, 0, CHAN_BODY, sfx, 0.6f, ATTN_NONE);
+        } else {
+            S_StartSound(NULL, 0, CHAN_BODY, sfx, 0.6f, ATTN_NONE, 0);
+        }
+    }
     return 1;
 }
 
