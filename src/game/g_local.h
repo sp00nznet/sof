@@ -479,6 +479,13 @@ struct gclient_s {
 
     /* Weapon inspect */
     float           inspect_end;           /* level.time when inspect animation done */
+
+    /* Poison DoT (from acid/environmental) */
+    float           poison_end;            /* level.time when poison clears */
+    float           poison_next_tick;      /* level.time for next poison tick */
+
+    /* Alternate fire mode */
+    qboolean        alt_fire;              /* alternate fire mode active */
 };
 
 /* ==========================================================================

@@ -235,6 +235,7 @@ static void SP_func_rope(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_misc_corpse(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_trap_pressure_plate(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_trap_swinging_blade(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_info_checkpoint(edict_t *ent, epair_t *pairs, int num_pairs);
 static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
                            int damage, vec3_t point);
 
@@ -372,6 +373,7 @@ static spawn_func_t spawn_funcs[] = {
     { "misc_mounted_gun",           SP_misc_turret },
     { "misc_tripmine",              SP_misc_tripmine },
     { "misc_trap",                  SP_misc_tripmine },
+    { "info_checkpoint",            SP_info_checkpoint },
     { "trap_pressure_plate",        SP_trap_pressure_plate },
     { "trap_swinging_blade",        SP_trap_swinging_blade },
     { "trap_blade",                 SP_trap_swinging_blade },
@@ -1939,6 +1941,10 @@ static void acid_touch(edict_t *self, edict_t *other, void *plane, csurface_t *s
         other->client->blend[2] = 0.0f;
         other->client->blend[3] = 0.35f;
         other->client->pers_health = other->health;
+
+        /* Apply poison DoT — 5 seconds of lingering damage */
+        other->client->poison_end = level.time + 5.0f;
+        other->client->poison_next_tick = level.time + 0.8f;
     }
     R_ParticleEffect(other->s.origin, other->mins, 7, 4);  /* steam/bubble particles */
 
@@ -2590,6 +2596,52 @@ static void SP_misc_corpse(edict_t *ent, epair_t *pairs, int num_pairs)
     gi.dprintf("  misc_corpse at (%.0f %.0f %.0f) frame=%d\n",
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
                ent->s.frame);
+}
+
+/* ==========================================================================
+   info_checkpoint — Auto-saves when player walks through
+   ========================================================================== */
+
+static void checkpoint_touch(edict_t *self, edict_t *other, void *plane, csurface_t *surf)
+{
+    (void)plane; (void)surf;
+
+    if (!other || !other->client || self->count)
+        return;
+
+    self->count = 1;  /* only trigger once */
+
+    /* Auto-save */
+    {
+        extern void WriteGame(const char *filename, qboolean autosave);
+        extern void WriteLevel(const char *filename);
+        WriteGame("checkpoint.sav", qtrue);
+        WriteLevel("checkpoint.sv2");
+    }
+
+    SCR_AddPickupMessage("CHECKPOINT");
+    gi.dprintf("Checkpoint reached at (%.0f %.0f %.0f)\n",
+               other->s.origin[0], other->s.origin[1], other->s.origin[2]);
+
+    /* Fire targets if any */
+    if (self->target)
+        G_UseTargets(other, self->target);
+}
+
+static void SP_info_checkpoint(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+
+    ent->solid = SOLID_TRIGGER;
+    ent->touch = checkpoint_touch;
+    ent->count = 0;
+
+    VectorSet(ent->mins, -32, -32, -32);
+    VectorSet(ent->maxs, 32, 32, 32);
+
+    gi.linkentity(ent);
+    gi.dprintf("  info_checkpoint at (%.0f %.0f %.0f)\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
 }
 
 /* ==========================================================================

@@ -1084,6 +1084,16 @@ static void ClientCommand(edict_t *ent)
         return;
     }
 
+    /* Alternate fire mode toggle */
+    if (Q_stricmp(cmd, "altfire") == 0 || Q_stricmp(cmd, "+altfire") == 0) {
+        ent->client->alt_fire = !ent->client->alt_fire;
+        gi.cprintf(ent, PRINT_ALL, "Fire mode: %s\n",
+                   ent->client->alt_fire ? "ALTERNATE" : "PRIMARY");
+        if (ent->client->alt_fire)
+            SCR_AddPickupMessage("ALT FIRE");
+        return;
+    }
+
     /* Weapon inspect animation */
     if (Q_stricmp(cmd, "inspect") == 0) {
         if (ent->client->inspect_end > level.time) {
@@ -2429,6 +2439,12 @@ static void G_FireHitscan(edict_t *ent)
                 }
             }
 
+            /* Knife bleed: melee hits cause bleeding DoT */
+            if (weap == WEAP_KNIFE && tr.ent->client && tr.ent->health > 0) {
+                tr.ent->client->bleed_end = level.time + 4.0f;
+                tr.ent->client->bleed_next_tick = level.time + 1.0f;
+            }
+
             /* Execution finisher — instant kill on low-HP enemy with melee */
             if (weap == WEAP_KNIFE && tr.ent->health > 0 &&
                 tr.ent->max_health > 0 &&
@@ -3768,6 +3784,34 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
                 ent->deadflag = 1;
                 client->ps.pm_type = PM_DEAD;
                 SCR_AddKillFeed("Player", "bleeding", "environment");
+                client->deaths++;
+            }
+        }
+    }
+
+    /* Status effects: poison (from acid/environmental) */
+    if (!ent->deadflag && client->poison_end > level.time) {
+        if (level.time >= client->poison_next_tick) {
+            ent->health -= 1;
+            client->pers_health = ent->health;
+            client->poison_next_tick = level.time + 0.8f;
+
+            /* Green tint screen flash */
+            client->blend[0] = 0.1f;
+            client->blend[1] = 0.8f;
+            client->blend[2] = 0.1f;
+            client->blend[3] = 0.15f;
+
+            /* Green particles */
+            {
+                vec3_t up = {0, 0, 1};
+                R_ParticleEffect(ent->s.origin, up, 7, 2);  /* steam/gas */
+            }
+
+            if (ent->health <= 0) {
+                ent->deadflag = 1;
+                client->ps.pm_type = PM_DEAD;
+                SCR_AddKillFeed("Player", "poison", "environment");
                 client->deaths++;
             }
         }
