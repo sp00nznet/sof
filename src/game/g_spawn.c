@@ -226,6 +226,7 @@ static void SP_func_light_breakable(edict_t *ent, epair_t *pairs, int num_pairs)
 static void SP_misc_throwable(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_misc_ambient_creature(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_misc_readable(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_misc_turret(edict_t *ent, epair_t *pairs, int num_pairs);
 
 /*
  * Spawn function dispatch table
@@ -346,6 +347,8 @@ static spawn_func_t spawn_funcs[] = {
     { "misc_readable",              SP_misc_readable },
     { "misc_note",                  SP_misc_readable },
     { "misc_sign",                  SP_misc_readable },
+    { "misc_turret",                SP_misc_turret },
+    { "misc_mounted_gun",           SP_misc_turret },
 
     /* Weapons (SoF) */
     { "weapon_knife",               SP_item_pickup },
@@ -942,6 +945,75 @@ static void SP_misc_readable(edict_t *ent, epair_t *pairs, int num_pairs)
 
     gi.linkentity(ent);
     gi.dprintf("  misc_readable '%s'\n", ent->message);
+}
+
+/* ==========================================================================
+   Turret / Mounted Gun
+   Player uses (interacts) to mount, fires with attack button.
+   High damage, limited rotation, fixed position.
+   ========================================================================== */
+
+static void turret_use(edict_t *self, edict_t *other, edict_t *activator)
+{
+    (void)other;
+    if (!activator || !activator->client)
+        return;
+
+    if (activator->client->held_object == self) {
+        /* Dismount turret */
+        activator->client->held_object = NULL;
+        gi.cprintf(activator, PRINT_ALL, "Dismounted turret\n");
+        return;
+    }
+
+    /* Mount turret — store reference in held_object (overloaded) */
+    activator->client->held_object = self;
+    gi.cprintf(activator, PRINT_ALL, "Mounted turret — ATTACK to fire, USE to dismount\n");
+    SCR_AddPickupMessage("Mounted Turret");
+}
+
+static void turret_think(edict_t *self)
+{
+    extern game_export_t globals;
+    edict_t *player = &globals.edicts[1];
+
+    if (!self->inuse) return;
+    self->nextthink = level.time + 0.1f;
+
+    /* Check if player is mounted on this turret */
+    if (player && player->inuse && player->client &&
+        player->client->held_object == self) {
+        /* Keep player position locked to turret */
+        vec3_t diff;
+        float dist;
+        VectorSubtract(player->s.origin, self->s.origin, diff);
+        dist = VectorLength(diff);
+        if (dist > 64.0f) {
+            /* Player moved too far — dismount */
+            player->client->held_object = NULL;
+        }
+    }
+}
+
+static void SP_misc_turret(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *dmg_str = ED_FindValue(pairs, num_pairs, "dmg");
+    (void)pairs; (void)num_pairs;
+
+    ent->solid = SOLID_BBOX;
+    ent->movetype = MOVETYPE_NONE;
+    ent->takedamage = DAMAGE_NO;
+    ent->dmg = dmg_str ? atoi(dmg_str) : 40;  /* turret damage per shot */
+    ent->use = turret_use;
+    ent->think = turret_think;
+    ent->nextthink = level.time + 1.0f;
+
+    VectorSet(ent->mins, -12, -12, 0);
+    VectorSet(ent->maxs, 12, 12, 24);
+
+    gi.linkentity(ent);
+    gi.dprintf("  misc_turret at (%.0f %.0f %.0f) dmg=%d\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2], ent->dmg);
 }
 
 /* ==========================================================================

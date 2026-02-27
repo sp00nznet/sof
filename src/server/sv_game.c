@@ -1622,3 +1622,13 @@ qboolean SV_GetPlayerRank(int *rank, int *xp, const char **rank_name)
     return qtrue;
 }
 
+/*
+ * SV_GetSpeedrunTime — Get elapsed speedrun time (0 if not active)
+ */
+float SV_GetSpeedrunTime(void)
+{
+    if (!level.speedrun_active)
+        return 0;
+    return level.time - level.speedrun_start;
+}
+

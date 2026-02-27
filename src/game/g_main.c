@@ -790,6 +790,26 @@ static void ClientCommand(edict_t *ent)
         return;
     }
 
+    if (Q_stricmp(cmd, "speedrun") == 0) {
+        if (level.speedrun_active) {
+            float elapsed = level.time - level.speedrun_start;
+            int minutes = (int)(elapsed / 60.0f);
+            float seconds = elapsed - minutes * 60.0f;
+            char timebuf[64];
+            snprintf(timebuf, sizeof(timebuf), "Time: %d:%05.2f", minutes, seconds);
+            level.speedrun_active = qfalse;
+            level.speedrun_start = 0;
+            gi.cprintf(ent, PRINT_ALL, "Speedrun stopped! %s\n", timebuf);
+            SCR_AddPickupMessage(timebuf);
+        } else {
+            level.speedrun_active = qtrue;
+            level.speedrun_start = level.time;
+            gi.cprintf(ent, PRINT_ALL, "Speedrun timer started!\n");
+            SCR_AddPickupMessage("SPEEDRUN GO!");
+        }
+        return;
+    }
+
     if (Q_stricmp(cmd, "save") == 0) {
         const char *savename = gi.argc() > 1 ? gi.argv(1) : "quick";
         char gamefile[256], levelfile[256];

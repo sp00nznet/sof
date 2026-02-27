@@ -620,6 +620,10 @@ typedef struct {
 
     /* Bullet time */
     float       time_scale;         /* 1.0=normal, 0.3=slow motion */
+
+    /* Speedrun timer */
+    float       speedrun_start;     /* level.time when timer started (0=inactive) */
+    qboolean    speedrun_active;    /* timer is running */
 } level_t;
 
 extern level_t  level;

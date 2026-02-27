@@ -2866,6 +2866,26 @@ static void SCR_DrawHUD(float frametime)
         }
     }
 
+    /* Speedrun timer — top center */
+    {
+        extern float SV_GetSpeedrunTime(void);
+        float elapsed = SV_GetSpeedrunTime();
+        if (elapsed > 0) {
+            int minutes = (int)(elapsed / 60.0f);
+            float seconds = elapsed - minutes * 60.0f;
+            char timebuf[32];
+            int tlen, tx;
+
+            snprintf(timebuf, sizeof(timebuf), "%d:%05.2f", minutes, seconds);
+            tlen = (int)strlen(timebuf);
+            tx = g_display.width / 2 - tlen * 4;
+
+            R_SetDrawColor(1.0f, 0.9f, 0.3f, 0.9f);
+            R_DrawString(tx, 8, timebuf);
+            R_SetDrawColor(1.0f, 1.0f, 1.0f, 1.0f);
+        }
+    }
+
     /* Developer HUD — FPS, position, entity count */
     if (developer && developer->value) {
         static int  fps_frame_count;
