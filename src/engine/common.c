@@ -2403,11 +2403,16 @@ static void SCR_DrawHUD(float frametime)
     /* HUD background bar — bottom of screen (semi-transparent dark) */
     R_DrawFill(0, g_display.height - 48, g_display.width, 48, (int)(0x80000000));
 
-    /* Health display - bottom left */
+    /* Health display with bar - bottom left */
     if (SV_GetPlayerHealth(&health, &max_health)) {
+        int bar_w = 80, bar_h = 6;
+        int bx = 16, by = g_display.height - 18;
+        float pct = max_health > 0 ? (float)health / (float)max_health : 0;
+        int fill_w;
+
         /* Health label */
         R_SetDrawColor(0.8f, 0.8f, 0.8f, 1.0f);
-        R_DrawString(16, g_display.height - 40, "HEALTH");
+        R_DrawString(16, g_display.height - 42, "HEALTH");
 
         /* Health value - color based on amount */
         if (health > 60)
@@ -2418,15 +2423,32 @@ static void SCR_DrawHUD(float frametime)
             R_SetDrawColor(1.0f, 0.2f, 0.2f, 1.0f);
 
         snprintf(buf, sizeof(buf), "%d", health);
-        R_DrawString(16, g_display.height - 28, buf);
+        R_DrawString(16, g_display.height - 30, buf);
+
+        /* Health bar */
+        if (pct > 1.0f) pct = 1.0f;
+        if (pct < 0) pct = 0;
+        fill_w = (int)(bar_w * pct);
+        R_DrawFill(bx, by, bar_w, bar_h, (int)0x40000000);
+        if (health > 60)
+            R_DrawFill(bx, by, fill_w, bar_h, (int)0xFF00CC00);
+        else if (health > 25)
+            R_DrawFill(bx, by, fill_w, bar_h, (int)0xFFCCCC00);
+        else
+            R_DrawFill(bx, by, fill_w, bar_h, (int)0xFFCC2020);
     }
 
-    /* Armor display - bottom left, next to health */
+    /* Armor display with bar - bottom left, next to health */
     {
         int armor = 0, armor_max = 0;
         if (SV_GetPlayerArmor(&armor, &armor_max) && armor_max > 0) {
+            int bar_w = 60, bar_h = 6;
+            int bx = 110, by = g_display.height - 18;
+            float pct = armor_max > 0 ? (float)armor / (float)armor_max : 0;
+            int fill_w;
+
             R_SetDrawColor(0.8f, 0.8f, 0.8f, 1.0f);
-            R_DrawString(100, g_display.height - 40, "ARMOR");
+            R_DrawString(110, g_display.height - 42, "ARMOR");
 
             if (armor > 100)
                 R_SetDrawColor(0.3f, 0.5f, 1.0f, 1.0f);
@@ -2436,7 +2458,14 @@ static void SCR_DrawHUD(float frametime)
                 R_SetDrawColor(0.4f, 0.4f, 0.4f, 1.0f);
 
             snprintf(buf, sizeof(buf), "%d", armor);
-            R_DrawString(100, g_display.height - 28, buf);
+            R_DrawString(110, g_display.height - 30, buf);
+
+            /* Armor bar */
+            if (pct > 1.0f) pct = 1.0f;
+            if (pct < 0) pct = 0;
+            fill_w = (int)(bar_w * pct);
+            R_DrawFill(bx, by, bar_w, bar_h, (int)0x40000000);
+            R_DrawFill(bx, by, fill_w, bar_h, (int)0xFF3070FF);
         }
     }
 
@@ -2714,16 +2743,30 @@ static void SCR_DrawHUD(float frametime)
             R_DrawString(ex, 20, entbuf);
         }
 
-        /* Score — below entity count */
+        /* Score + rank — below entity count */
         {
             int kills, deaths, score;
-            char scrbuf[48];
+            char scrbuf[64];
             int slen, sx;
+            const char *rank;
+
             SV_GetPlayerScore(&kills, &deaths, &score);
-            snprintf(scrbuf, sizeof(scrbuf), "K:%d D:%d S:%d", kills, deaths, score);
+
+            /* Rank based on cumulative score */
+            if (score >= 500)      rank = "Colonel";
+            else if (score >= 300) rank = "Major";
+            else if (score >= 200) rank = "Captain";
+            else if (score >= 100) rank = "Lieutenant";
+            else if (score >= 50)  rank = "Sergeant";
+            else if (score >= 20)  rank = "Corporal";
+            else                   rank = "Private";
+
+            snprintf(scrbuf, sizeof(scrbuf), "%s  K:%d D:%d S:%d", rank, kills, deaths, score);
             slen = (int)strlen(scrbuf);
             sx = g_display.width - 8 - slen * 8;
+            R_SetDrawColor(0.9f, 0.85f, 0.6f, 1.0f);
             R_DrawString(sx, 32, scrbuf);
+            R_SetDrawColor(1.0f, 1.0f, 1.0f, 1.0f);
         }
 
         /* Level stats — monsters and secrets */
