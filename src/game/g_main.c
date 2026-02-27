@@ -767,6 +767,29 @@ static void ClientCommand(edict_t *ent)
         return;
     }
 
+    if (Q_stricmp(cmd, "holster") == 0) {
+        if (ent->client->weapon_holstered) {
+            /* Unholster — restore previous weapon */
+            ent->client->weapon_holstered = qfalse;
+            ent->client->pers_weapon = ent->client->holster_weapon;
+            ent->weapon_index = ent->client->holster_weapon;
+            ent->client->weapon_change_time = level.time + WEAPON_SWITCH_TIME;
+            if (snd_weapon_switch)
+                gi.sound(ent, CHAN_ITEM, snd_weapon_switch, 1.0f, ATTN_NORM, 0);
+            gi.cprintf(ent, PRINT_ALL, "Weapon drawn\n");
+        } else {
+            /* Holster weapon — stow for faster movement */
+            ent->client->holster_weapon = ent->client->pers_weapon;
+            ent->client->weapon_holstered = qtrue;
+            if (ent->client->zoomed) {
+                ent->client->zoomed = qfalse;
+                ent->client->fov = 90.0f;
+            }
+            gi.cprintf(ent, PRINT_ALL, "Weapon holstered — move faster\n");
+        }
+        return;
+    }
+
     if (Q_stricmp(cmd, "save") == 0) {
         const char *savename = gi.argc() > 1 ? gi.argv(1) : "quick";
         char gamefile[256], levelfile[256];
@@ -1476,13 +1499,25 @@ static void G_FireProjectile(edict_t *ent, qboolean is_grenade)
     VectorCopy(ent->client->viewangles, proj->s.angles);
 
     if (is_grenade) {
+        float cook_time = 0;
+        float fuse_remaining = 2.5f;
+
+        /* Grenade cooking: if player was holding fire, reduce fuse */
+        if (ent->client->grenade_cook_start > 0) {
+            cook_time = level.time - ent->client->grenade_cook_start;
+            if (cook_time > 2.3f) cook_time = 2.3f;  /* can't cook past fuse */
+            fuse_remaining = 2.5f - cook_time;
+            if (fuse_remaining < 0.2f) fuse_remaining = 0.2f;
+            ent->client->grenade_cook_start = 0;
+        }
+
         proj->movetype = MOVETYPE_BOUNCE;
         VectorScale(forward, 600, proj->velocity);
         proj->velocity[2] += 200;  /* arc upward */
         proj->dmg = weapon_damage[WEAP_GRENADE];
         proj->dmg_radius = 200;
         proj->think = grenade_explode;
-        proj->nextthink = level.time + 2.5f;  /* 2.5s fuse */
+        proj->nextthink = level.time + fuse_remaining;
         proj->teleport_time = level.time + 10.0f;
     } else {
         proj->movetype = MOVETYPE_FLYMISSILE;
@@ -2076,6 +2111,26 @@ static void G_FireHitscan(edict_t *ent)
             if (snd_hit_flesh)
                 gi.sound(tr.ent, CHAN_BODY, snd_hit_flesh, 1.0f, ATTN_NORM, 0);
 
+            /* Melee backstab bonus — 3x damage when knifing from behind */
+            if (weap == WEAP_KNIFE && tr.ent->s.angles[1] != 0) {
+                vec3_t victim_fwd, to_victim;
+                float dot;
+                victim_fwd[0] = cosf(tr.ent->s.angles[1] * 3.14159f / 180.0f);
+                victim_fwd[1] = sinf(tr.ent->s.angles[1] * 3.14159f / 180.0f);
+                victim_fwd[2] = 0;
+                VectorSubtract(tr.ent->s.origin, ent->s.origin, to_victim);
+                to_victim[2] = 0;
+                VectorNormalize(to_victim);
+                dot = DotProduct(victim_fwd, to_victim);
+                if (dot > 0.5f) {
+                    /* Attacking from behind — backstab! */
+                    damage *= 3;
+                    SCR_AddPickupMessage("BACKSTAB!");
+                    ent->client->score += 15;
+                    SCR_AddScorePopup(15);
+                }
+            }
+
             /* Gore zone detection — map hit location to body zone */
             {
                 vec3_t hit_dir;
@@ -2491,6 +2546,45 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
         }
     }
 
+    /* Wall jump: jump off a wall while airborne near a wall */
+    if (!ent->groundentity && !ent->deadflag && ucmd->upmove > 0 &&
+        level.time > client->wall_jump_time + 0.5f) {
+        /* Trace to the sides to find a wall */
+        vec3_t wj_fwd, wj_rt, wj_up;
+        vec3_t wj_start, wj_end;
+        trace_t wj_tr;
+        int wj_dir;
+
+        G_AngleVectors(client->viewangles, wj_fwd, wj_rt, wj_up);
+        VectorCopy(ent->s.origin, wj_start);
+        wj_start[2] += client->viewheight;
+
+        for (wj_dir = 0; wj_dir < 4; wj_dir++) {
+            vec3_t dir;
+            switch (wj_dir) {
+            case 0: VectorCopy(wj_fwd, dir); break;
+            case 1: VectorScale(wj_fwd, -1, dir); break;
+            case 2: VectorCopy(wj_rt, dir); break;
+            case 3: VectorScale(wj_rt, -1, dir); break;
+            }
+            VectorMA(wj_start, 32, dir, wj_end);
+            wj_tr = gi.trace(wj_start, NULL, NULL, wj_end, ent, MASK_SOLID);
+
+            if (wj_tr.fraction < 1.0f && !(wj_tr.surface && (wj_tr.surface->flags & SURF_SKY))) {
+                /* Wall found — kick off it */
+                ent->velocity[0] += wj_tr.plane.normal[0] * 250.0f;
+                ent->velocity[1] += wj_tr.plane.normal[1] * 250.0f;
+                ent->velocity[2] = 280.0f;  /* upward boost */
+                client->wall_jump_time = level.time;
+                VectorCopy(ent->velocity, client->ps.velocity);
+
+                /* Dust puff at wall contact point */
+                R_ParticleEffect(wj_tr.endpos, wj_tr.plane.normal, 13, 4);
+                break;
+            }
+        }
+    }
+
     /* Slide mechanic: sprint + crouch = forward slide */
     if (client->slide_end > level.time) {
         /* Currently sliding — apply slide velocity and crouch */
@@ -2902,7 +2996,55 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
         }
         /* Can't fire while reloading */
     } else {
+        /* Can't fire while weapon is holstered — auto-unholster on attack */
+        if (client->weapon_holstered && (ucmd->buttons & (BUTTON_ATTACK | BUTTON_ATTACK2))) {
+            client->weapon_holstered = qfalse;
+            client->pers_weapon = client->holster_weapon;
+            ent->weapon_index = client->holster_weapon;
+            client->weapon_change_time = level.time + WEAPON_SWITCH_TIME;
+        }
+
+        /* Grenade cooking: hold attack to cook, release to throw */
+        if (client->pers_weapon == WEAP_GRENADE && client->ammo[WEAP_GRENADE] > 0) {
+            if (ucmd->buttons & BUTTON_ATTACK) {
+                /* Start/continue cooking */
+                if (client->grenade_cook_start == 0)
+                    client->grenade_cook_start = level.time;
+                /* Held too long — explodes in hand at 2.5s */
+                if (level.time - client->grenade_cook_start > 2.5f) {
+                    client->grenade_cook_start = 0;
+                    client->ammo[WEAP_GRENADE]--;
+                    /* Explodes on the player — self damage */
+                    {
+                        vec3_t up = {0, 0, 1};
+                        R_ParticleEffect(ent->s.origin, up, 2, 24);
+                        R_AddDlight(ent->s.origin, 1.0f, 0.5f, 0.1f, 350.0f, 0.4f);
+                    }
+                    ent->health -= weapon_damage[WEAP_GRENADE];
+                    client->pers_health = ent->health;
+                    SCR_AddPickupMessage("Cooked too long!");
+                    if (ent->health <= 0) {
+                        ent->deadflag = 1;
+                        client->ps.pm_type = PM_DEAD;
+                        SCR_AddKillFeed("Player", "own grenade", "environment");
+                        client->deaths++;
+                    }
+                }
+            } else if (client->grenade_cook_start > 0) {
+                /* Released — fire the cooked grenade */
+                if (snd_weapons[WEAP_GRENADE])
+                    gi.sound(ent, CHAN_WEAPON, snd_weapons[WEAP_GRENADE], 1.0f, ATTN_NORM, 0);
+                client->ammo[WEAP_GRENADE]--;
+                G_FireProjectile(ent, qtrue);
+            }
+        } else {
+            /* Clear cook timer if not holding grenade */
+            client->grenade_cook_start = 0;
+        }
+
         /* Fire weapon on attack button (primary or alt-fire) */
+        /* Skip normal fire when grenade cooking is active */
+        if (client->pers_weapon != WEAP_GRENADE || client->ammo[WEAP_GRENADE] <= 0) {
         /* If holding a throwable object, throw it instead of firing */
         if (client->held_object && (ucmd->buttons & BUTTON_ATTACK)) {
             edict_t *obj = client->held_object;
@@ -2931,6 +3073,7 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
             player_alt_fire = qtrue;
             G_FireHitscan(ent);
         }
+        } /* end grenade cook gate */
     }
 
     /* Update held object position — float in front of player */
@@ -3150,6 +3293,12 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
                 if (client->stamina > 100.0f) client->stamina = 100.0f;
             }
         }
+    }
+
+    /* Holstered weapon — 15% movement speed boost */
+    if (client->weapon_holstered && !client->sprinting) {
+        ent->velocity[0] *= 1.15f;
+        ent->velocity[1] *= 1.15f;
     }
 
     /* Bullet time: activate on button press if charge >= 50 */

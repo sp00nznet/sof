@@ -371,6 +371,8 @@ static spawn_func_t spawn_funcs[] = {
     { "item_armor_body",            SP_item_pickup },
     { "item_armor_combat",          SP_item_pickup },
     { "item_armor_jacket",          SP_item_pickup },
+    { "item_armor_shard",           SP_item_pickup },
+    { "item_ammo_crate",            SP_item_pickup },
 
     /* Keys */
     { "key_red",                    SP_item_pickup },
@@ -3121,6 +3123,7 @@ static void item_touch(edict_t *self, edict_t *other, void *plane, csurface_t *s
         if (strstr(self->classname, "body")) give = 200;
         else if (strstr(self->classname, "combat")) give = 100;
         else if (strstr(self->classname, "jacket")) give = 25;
+        else if (strstr(self->classname, "shard")) give = 5;
 
         if (other->client->armor >= other->client->armor_max)
             return;
@@ -3159,6 +3162,19 @@ static void item_touch(edict_t *self, edict_t *other, void *plane, csurface_t *s
         if (other->client->keys & KEY_GOLD) return;
         other->client->keys |= KEY_GOLD;
         SCR_AddPickupMessage("Gold Key");
+    }
+    /* Ammo crate — refills all weapon ammo */
+    else if (strstr(self->classname, "ammo_crate")) {
+        int i;
+        qboolean any_refilled = qfalse;
+        for (i = 1; i < WEAP_COUNT; i++) {
+            if (other->client->ammo[i] > 0 && other->client->ammo[i] < other->client->ammo_max[i]) {
+                other->client->ammo[i] = other->client->ammo_max[i];
+                any_refilled = qtrue;
+            }
+        }
+        if (!any_refilled)
+            return;
     }
     /* Weapon/ammo pickup */
     else {

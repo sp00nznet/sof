@@ -415,6 +415,16 @@ struct gclient_s {
     /* Slide mechanic */
     float           slide_end;             /* level.time when slide ends */
     vec3_t          slide_dir;             /* direction of slide */
+
+    /* Wall jump */
+    float           wall_jump_time;        /* cooldown: level.time when last wall jump happened */
+
+    /* Grenade cooking */
+    float           grenade_cook_start;    /* level.time when grenade pin was pulled (0=not cooking) */
+
+    /* Weapon holster */
+    qboolean        weapon_holstered;      /* weapon put away for faster movement */
+    int             holster_weapon;         /* weapon to restore on unholster */
 };
 
 /* ==========================================================================
