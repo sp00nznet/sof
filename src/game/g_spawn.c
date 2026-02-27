@@ -213,6 +213,7 @@ static void SP_func_conveyor_real(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_water(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_pendulum(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_target_monster_maker(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_target_objective(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_env_drip(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_env_steam(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_env_sparks(edict_t *ent, epair_t *pairs, int num_pairs);
@@ -284,6 +285,7 @@ static spawn_func_t spawn_funcs[] = {
     { "target_explosion",           SP_target_speaker },
     { "target_temp_entity",         SP_target_speaker },
     { "target_monster_maker",       SP_target_monster_maker },
+    { "target_objective",           SP_target_objective },
 
     /* Breakable/explosive */
     { "func_breakable",             SP_func_breakable },
@@ -2347,6 +2349,44 @@ static void SP_target_relay(edict_t *ent, epair_t *pairs, int num_pairs)
 {
     (void)pairs; (void)num_pairs;
     ent->use = target_relay_use;
+}
+
+/* ==========================================================================
+   target_objective — Sets/updates a mission objective when triggered
+   Keys:
+     "message"  — objective text
+     "count"    — objective slot index (0-3)
+   ========================================================================== */
+
+extern void SCR_SetObjective(int index, const char *text);
+extern void SCR_ClearObjectives(void);
+
+static void target_objective_use(edict_t *self, edict_t *other, edict_t *activator)
+{
+    (void)other; (void)activator;
+
+    if (self->message && self->message[0])
+        SCR_SetObjective(self->count, self->message);
+    else
+        SCR_SetObjective(self->count, NULL);  /* clear this slot */
+}
+
+static void SP_target_objective(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *msg = ED_FindValue(pairs, num_pairs, "message");
+    const char *idx = ED_FindValue(pairs, num_pairs, "count");
+
+    if (msg) {
+        int len = (int)strlen(msg) + 1;
+        ent->message = (char *)gi.TagMalloc(len, Z_TAG_GAME);
+        memcpy(ent->message, msg, len);
+    }
+
+    ent->count = idx ? atoi(idx) : 0;
+    if (ent->count < 0) ent->count = 0;
+    if (ent->count > 3) ent->count = 3;
+
+    ent->use = target_objective_use;
 }
 
 /* ==========================================================================

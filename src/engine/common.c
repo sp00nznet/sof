@@ -135,6 +135,7 @@ static void SCR_DrawMinimap(void);
 static void SCR_DrawDeathScreen(void);
 static void SCR_DrawHitMarker(void);
 static void SCR_DrawDamageDirection(void);
+static void SCR_DrawObjectives(void);
 static void SCR_DrawIntermission(void);
 
 /* Intermission state */
@@ -438,6 +439,7 @@ void Qcommon_Frame(int msec)
             SCR_DrawPickupMessages();
             SCR_DrawKillFeed();
             SCR_DrawDeathScreen();
+            SCR_DrawObjectives();
             SCR_DrawChat();
             SCR_DrawScoreboard();
         }
@@ -533,6 +535,65 @@ void SCR_AddScreenShake(float intensity, float duration)
     } else if (cl_shake_duration > 0) {
         /* Extend existing shake */
         cl_shake_duration += duration * 0.5f;
+    }
+}
+
+/* ==========================================================================
+   Mission Objective Display
+   ========================================================================== */
+
+#define MAX_OBJECTIVES  4
+#define OBJECTIVE_LEN   128
+
+static char objectives[MAX_OBJECTIVES][OBJECTIVE_LEN];
+static int  objective_count;
+static float objective_flash_time;  /* timestamp of last objective update */
+
+void SCR_SetObjective(int index, const char *text)
+{
+    if (index < 0 || index >= MAX_OBJECTIVES) return;
+    if (text && text[0])
+        Q_strncpyz(objectives[index], text, OBJECTIVE_LEN);
+    else
+        objectives[index][0] = '\0';
+    if (index >= objective_count)
+        objective_count = index + 1;
+    objective_flash_time = (float)Sys_Milliseconds() / 1000.0f;
+}
+
+void SCR_ClearObjectives(void)
+{
+    int i;
+    for (i = 0; i < MAX_OBJECTIVES; i++)
+        objectives[i][0] = '\0';
+    objective_count = 0;
+}
+
+static void SCR_DrawObjectives(void)
+{
+    int i;
+    float now = (float)Sys_Milliseconds() / 1000.0f;
+    float flash_age = now - objective_flash_time;
+    int x = 10;
+    int y = 60;
+
+    if (objective_count == 0) return;
+
+    /* Brief flash when new objective added */
+    if (flash_age < 3.0f) {
+        float a = flash_age < 2.0f ? 1.0f : (3.0f - flash_age);
+
+        R_SetDrawColor(1.0f, 0.8f, 0.0f, a * 0.9f);
+        R_DrawString(x, y, "OBJECTIVE:");
+        y += 14;
+
+        for (i = 0; i < objective_count; i++) {
+            if (objectives[i][0] == '\0') continue;
+            R_SetDrawColor(1.0f, 1.0f, 1.0f, a * 0.85f);
+            R_DrawString(x + 8, y, objectives[i]);
+            y += 12;
+        }
+        R_SetDrawColor(1.0f, 1.0f, 1.0f, 1.0f);
     }
 }
 
@@ -2080,6 +2141,22 @@ static void SCR_DrawHUD(float frametime)
         if (blend[3] > 0.01f) {
             R_DrawFadeScreenColor(blend[0], blend[1], blend[2], blend[3]);
         }
+    }
+
+    /* Low health blood vignette — red borders when hurt */
+    if (health > 0 && health < 30) {
+        float intensity = 1.0f - (float)health / 30.0f;  /* 0 at 30hp, 1 at 0hp */
+        float alpha = intensity * 0.5f;
+        int border = (int)(40.0f * intensity) + 10;
+        int w = g_display.width;
+        int h = g_display.height;
+
+        /* Red borders on all four edges */
+        R_DrawFadeScreenColor(0.5f, 0.0f, 0.0f, alpha * 0.3f);
+        R_DrawFill(0, 0, w, border, (int)(((int)(alpha * 180.0f) << 24) | 0x400000));
+        R_DrawFill(0, h - border, w, border, (int)(((int)(alpha * 180.0f) << 24) | 0x400000));
+        R_DrawFill(0, 0, border, h, (int)(((int)(alpha * 180.0f) << 24) | 0x400000));
+        R_DrawFill(w - border, 0, border, h, (int)(((int)(alpha * 180.0f) << 24) | 0x400000));
     }
 
     /* Death message */
