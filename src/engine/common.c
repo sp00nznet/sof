@@ -57,6 +57,7 @@ extern float SV_GetPlayerFireTime(void);
 extern qboolean SV_IsPlayerReloading(void);
 extern qboolean SV_IsPlayerDead(void);
 extern const char *SV_GetNearbyItemName(void);
+extern int  SV_GetPlayerKeys(void);
 
 /* Forward declarations — view weapon (renderer/r_main.c) */
 extern void R_SetViewWeaponState(int weapon_id, float kick, float bob_phase,
@@ -1950,6 +1951,23 @@ static void SCR_DrawHUD(float frametime)
 
             snprintf(buf, sizeof(buf), "%d", armor);
             R_DrawString(100, g_display.height - 28, buf);
+        }
+    }
+
+    /* Key display - bottom left, next to armor */
+    {
+        int keys = SV_GetPlayerKeys();
+        if (keys) {
+            int kx = 184;
+            int ky = g_display.height - 36;
+
+            R_SetDrawColor(0.8f, 0.8f, 0.8f, 1.0f);
+            R_DrawString(kx, ky - 4, "KEYS");
+
+            if (keys & 1) { R_DrawFill(kx, ky + 8, 10, 10, (int)0xFFFF0000); kx += 14; }
+            if (keys & 2) { R_DrawFill(kx, ky + 8, 10, 10, (int)0xFF0040FF); kx += 14; }
+            if (keys & 4) { R_DrawFill(kx, ky + 8, 10, 10, (int)0xFFC0C0C0); kx += 14; }
+            if (keys & 8) { R_DrawFill(kx, ky + 8, 10, 10, (int)0xFFFFD700); }
         }
     }
 

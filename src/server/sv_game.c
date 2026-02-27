@@ -1302,3 +1302,15 @@ const char *SV_GetNearbyItemName(void)
 
     return best_name;
 }
+
+/*
+ * SV_GetPlayerKeys — Get player's collected key bitmask for HUD display
+ */
+int SV_GetPlayerKeys(void)
+{
+    edict_t *player;
+    if (!ge || !ge->edicts) return 0;
+    player = (edict_t *)ge->edicts;
+    if (!player->inuse || !player->client) return 0;
+    return player->client->keys;
+}

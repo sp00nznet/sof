@@ -142,6 +142,7 @@ static int snd_drown;
 static int snd_reload;                  /* reload sound */
 
 #define WEAPON_SWITCH_TIME  0.5f        /* 500ms weapon switch delay */
+static int player_prev_weapon;  /* previous weapon for quick-switch (Q key) */
 
 /* Magazine capacity per weapon (0 = no magazine / unlimited) */
 static int weapon_magazine_size[WEAP_COUNT] = {
@@ -559,6 +560,7 @@ static void ClientCommand(edict_t *ent)
     if (Q_stricmp(cmd, "weapnext") == 0) {
         int w = ent->client->pers_weapon + 1;
         if (w >= WEAP_COUNT) w = 1;
+        player_prev_weapon = ent->client->pers_weapon;
         ent->client->pers_weapon = w;
         ent->weapon_index = w;
         ent->client->weapon_change_time = level.time + WEAPON_SWITCH_TIME;
@@ -576,6 +578,7 @@ static void ClientCommand(edict_t *ent)
     if (Q_stricmp(cmd, "weapprev") == 0) {
         int w = ent->client->pers_weapon - 1;
         if (w < 1) w = WEAP_COUNT - 1;
+        player_prev_weapon = ent->client->pers_weapon;
         ent->client->pers_weapon = w;
         ent->weapon_index = w;
         ent->client->weapon_change_time = level.time + WEAPON_SWITCH_TIME;
@@ -587,6 +590,35 @@ static void ClientCommand(edict_t *ent)
         if (snd_weapon_switch)
             gi.sound(ent, CHAN_ITEM, snd_weapon_switch, 1.0f, ATTN_NORM, 0);
         gi.cprintf(ent, PRINT_ALL, "Weapon: %s\n", weapon_names[w]);
+        return;
+    }
+
+    if (Q_stricmp(cmd, "weaplast") == 0) {
+        if (player_prev_weapon > 0 && player_prev_weapon < WEAP_COUNT &&
+            player_prev_weapon != ent->client->pers_weapon) {
+            int cur = ent->client->pers_weapon;
+            ent->client->pers_weapon = player_prev_weapon;
+            ent->weapon_index = player_prev_weapon;
+            player_prev_weapon = cur;
+            ent->client->weapon_change_time = level.time + WEAPON_SWITCH_TIME;
+            if (ent->client->zoomed) { ent->client->zoomed = qfalse; ent->client->fov = 90.0f; }
+            if (snd_weapon_switch) gi.sound(ent, CHAN_ITEM, snd_weapon_switch, 1.0f, ATTN_NORM, 0);
+            gi.cprintf(ent, PRINT_ALL, "Weapon: %s\n", weapon_names[ent->client->pers_weapon]);
+        }
+        return;
+    }
+
+    if (Q_stricmp(cmd, "weapon") == 0 && gi.argc() >= 3) {
+        int slot = atoi(gi.argv(2));
+        if (slot > 0 && slot < WEAP_COUNT && slot != ent->client->pers_weapon) {
+            player_prev_weapon = ent->client->pers_weapon;
+            ent->client->pers_weapon = slot;
+            ent->weapon_index = slot;
+            ent->client->weapon_change_time = level.time + WEAPON_SWITCH_TIME;
+            if (ent->client->zoomed) { ent->client->zoomed = qfalse; ent->client->fov = 90.0f; }
+            if (snd_weapon_switch) gi.sound(ent, CHAN_ITEM, snd_weapon_switch, 1.0f, ATTN_NORM, 0);
+            gi.cprintf(ent, PRINT_ALL, "Weapon: %s\n", weapon_names[slot]);
+        }
         return;
     }
 

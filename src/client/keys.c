@@ -384,4 +384,15 @@ void Key_Init(void)
     Key_SetBinding(K_MWHEELDOWN, "cmd weapprev");
     Key_SetBinding('e', "+use");
     Key_SetBinding('r', "cmd reload");
+    Key_SetBinding('q', "cmd weaplast");
+    Key_SetBinding('1', "cmd weapon 1");
+    Key_SetBinding('2', "cmd weapon 2");
+    Key_SetBinding('3', "cmd weapon 3");
+    Key_SetBinding('4', "cmd weapon 4");
+    Key_SetBinding('5', "cmd weapon 5");
+    Key_SetBinding('6', "cmd weapon 6");
+    Key_SetBinding('7', "cmd weapon 7");
+    Key_SetBinding('8', "cmd weapon 8");
+    Key_SetBinding('9', "cmd weapon 9");
+    Key_SetBinding('0', "cmd weapon 10");
 }
