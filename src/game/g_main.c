@@ -1293,6 +1293,32 @@ static void ClientCommand(edict_t *ent)
         return;
     }
 
+    if (Q_stricmp(cmd, "commands") == 0 || Q_stricmp(cmd, "cmdlist") == 0) {
+        gi.cprintf(ent, PRINT_ALL,
+            "--- Available Commands ---\n"
+            "use <weapon>    - Switch to weapon\n"
+            "weapnext/prev   - Cycle weapons\n"
+            "weaplast        - Last weapon\n"
+            "flashlight      - Toggle flashlight\n"
+            "zoom            - Toggle scope\n"
+            "reload          - Reload weapon\n"
+            "holster         - Holster/unholster\n"
+            "bullettime      - Activate bullet time\n"
+            "sprint          - Toggle sprint\n"
+            "slide           - Power slide\n"
+            "dive            - Slow-mo dive\n"
+            "inspect         - Inspect weapon\n"
+            "nightvision     - Toggle NV goggles\n"
+            "flashbang       - Throw flashbang\n"
+            "+leanleft/right - Lean\n"
+            "altfire         - Toggle alt fire\n"
+            "quickslot <1-4> - Bind weapon\n"
+            "slot1-4         - Recall weapon\n"
+            "status          - Show stats\n"
+            "objective       - Show objective\n");
+        return;
+    }
+
     gi.cprintf(ent, PRINT_ALL, "Unknown command: %s\n", cmd);
 }
 
@@ -2721,11 +2747,21 @@ static void G_FireHitscan(edict_t *ent)
                         "Commander", "General"
                     };
                     int xp_award = 25;
+                    int score_award = 10;
                     int old_rank;
 
+                    /* Score multiplier based on active streak */
+                    if (ent->client->streak_count >= 4) {
+                        score_award *= 3;  /* 3x for 4+ streak */
+                        xp_award *= 2;
+                    } else if (ent->client->streak_count >= 2) {
+                        score_award *= 2;  /* 2x for 2-3 streak */
+                        xp_award = (int)(xp_award * 1.5f);
+                    }
+
                     ent->client->kills++;
-                    ent->client->score += 10;
-                    SCR_AddScorePopup(10);
+                    ent->client->score += score_award;
+                    SCR_AddScorePopup(score_award);
 
                     /* XP and rank progression */
                     old_rank = ent->client->rank;
