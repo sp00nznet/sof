@@ -435,6 +435,10 @@ struct gclient_s {
 
     /* Headshot camera slow-mo */
     float           headshot_cam_end;      /* level.time when headshot slow-mo ends */
+
+    /* Player rank/level */
+    int             xp;                    /* experience points (persistent) */
+    int             rank;                  /* current rank (0-9) */
 };
 
 /* ==========================================================================

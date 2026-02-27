@@ -225,6 +225,7 @@ static void SP_func_pushable(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_light_breakable(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_misc_throwable(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_misc_ambient_creature(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_misc_readable(edict_t *ent, epair_t *pairs, int num_pairs);
 
 /*
  * Spawn function dispatch table
@@ -342,6 +343,9 @@ static spawn_func_t spawn_funcs[] = {
     { "misc_bat",                   SP_misc_ambient_creature },
     { "misc_bird",                  SP_misc_ambient_creature },
     { "misc_cockroach",             SP_misc_ambient_creature },
+    { "misc_readable",              SP_misc_readable },
+    { "misc_note",                  SP_misc_readable },
+    { "misc_sign",                  SP_misc_readable },
 
     /* Weapons (SoF) */
     { "weapon_knife",               SP_item_pickup },
@@ -902,6 +906,42 @@ static void SP_misc_ambient_creature(edict_t *ent, epair_t *pairs, int num_pairs
     gi.linkentity(ent);
     gi.dprintf("  %s at (%.0f %.0f %.0f)\n", ent->classname,
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
+}
+
+/* ==========================================================================
+   Readable Notes / Signs
+   Displays message text when the player uses (interacts with) them.
+   ========================================================================== */
+
+static void readable_use(edict_t *self, edict_t *other, edict_t *activator)
+{
+    (void)other;
+    if (!activator || !activator->client)
+        return;
+
+    if (self->message && self->message[0]) {
+        gi.cprintf(activator, PRINT_ALL, "\n--- %s ---\n%s\n---\n",
+                   self->classname, self->message);
+        SCR_AddPickupMessage(self->message);
+    }
+}
+
+static void SP_misc_readable(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *msg = ED_FindValue(pairs, num_pairs, "message");
+    (void)pairs; (void)num_pairs;
+
+    ent->solid = SOLID_BBOX;
+    ent->movetype = MOVETYPE_NONE;
+    ent->takedamage = DAMAGE_NO;
+    ent->use = readable_use;
+    ent->message = msg ? (char *)msg : "...";
+
+    VectorSet(ent->mins, -8, -8, -8);
+    VectorSet(ent->maxs, 8, 8, 8);
+
+    gi.linkentity(ent);
+    gi.dprintf("  misc_readable '%s'\n", ent->message);
 }
 
 /* ==========================================================================

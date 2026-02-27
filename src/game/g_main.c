@@ -1969,6 +1969,19 @@ static void G_FireHitscan(edict_t *ent)
         }
     }
 
+    /* Weapon jam: small chance on sustained fire (high recoil = worn mechanism) */
+    if (ent->client->recoil_accum > 0.6f && weap != WEAP_KNIFE) {
+        float jam_chance = (ent->client->recoil_accum - 0.6f) * 0.05f;  /* up to 2% */
+        if (gi.flrand(0, 1.0f) < jam_chance) {
+            /* Weapon jammed! Brief delay before can fire again */
+            player_next_fire = level.time + 1.0f;  /* 1s jam clear time */
+            if (snd_noammo)
+                gi.sound(ent, CHAN_WEAPON, snd_noammo, 0.7f, ATTN_NORM, 0);
+            SCR_AddPickupMessage("WEAPON JAM!");
+            return;
+        }
+    }
+
     damage = (weap > 0 && weap < WEAP_COUNT) ? weapon_damage[weap] : 15;
 
     /* Adrenaline rush damage boost */
@@ -2232,9 +2245,37 @@ static void G_FireHitscan(edict_t *ent)
 
                 /* Award kill to attacker */
                 if (ent->client) {
+                    static const int rank_xp_thresholds[] = {
+                        0, 100, 300, 600, 1000, 1500, 2200, 3000, 4000, 5500
+                    };
+                    static const char *rank_names[] = {
+                        "Recruit", "Private", "Corporal", "Sergeant",
+                        "Lieutenant", "Captain", "Major", "Colonel",
+                        "Commander", "General"
+                    };
+                    int xp_award = 25;
+                    int old_rank;
+
                     ent->client->kills++;
                     ent->client->score += 10;
                     SCR_AddScorePopup(10);
+
+                    /* XP and rank progression */
+                    old_rank = ent->client->rank;
+                    ent->client->xp += xp_award;
+                    if (ent->client->rank < 9 &&
+                        ent->client->xp >= rank_xp_thresholds[ent->client->rank + 1]) {
+                        ent->client->rank++;
+                        {
+                            char rankbuf[64];
+                            snprintf(rankbuf, sizeof(rankbuf), "PROMOTED: %s",
+                                     rank_names[ent->client->rank]);
+                            SCR_AddPickupMessage(rankbuf);
+                            ent->client->score += 50;
+                            SCR_AddScorePopup(50);
+                        }
+                    }
+                    (void)old_rank;
 
                     /* Headshot kill camera: brief slow-mo */
                     if (ent->client->last_damage_zone == GORE_ZONE_HEAD ||

@@ -2916,20 +2916,19 @@ static void SCR_DrawHUD(float frametime)
             int kills, deaths, score;
             char scrbuf[64];
             int slen, sx;
-            const char *rank;
+            const char *rank_name = "Recruit";
+            int rank_id = 0, xp = 0;
 
             SV_GetPlayerScore(&kills, &deaths, &score);
 
-            /* Rank based on cumulative score */
-            if (score >= 500)      rank = "Colonel";
-            else if (score >= 300) rank = "Major";
-            else if (score >= 200) rank = "Captain";
-            else if (score >= 100) rank = "Lieutenant";
-            else if (score >= 50)  rank = "Sergeant";
-            else if (score >= 20)  rank = "Corporal";
-            else                   rank = "Private";
+            /* Use XP-based rank system */
+            {
+                extern qboolean SV_GetPlayerRank(int *, int *, const char **);
+                SV_GetPlayerRank(&rank_id, &xp, &rank_name);
+            }
 
-            snprintf(scrbuf, sizeof(scrbuf), "%s  K:%d D:%d S:%d", rank, kills, deaths, score);
+            snprintf(scrbuf, sizeof(scrbuf), "%s  K:%d D:%d S:%d XP:%d",
+                     rank_name, kills, deaths, score, xp);
             slen = (int)strlen(scrbuf);
             sx = g_display.width - 8 - slen * 8;
             R_SetDrawColor(0.9f, 0.85f, 0.6f, 1.0f);

@@ -1599,3 +1599,26 @@ qboolean SV_IsWeaponHolstered(void)
     return player->client->weapon_holstered;
 }
 
+/*
+ * SV_GetPlayerRank — Get player rank and XP for HUD display
+ */
+qboolean SV_GetPlayerRank(int *rank, int *xp, const char **rank_name)
+{
+    static const char *rank_names[] = {
+        "Recruit", "Private", "Corporal", "Sergeant",
+        "Lieutenant", "Captain", "Major", "Colonel",
+        "Commander", "General"
+    };
+    edict_t *player;
+    if (!ge || !ge->edicts) return qfalse;
+    player = (edict_t *)((byte *)ge->edicts + ge->edict_size);
+    if (!player->inuse || !player->client) return qfalse;
+    *rank = player->client->rank;
+    *xp = player->client->xp;
+    if (*rank >= 0 && *rank <= 9)
+        *rank_name = rank_names[*rank];
+    else
+        *rank_name = "Unknown";
+    return qtrue;
+}
+
