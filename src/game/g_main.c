@@ -1402,6 +1402,24 @@ static void ClientCommand(edict_t *ent)
         return;
     }
 
+    if (Q_stricmp(cmd, "taunt") == 0) {
+        static const char *taunts[] = {
+            "Come get some!", "Is that all you got?",
+            "You call that a fight?", "Too easy.",
+            "Bring it on!", "Nice try."
+        };
+        int idx = gi.irand(0, 5);
+        gi.cprintf(ent, PRINT_ALL, "%s: %s\n",
+                   ent->client->pers_netname, taunts[idx]);
+        SCR_AddPickupMessage(taunts[idx]);
+        {
+            int snd = gi.soundindex("player/taunt.wav");
+            if (snd)
+                gi.sound(ent, CHAN_VOICE, snd, 1.0f, ATTN_NORM, 0);
+        }
+        return;
+    }
+
     gi.cprintf(ent, PRINT_ALL, "Unknown command: %s\n", cmd);
 }
 
@@ -2757,6 +2775,18 @@ static void G_FireHitscan(edict_t *ent)
                     ent->client->score += 25;
                     ent->client->xp += 15;  /* bonus XP */
                     SCR_AddScorePopup(25);
+                }
+            }
+
+            /* Distance-based damage falloff (except sniper/slugger) */
+            if (weap != WEAP_SNIPER && weap != WEAP_SLUGGER && weap != WEAP_KNIFE) {
+                float hit_dist = tr.fraction * trace_range;
+                if (hit_dist > 1024.0f) {
+                    /* Linear falloff: 100% at 1024, 70% at max range */
+                    float falloff = 1.0f - 0.3f * ((hit_dist - 1024.0f) /
+                                    (trace_range - 1024.0f));
+                    if (falloff < 0.5f) falloff = 0.5f;
+                    damage = (int)(damage * falloff);
                 }
             }
 

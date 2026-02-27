@@ -483,6 +483,43 @@ static qboolean AI_SeekCover(edict_t *self)
 }
 
 /*
+ * AI_AvoidGrenade - Check for nearby grenades and dodge away from them.
+ * Returns qtrue if the monster is dodging a grenade.
+ */
+static qboolean AI_AvoidGrenade(edict_t *self)
+{
+    extern game_export_t globals;
+    int i;
+
+    for (i = 1; i < globals.num_edicts; i++) {
+        edict_t *e = &globals.edicts[i];
+        vec3_t diff, away;
+        float dist;
+
+        if (!e->inuse || !e->classname)
+            continue;
+        if (Q_stricmp(e->classname, "ai_grenade") != 0 &&
+            Q_stricmp(e->classname, "grenade") != 0)
+            continue;
+
+        VectorSubtract(e->s.origin, self->s.origin, diff);
+        dist = VectorLength(diff);
+        if (dist > 256.0f || dist < 1.0f)
+            continue;
+
+        /* Found a nearby grenade — run away from it */
+        VectorSubtract(self->s.origin, e->s.origin, away);
+        away[2] = 0;
+        VectorNormalize(away);
+
+        self->velocity[0] = away[0] * AI_CHASE_SPEED * 1.5f;
+        self->velocity[1] = away[1] * AI_CHASE_SPEED * 1.5f;
+        return qtrue;
+    }
+    return qfalse;
+}
+
+/*
  * AI_CoverPeek - When in cover (not visible to enemy), briefly step out
  * to one side to fire, then return to cover. Uses move_angles[2] as timer.
  */
@@ -1271,6 +1308,12 @@ void monster_think(edict_t *self)
             VectorSet(blood_down, 0, 0, -1);
             R_ParticleEffect(blood_pos, blood_down, 1, 1);  /* blood drip */
         }
+    }
+
+    /* Grenade avoidance — always check regardless of state */
+    if (AI_AvoidGrenade(self)) {
+        self->nextthink = level.time + FRAMETIME;
+        return;
     }
 
     switch (self->count) {  /* count field used as AI state */
