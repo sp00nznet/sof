@@ -631,6 +631,7 @@ typedef struct {
     int         index;          /* entity index */
     vec3_t      prev_origin;    /* position at last server tick */
     vec3_t      prev_angles;    /* angles at last server tick */
+    int         prev_frame;     /* animation frame at last server tick */
     qboolean    valid;          /* has valid previous state */
 } interp_ent_t;
 
@@ -658,13 +659,15 @@ void R_UpdateEntityInterp(void)
         if (!ent->inuse)
             continue;
 
-        /* Only interpolate moving entities */
+        /* Interpolate entities that are moving or animating */
         if (ent->velocity[0] != 0 || ent->velocity[1] != 0 || ent->velocity[2] != 0 ||
-            ent->avelocity[0] != 0 || ent->avelocity[1] != 0 || ent->avelocity[2] != 0) {
+            ent->avelocity[0] != 0 || ent->avelocity[1] != 0 || ent->avelocity[2] != 0 ||
+            ent->s.modelindex != 0) {
             interp_ent_t *ie = &interp_ents[interp_count++];
             ie->index = i;
             VectorCopy(ent->s.origin, ie->prev_origin);
             VectorCopy(ent->s.angles, ie->prev_angles);
+            ie->prev_frame = ent->s.frame;
             ie->valid = qtrue;
         }
     }
@@ -692,6 +695,25 @@ static qboolean R_GetInterpOrigin(int index, vec3_t out_origin, vec3_t cur_origi
             return qtrue;
         }
     }
+    return qfalse;
+}
+
+/*
+ * R_GetInterpFrame - Get old frame and backlerp for animation interpolation
+ * Returns qtrue if interpolation data is available.
+ */
+static qboolean R_GetInterpFrame(int index, int cur_frame, int *out_oldframe, float *out_backlerp)
+{
+    int i;
+    for (i = 0; i < interp_count; i++) {
+        if (interp_ents[i].index == index && interp_ents[i].valid) {
+            *out_oldframe = interp_ents[i].prev_frame;
+            *out_backlerp = 1.0f - interp_frac;  /* backlerp = how much of old frame */
+            return qtrue;
+        }
+    }
+    *out_oldframe = cur_frame;
+    *out_backlerp = 0.0f;
     return qfalse;
 }
 
@@ -731,8 +753,11 @@ static void R_DrawBrushEntities(void)
                 model_t *mod = R_FindModel(model_name);
                 if (mod && mod->md2) {
                     float r_c = 0.8f, g_c = 0.8f, b_c = 0.8f;
+                    int oldframe;
+                    float backlerp;
+                    R_GetInterpFrame(i, ent->s.frame, &oldframe, &backlerp);
                     R_DrawAliasModel(mod, render_origin, render_angles,
-                                     ent->s.frame, ent->s.frame, 0.0f,
+                                     ent->s.frame, oldframe, backlerp,
                                      r_c, g_c, b_c);
                     continue;
                 }

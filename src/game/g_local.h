@@ -375,6 +375,9 @@ struct gclient_s {
 
     /* Water state tracking */
     int             old_waterlevel;         /* waterlevel from previous frame */
+
+    /* Ambient sound cooldown */
+    float           next_ambient;           /* level.time for next ambient sound */
 };
 
 /* ==========================================================================

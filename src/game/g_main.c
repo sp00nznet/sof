@@ -143,6 +143,8 @@ static int snd_drown;
 static int snd_reload;                  /* reload sound */
 static int snd_splash_in;              /* water entry splash */
 static int snd_splash_out;             /* water exit splash */
+static int snd_ambient_wind;           /* outdoor wind ambience */
+static int snd_ambient_drip;           /* water area dripping */
 
 #define WEAPON_SWITCH_TIME  0.5f        /* 500ms weapon switch delay */
 static int player_prev_weapon;  /* previous weapon for quick-switch (Q key) */
@@ -2602,6 +2604,37 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
         }
     }
 
+    /* Environmental ambient sounds — periodic based on surroundings */
+    if (level.time >= client->next_ambient && !ent->deadflag) {
+        int contents = gi.pointcontents(ent->s.origin);
+
+        if (contents & (CONTENTS_WATER | CONTENTS_SLIME)) {
+            /* Near/in water — dripping/bubbling sound */
+            if (snd_ambient_drip)
+                gi.sound(ent, CHAN_AUTO, snd_ambient_drip, 0.2f, ATTN_IDLE, 0);
+            client->next_ambient = level.time + 3.0f + (float)(rand() % 40) * 0.1f;
+        } else {
+            /* Check if outdoors */
+            vec3_t sky_start, sky_end;
+            trace_t sky_tr;
+            VectorCopy(ent->s.origin, sky_start);
+            sky_start[2] += 32;
+            VectorCopy(sky_start, sky_end);
+            sky_end[2] += 4096;
+            sky_tr = gi.trace(sky_start, NULL, NULL, sky_end, ent, MASK_SOLID);
+
+            if (sky_tr.surface && (sky_tr.surface->flags & SURF_SKY)) {
+                /* Outdoors — wind sound */
+                if (snd_ambient_wind)
+                    gi.sound(ent, CHAN_AUTO, snd_ambient_wind, 0.15f, ATTN_IDLE, 0);
+                client->next_ambient = level.time + 5.0f + (float)(rand() % 50) * 0.1f;
+            } else {
+                /* Indoors — no ambient, just set longer cooldown */
+                client->next_ambient = level.time + 8.0f;
+            }
+        }
+    }
+
     gi.linkentity(ent);
 }
 
@@ -2988,6 +3021,10 @@ static void G_RegisterWeapons(void)
     /* Water splash sounds */
     snd_splash_in = gi.soundindex("player/watr_in.wav");
     snd_splash_out = gi.soundindex("player/watr_out.wav");
+
+    /* Ambient environment sounds */
+    snd_ambient_wind = gi.soundindex("world/wind1.wav");
+    snd_ambient_drip = gi.soundindex("world/drip1.wav");
 }
 
 static const char *G_GetGameVersion(void)
