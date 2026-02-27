@@ -21,6 +21,7 @@ extern void R_ParticleEffect(vec3_t org, vec3_t dir, int type, int count);
 extern void R_AddDlight(vec3_t origin, float r, float g, float b,
                          float intensity, float duration);
 extern void R_AddTracer(vec3_t start, vec3_t end, float r, float g, float b);
+extern void SCR_AddDamageDirection(float angle);
 
 /* Monster sound indices — precached in monster_start */
 static int snd_monster_pain1;
@@ -29,6 +30,21 @@ static int snd_monster_die;
 static int snd_monster_sight;
 static int snd_monster_fire;
 static qboolean monster_sounds_cached;
+
+/* Notify player of damage direction from an attacker */
+static void AI_DamageDirectionToPlayer(edict_t *player, vec3_t source)
+{
+    float dx, dy, yaw, view_yaw, angle;
+    if (!player || !player->client) return;
+    dx = source[0] - player->s.origin[0];
+    dy = source[1] - player->s.origin[1];
+    yaw = atan2f(dy, dx) * 180.0f / 3.14159265f;
+    view_yaw = player->client->viewangles[1];
+    angle = yaw - view_yaw + 180.0f;
+    while (angle < 0) angle += 360.0f;
+    while (angle >= 360.0f) angle -= 360.0f;
+    SCR_AddDamageDirection(angle);
+}
 
 /* ==========================================================================
    AI Constants
@@ -368,6 +384,7 @@ static void ai_think_attack(edict_t *self)
                 R_ParticleEffect(self->enemy->s.origin, lunge_dir, 1, 6);
 
                 if (self->enemy->client) {
+                    AI_DamageDirectionToPlayer(self->enemy, self->s.origin);
                     self->enemy->client->pers_health = self->enemy->health;
                     self->enemy->client->blend[0] = 1.0f;
                     self->enemy->client->blend[1] = 0.0f;
@@ -439,6 +456,7 @@ static void ai_think_attack(edict_t *self)
                         tr.ent->client->blend[1] = 0.0f;
                         tr.ent->client->blend[2] = 0.0f;
                         tr.ent->client->blend[3] = 0.3f;
+                        AI_DamageDirectionToPlayer(tr.ent, self->s.origin);
                     }
 
                     if (tr.ent->health <= 0 && tr.ent->deadflag == 0) {

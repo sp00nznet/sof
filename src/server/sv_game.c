@@ -1257,3 +1257,48 @@ int SV_GetRadarEntities(radar_ent_t *out, int max_ents)
 
     return count;
 }
+
+/*
+ * SV_GetNearbyItemName — Get display name of closest item within pickup range
+ * Returns NULL if no item is nearby.
+ */
+const char *SV_GetNearbyItemName(void)
+{
+    edict_t *player;
+    int i;
+    float best_dist = 128.0f;  /* max pickup display range */
+    const char *best_name = NULL;
+
+    if (!ge || !ge->edicts)
+        return NULL;
+
+    player = (edict_t *)ge->edicts;
+    if (!player->inuse || !player->client || player->deadflag)
+        return NULL;
+
+    /* Scan for SOLID_TRIGGER items (pickups) */
+    for (i = 2; i < ge->num_edicts; i++) {
+        edict_t *ent = (edict_t *)((byte *)ge->edicts + i * ge->edict_size);
+        vec3_t diff;
+        float dist;
+
+        if (!ent->inuse || !ent->classname)
+            continue;
+        if (ent->solid != SOLID_TRIGGER)
+            continue;
+        /* Must be an item/weapon/ammo/health/armor */
+        if (!strstr(ent->classname, "item_") &&
+            !strstr(ent->classname, "weapon_") &&
+            !strstr(ent->classname, "ammo_"))
+            continue;
+
+        VectorSubtract(ent->s.origin, player->s.origin, diff);
+        dist = VectorLength(diff);
+        if (dist < best_dist) {
+            best_dist = dist;
+            best_name = ent->classname;
+        }
+    }
+
+    return best_name;
+}

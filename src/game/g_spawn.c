@@ -187,6 +187,7 @@ static void SP_misc_model(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_item_pickup(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_trigger_changelevel(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_rotating(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_door_rotating(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_button(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_target_changelevel(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_timer(edict_t *ent, epair_t *pairs, int num_pairs);
@@ -246,7 +247,7 @@ static spawn_func_t spawn_funcs[] = {
 
     /* Brush entities */
     { "func_door",                  SP_func_door },
-    { "func_door_rotating",         SP_func_door },
+    { "func_door_rotating",         SP_func_door_rotating },
     { "func_plat",                  SP_func_plat },
     { "func_rotating",              SP_func_rotating },
     { "func_button",                SP_func_button },
@@ -839,6 +840,175 @@ static void SP_func_door(edict_t *ent, epair_t *pairs, int num_pairs)
 
     gi.linkentity(ent);
     gi.dprintf("  func_door '%s'\n", ent->targetname ? ent->targetname : "(auto)");
+}
+
+/* ==========================================================================
+   func_door_rotating — BSP brush that rotates open/closed
+   ========================================================================== */
+
+static void rot_door_go_open(edict_t *self);
+static void rot_door_go_close(edict_t *self);
+
+static void rot_door_think(edict_t *self)
+{
+    vec3_t delta;
+    float remaining;
+
+    VectorSubtract(self->moveinfo.end_angles, self->s.angles, delta);
+    remaining = VectorLength(delta);
+
+    if (remaining < 1.0f) {
+        /* Arrived at target angle */
+        VectorCopy(self->moveinfo.end_angles, self->s.angles);
+        VectorClear(self->avelocity);
+        gi.linkentity(self);
+
+        if (snd_door_end)
+            gi.sound(self, CHAN_AUTO, snd_door_end, 1.0f, 1, 0);
+
+        if (self->moveinfo.endfunc)
+            self->moveinfo.endfunc(self);
+        return;
+    }
+
+    self->nextthink = level.time + level.frametime;
+    self->think = rot_door_think;
+}
+
+static void rot_door_hit_open(edict_t *self)
+{
+    self->moveinfo.state = MSTATE_TOP;
+
+    if (self->moveinfo.wait >= 0) {
+        self->nextthink = level.time + self->moveinfo.wait;
+        self->think = rot_door_go_close;
+    }
+}
+
+static void rot_door_hit_closed(edict_t *self)
+{
+    self->moveinfo.state = MSTATE_BOTTOM;
+}
+
+static void rot_door_go_open(edict_t *self)
+{
+    vec3_t delta;
+    float dist, time;
+
+    if (self->moveinfo.state == MSTATE_UP || self->moveinfo.state == MSTATE_TOP)
+        return;
+
+    self->moveinfo.state = MSTATE_UP;
+    self->moveinfo.endfunc = rot_door_hit_open;
+
+    /* Target angles = end_origin (we store open angles there) */
+    VectorCopy(self->moveinfo.end_origin, self->moveinfo.end_angles);
+
+    /* Calculate angular velocity */
+    VectorSubtract(self->moveinfo.end_angles, self->s.angles, delta);
+    dist = VectorLength(delta);
+    if (dist < 0.1f) { rot_door_hit_open(self); return; }
+
+    time = dist / self->moveinfo.speed;
+    VectorScale(delta, 1.0f / time, self->avelocity);
+
+    if (snd_door_start)
+        gi.sound(self, CHAN_AUTO, snd_door_start, 1.0f, 1, 0);
+
+    self->nextthink = level.time + time;
+    self->think = rot_door_think;
+}
+
+static void rot_door_go_close(edict_t *self)
+{
+    vec3_t delta;
+    float dist, time;
+
+    if (self->moveinfo.state == MSTATE_DOWN || self->moveinfo.state == MSTATE_BOTTOM)
+        return;
+
+    self->moveinfo.state = MSTATE_DOWN;
+    self->moveinfo.endfunc = rot_door_hit_closed;
+
+    /* Target = closed position (start_origin stores closed angles) */
+    VectorCopy(self->moveinfo.start_origin, self->moveinfo.end_angles);
+
+    VectorSubtract(self->moveinfo.end_angles, self->s.angles, delta);
+    dist = VectorLength(delta);
+    if (dist < 0.1f) { rot_door_hit_closed(self); return; }
+
+    time = dist / self->moveinfo.speed;
+    VectorScale(delta, 1.0f / time, self->avelocity);
+
+    if (snd_door_start)
+        gi.sound(self, CHAN_AUTO, snd_door_start, 1.0f, 1, 0);
+
+    self->nextthink = level.time + time;
+    self->think = rot_door_think;
+}
+
+static void rot_door_use(edict_t *self, edict_t *other, edict_t *activator)
+{
+    (void)other; (void)activator;
+    if (self->moveinfo.state == MSTATE_BOTTOM || self->moveinfo.state == MSTATE_DOWN)
+        rot_door_go_open(self);
+    else
+        rot_door_go_close(self);
+}
+
+static void rot_door_touch(edict_t *self, edict_t *other, void *plane, csurface_t *surf)
+{
+    (void)plane; (void)surf;
+    if (!other || !other->client) return;
+    if (self->moveinfo.state == MSTATE_BOTTOM)
+        rot_door_go_open(self);
+}
+
+static void SP_func_door_rotating(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *distance_str, *axis_str;
+    float distance;
+    int axis = 1;  /* default: yaw (Y axis) */
+
+    door_precache_sounds();
+
+    ent->movetype = MOVETYPE_PUSH;
+    ent->solid = SOLID_BSP;
+
+    if (!ent->speed)
+        ent->speed = 100;
+
+    /* Rotation distance in degrees (default 90) */
+    distance_str = ED_FindValue(pairs, num_pairs, "distance");
+    distance = distance_str ? (float)atof(distance_str) : 90.0f;
+
+    /* Rotation axis: "x"=pitch, "z"=roll, default=yaw */
+    axis_str = ED_FindValue(pairs, num_pairs, "axis");
+    if (axis_str) {
+        if (axis_str[0] == 'x' || axis_str[0] == 'X' || axis_str[0] == '0')
+            axis = 0;
+        else if (axis_str[0] == 'z' || axis_str[0] == 'Z' || axis_str[0] == '2')
+            axis = 2;
+    }
+
+    /* Store closed angles */
+    VectorCopy(ent->s.angles, ent->moveinfo.start_origin);
+
+    /* Calculate open angles */
+    VectorCopy(ent->s.angles, ent->moveinfo.end_origin);
+    ent->moveinfo.end_origin[axis] += distance;
+
+    ent->moveinfo.speed = ent->speed;
+    ent->moveinfo.wait = ent->wait ? ent->wait : 3.0f;
+    ent->moveinfo.state = MSTATE_BOTTOM;
+
+    if (!ent->targetname)
+        ent->touch = rot_door_touch;
+    ent->use = rot_door_use;
+
+    gi.linkentity(ent);
+    gi.dprintf("  func_door_rotating '%s' dist=%.0f axis=%d\n",
+               ent->targetname ? ent->targetname : "(auto)", distance, axis);
 }
 
 /* Platform: starts at top, descends when touched, returns */
@@ -2603,6 +2773,26 @@ static void item_bob_think(edict_t *self)
         self->speed -= 6.2832f;
 
     self->s.origin[2] = self->move_origin[2] + (float)sin(self->speed) * 4.0f;
+
+    /* Colored glow based on item type */
+    if (self->classname) {
+        float pulse = 0.6f + 0.4f * (float)sin(self->speed * 2.0f);
+        float intensity = 80.0f * pulse;
+
+        if (strstr(self->classname, "health")) {
+            R_AddDlight(self->s.origin, 0.2f, 1.0f, 0.2f, intensity, 0.15f);
+        } else if (strstr(self->classname, "armor")) {
+            R_AddDlight(self->s.origin, 0.3f, 0.5f, 1.0f, intensity, 0.15f);
+        } else if (strstr(self->classname, "weapon")) {
+            R_AddDlight(self->s.origin, 1.0f, 0.8f, 0.2f, intensity, 0.15f);
+        } else if (strstr(self->classname, "ammo")) {
+            R_AddDlight(self->s.origin, 0.8f, 0.6f, 0.2f, intensity * 0.7f, 0.15f);
+        } else if (strstr(self->classname, "fpak") || strstr(self->classname, "field_pack")) {
+            R_AddDlight(self->s.origin, 1.0f, 1.0f, 0.5f, intensity, 0.15f);
+        } else if (strstr(self->classname, "goggles") || strstr(self->classname, "nvg")) {
+            R_AddDlight(self->s.origin, 0.0f, 1.0f, 0.0f, intensity, 0.15f);
+        }
+    }
 
     self->nextthink = level.time + level.frametime;
     gi.linkentity(self);

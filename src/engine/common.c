@@ -56,6 +56,7 @@ extern qboolean SV_GetPlayerVelocity(vec3_t vel);
 extern float SV_GetPlayerFireTime(void);
 extern qboolean SV_IsPlayerReloading(void);
 extern qboolean SV_IsPlayerDead(void);
+extern const char *SV_GetNearbyItemName(void);
 
 /* Forward declarations — view weapon (renderer/r_main.c) */
 extern void R_SetViewWeaponState(int weapon_id, float kick, float bob_phase,
@@ -132,6 +133,7 @@ static void SCR_DrawKillFeed(void);
 static void SCR_DrawMinimap(void);
 static void SCR_DrawDeathScreen(void);
 static void SCR_DrawHitMarker(void);
+static void SCR_DrawDamageDirection(void);
 static void SCR_DrawIntermission(void);
 
 /* Intermission state */
@@ -431,6 +433,7 @@ void Qcommon_Frame(int msec)
             SCR_DrawHUD(msec / 1000.0f);
             SCR_DrawDamageNumbers();
             SCR_DrawHitMarker();
+            SCR_DrawDamageDirection();
             SCR_DrawPickupMessages();
             SCR_DrawKillFeed();
             SCR_DrawDeathScreen();
@@ -885,8 +888,24 @@ static const char *menu_labels[MENU_ITEMS] = {
     "NEW GAME", "LOAD GAME", "OPTIONS", "QUIT"
 };
 
-static int  menu_active = 0;    /* 0=hidden, 1=main, 2=options */
+#define MAP_COUNT  8
+static const char *map_names[MAP_COUNT] = {
+    "sof1", "sof2", "sof3", "sof4", "sof5", "sof6", "sof7", "sof8"
+};
+static const char *map_titles[MAP_COUNT] = {
+    "New York - Subway",
+    "New York - Streets",
+    "Iraq - Village",
+    "Iraq - Compound",
+    "Siberia - Train Yard",
+    "Siberia - Base",
+    "Tokyo - Rooftops",
+    "Tokyo - Tower"
+};
+
+static int  menu_active = 0;    /* 0=hidden, 1=main, 2=options, 3=map select */
 static int  menu_cursor = 0;
+static int  map_cursor = 0;
 
 /* Exposed to key handler */
 int  M_IsActive(void) { return menu_active; }
@@ -913,6 +932,26 @@ void M_Keydown(int key)
         return;
     }
 
+    if (menu_active == 3) {
+        /* Map selection sub-menu */
+        if (key == K_ESCAPE) {
+            menu_active = 1;
+            menu_cursor = 0;
+        } else if (key == K_UPARROW || key == 'k') {
+            map_cursor--;
+            if (map_cursor < 0) map_cursor = MAP_COUNT - 1;
+        } else if (key == K_DOWNARROW || key == 'j') {
+            map_cursor++;
+            if (map_cursor >= MAP_COUNT) map_cursor = 0;
+        } else if (key == K_ENTER || key == K_KP_ENTER) {
+            char cmd[64];
+            Com_sprintf(cmd, sizeof(cmd), "map %s\n", map_names[map_cursor]);
+            Cbuf_AddText(cmd);
+            menu_active = 0;
+        }
+        return;
+    }
+
     if (key == K_UPARROW || key == 'k') {
         menu_cursor--;
         if (menu_cursor < 0) menu_cursor = MENU_ITEMS - 1;
@@ -921,9 +960,9 @@ void M_Keydown(int key)
         if (menu_cursor >= MENU_ITEMS) menu_cursor = 0;
     } else if (key == K_ENTER || key == K_KP_ENTER) {
         switch (menu_cursor) {
-        case 0: /* NEW GAME */
-            Cbuf_AddText("map sof1\n");
-            menu_active = 0;
+        case 0: /* NEW GAME — open map selection */
+            menu_active = 3;
+            map_cursor = 0;
             break;
         case 1: /* LOAD GAME */
             Cbuf_AddText("loadgame save0\n");
@@ -1000,6 +1039,29 @@ static void SCR_DrawMenu(void)
 
         R_SetDrawColor(0.53f, 0.53f, 0.53f, 1.0f);
         R_DrawString(x + 40, y + 200, "Press ESC to return");
+    } else if (menu_active == 3) {
+        /* Map selection sub-menu */
+        R_SetDrawColor(1.0f, 1.0f, 0.0f, 1.0f);
+        R_DrawString(x + 40, y + 60, "SELECT MISSION");
+
+        for (i = 0; i < MAP_COUNT; i++) {
+            int item_y = y + 90 + i * 22;
+            char label[80];
+
+            if (i == map_cursor) {
+                R_DrawFill(x + 20, item_y - 2, menu_w - 40, 20, (int)0x40FFFFFF);
+                R_SetDrawColor(1.0f, 1.0f, 0.0f, 1.0f);
+                R_DrawString(x + 10, item_y, ">");
+            } else {
+                R_SetDrawColor(0.8f, 0.8f, 0.8f, 1.0f);
+            }
+
+            Com_sprintf(label, sizeof(label), "%s - %s", map_names[i], map_titles[i]);
+            R_DrawString(x + 30, item_y, label);
+        }
+
+        R_SetDrawColor(0.53f, 0.53f, 0.53f, 1.0f);
+        R_DrawString(x + 40, y + menu_h - 20, "Press ESC to return");
     }
 
     /* Reset draw color */
@@ -1253,6 +1315,86 @@ static void SCR_DrawHitMarker(void)
     /* Bottom-right to center */
     R_DrawFill(cx + gap + 1, cy + gap + 1, size, 2, (int)0xFFFFFFFF);
     R_DrawFill(cx + gap + size - 1, cy + gap + 1, 2, size, (int)0xFFFFFFFF);
+
+    R_SetDrawColor(1.0f, 1.0f, 1.0f, 1.0f);
+}
+
+/* ==========================================================================
+   Damage Direction Indicator
+   ========================================================================== */
+
+#define MAX_DMG_DIRS     4
+#define DMG_DIR_LIFETIME 1.5f
+
+typedef struct {
+    float   angle;      /* direction in degrees (0=front, 90=left, etc.) */
+    float   birth_time;
+    qboolean active;
+} dmg_dir_t;
+
+static dmg_dir_t dmg_dirs[MAX_DMG_DIRS];
+static int dmg_dir_idx;
+
+void SCR_AddDamageDirection(float angle)
+{
+    dmg_dir_t *d = &dmg_dirs[dmg_dir_idx % MAX_DMG_DIRS];
+    d->angle = angle;
+    d->birth_time = (float)Sys_Milliseconds() / 1000.0f;
+    d->active = qtrue;
+    dmg_dir_idx++;
+}
+
+static void SCR_DrawDamageDirection(void)
+{
+    int i;
+    float now = (float)Sys_Milliseconds() / 1000.0f;
+    int cx = g_display.width / 2;
+    int cy = g_display.height / 2;
+
+    for (i = 0; i < MAX_DMG_DIRS; i++) {
+        dmg_dir_t *d = &dmg_dirs[i];
+        float age, alpha;
+        float rad;
+        int ix, iy;
+        int dist = 80;  /* distance from center */
+
+        if (!d->active) continue;
+
+        age = now - d->birth_time;
+        if (age > DMG_DIR_LIFETIME) {
+            d->active = qfalse;
+            continue;
+        }
+
+        alpha = 1.0f - (age / DMG_DIR_LIFETIME);
+        if (alpha < 0) alpha = 0;
+        alpha *= 0.8f;  /* slightly transparent even at start */
+
+        /* Convert angle to screen position around crosshair */
+        rad = d->angle * (float)M_PI / 180.0f;
+        ix = cx + (int)(sinf(rad) * dist);
+        iy = cy - (int)(cosf(rad) * dist);
+
+        /* Draw red chevron/wedge pointing inward */
+        R_SetDrawColor(1.0f, 0.0f, 0.0f, alpha);
+
+        /* Arrow body - two thick lines forming a V pointing toward center */
+        {
+            float perpx = cosf(rad);
+            float perpy = sinf(rad);
+            int arm = 12;
+
+            /* Left arm */
+            R_DrawFill(ix - (int)(perpx * arm) - 1, iy - (int)(perpy * arm) - 1, 3, 3, (int)0xFFFF0000);
+            /* Right arm */
+            R_DrawFill(ix + (int)(perpx * arm) - 1, iy + (int)(perpy * arm) - 1, 3, 3, (int)0xFFFF0000);
+            /* Center tip */
+            R_DrawFill(ix - 2, iy - 2, 5, 5, (int)0xFFFF0000);
+            /* Connecting bars */
+            R_DrawFill(ix - (int)(perpx * arm/2), iy - (int)(perpy * arm/2), 3, 3, (int)0xFFFF0000);
+            R_DrawFill(ix + (int)(perpx * arm/2), iy + (int)(perpy * arm/2), 3, 3, (int)0xFFFF0000);
+        }
+    }
 
     R_SetDrawColor(1.0f, 1.0f, 1.0f, 1.0f);
 }
@@ -1910,6 +2052,28 @@ static void SCR_DrawHUD(float frametime)
         R_SetDrawColor(0.8f, 0.8f, 0.8f, 1.0f);
         R_DrawString((g_display.width - 23 * 8) / 2, g_display.height / 2, "Press FIRE to respawn");
         R_SetDrawColor(0.0f, 1.0f, 0.0f, 1.0f);
+    }
+
+    /* Nearby item name display */
+    {
+        const char *item_name = SV_GetNearbyItemName();
+        if (item_name) {
+            /* Format: strip prefix (weapon_, item_, ammo_) and capitalize */
+            const char *display = item_name;
+            if (strncmp(display, "weapon_", 7) == 0) display += 7;
+            else if (strncmp(display, "item_", 5) == 0) display += 5;
+            else if (strncmp(display, "ammo_", 5) == 0) display += 5;
+
+            {
+                int len = (int)strlen(display);
+                int px = (g_display.width - len * 8) / 2;
+                int py = g_display.height / 2 + 30;
+
+                R_SetDrawColor(1.0f, 1.0f, 0.6f, 0.9f);
+                R_DrawString(px, py, display);
+                R_SetDrawColor(1.0f, 1.0f, 1.0f, 1.0f);
+            }
+        }
     }
 
     /* Minimap radar */

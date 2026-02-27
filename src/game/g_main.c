@@ -29,6 +29,7 @@ extern void SCR_AddPickupMessage(const char *text);
 extern void SCR_AddKillFeed(const char *attacker, const char *victim, const char *weapon);
 extern void SCR_AddScreenShake(float intensity, float duration);
 extern void SCR_TriggerHitMarker(void);
+extern void SCR_AddDamageDirection(float angle);
 extern void R_AddSprite(vec3_t origin, float size, float r, float g, float b,
                          float alpha, float lifetime, float rotation_speed);
 extern void R_AddTracer(vec3_t start, vec3_t end, float r, float g, float b);
@@ -47,6 +48,7 @@ static void ReadLevel(const char *filename);
 static void G_UpdateDecals(void);
 static void G_AddDecal(vec3_t origin, vec3_t normal, int type);
 static void G_SpawnGibs(edict_t *ent, int count);
+static void G_DamageDirectionToPlayer(edict_t *player, vec3_t source);
 
 /* ==========================================================================
    Globals
@@ -1089,6 +1091,33 @@ static qboolean G_UseUtilityWeapon(edict_t *ent)
 }
 
 /*
+ * G_DamageDirectionToPlayer — Show damage direction indicator on HUD
+ * Computes angle from source to player relative to player's view.
+ */
+static void G_DamageDirectionToPlayer(edict_t *player, vec3_t source)
+{
+    vec3_t dir;
+    float dx, dy, yaw, view_yaw, angle;
+
+    if (!player || !player->client)
+        return;
+
+    dx = source[0] - player->s.origin[0];
+    dy = source[1] - player->s.origin[1];
+
+    /* World yaw from source to player (atan2 gives angle in Quake coords) */
+    yaw = atan2f(dy, dx) * 180.0f / 3.14159265f;
+    view_yaw = player->client->viewangles[1];
+
+    /* Angle relative to player view: 0=front, 90=left, 180=behind, 270=right */
+    angle = yaw - view_yaw + 180.0f;
+    while (angle < 0) angle += 360.0f;
+    while (angle >= 360.0f) angle -= 360.0f;
+
+    SCR_AddDamageDirection(angle);
+}
+
+/*
  * T_RadiusDamage — Deal damage to all entities within a radius
  */
 static void T_RadiusDamage(edict_t *inflictor, edict_t *attacker,
@@ -1145,6 +1174,7 @@ static void T_RadiusDamage(edict_t *inflictor, edict_t *attacker,
             t->client->blend[2] = 0.0f;
             t->client->blend[3] = 0.3f;
             t->client->pers_health = t->health;
+            G_DamageDirectionToPlayer(t, inflictor->s.origin);
         }
 
         if (t->health <= 0 && t->die) {
