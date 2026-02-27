@@ -2044,6 +2044,16 @@ static void G_FireHitscan(edict_t *ent)
     if (level.time < player_next_fire)
         return;
 
+    /* Weapon overheat check — can't fire while overheated */
+    if (ent->client->weapon_overheated) {
+        if (level.time >= ent->client->overheat_end) {
+            ent->client->weapon_overheated = qfalse;
+            ent->client->weapon_heat = 0;
+        } else {
+            return;
+        }
+    }
+
     /* Weapon switch delay — can't fire while switching */
     if (ent->client->weapon_change_time > level.time)
         return;
@@ -2162,11 +2172,37 @@ static void G_FireHitscan(edict_t *ent)
     if (weap > 0 && weap < WEAP_COUNT && snd_weapons[weap]) {
         float vol = 1.0f;
         float attn = ATTN_NORM;
-        if (ent->client->attachments[weap] & ATTACH_SILENCER) {
+        qboolean silenced = (ent->client->attachments[weap] & ATTACH_SILENCER) ? qtrue : qfalse;
+        if (silenced) {
             vol = 0.3f;     /* much quieter */
             attn = ATTN_IDLE;  /* shorter range */
         }
         gi.sound(ent, CHAN_WEAPON, snd_weapons[weap], vol, attn, 0);
+
+        /* Alert nearby idle monsters — hearing system */
+        {
+            extern void AI_HearGunshot(vec3_t origin, edict_t *shooter, qboolean silenced);
+            AI_HearGunshot(ent->s.origin, ent, silenced);
+        }
+    }
+
+    /* Weapon heat buildup — automatic weapons build heat faster */
+    {
+        float heat_per_shot = 0.02f;  /* base */
+        if (weap == WEAP_MACHINEGUN || weap == WEAP_MPISTOL)
+            heat_per_shot = 0.04f;
+        else if (weap == WEAP_ASSAULT)
+            heat_per_shot = 0.035f;
+        else if (weap == WEAP_FLAMEGUN)
+            heat_per_shot = 0.05f;
+
+        ent->client->weapon_heat += heat_per_shot;
+        if (ent->client->weapon_heat >= 1.0f) {
+            ent->client->weapon_heat = 1.0f;
+            ent->client->weapon_overheated = qtrue;
+            ent->client->overheat_end = level.time + 2.0f;  /* 2s cooldown */
+            SCR_AddPickupMessage("OVERHEATED!");
+        }
     }
 
     /* Weapon-specific trace parameters */
@@ -3284,6 +3320,12 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
     if (client->recoil_accum > 0) {
         client->recoil_accum -= 2.5f * level.frametime;  /* recover in ~0.4s */
         if (client->recoil_accum < 0) client->recoil_accum = 0;
+    }
+
+    /* Weapon heat passive decay */
+    if (client->weapon_heat > 0 && !client->weapon_overheated) {
+        client->weapon_heat -= 0.15f * level.frametime;  /* cools in ~6.5s idle */
+        if (client->weapon_heat < 0) client->weapon_heat = 0;
     }
 
     /* Reload completion check */

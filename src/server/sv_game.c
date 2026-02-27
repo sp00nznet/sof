@@ -1632,3 +1632,40 @@ float SV_GetSpeedrunTime(void)
     return level.time - level.speedrun_start;
 }
 
+/*
+ * SV_GetWeaponHeat — Get weapon heat level and overheat state for HUD
+ */
+float SV_GetWeaponHeat(qboolean *overheated)
+{
+    edict_t *player;
+
+    if (!ge || !ge->edicts) {
+        if (overheated) *overheated = qfalse;
+        return 0;
+    }
+    player = (edict_t *)((byte *)ge->edicts + ge->edict_size);
+
+    if (!player->inuse || !player->client) {
+        if (overheated) *overheated = qfalse;
+        return 0;
+    }
+
+    if (overheated) *overheated = player->client->weapon_overheated;
+    return player->client->weapon_heat;
+}
+
+/*
+ * SV_GetVoteInfo — Get current vote status for HUD display
+ */
+qboolean SV_GetVoteInfo(const char **display, int *yes_count, int *no_count, float *time_left)
+{
+    if (!level.vote_active)
+        return qfalse;
+
+    if (display) *display = level.vote_display;
+    if (yes_count) *yes_count = level.vote_yes;
+    if (no_count) *no_count = level.vote_no;
+    if (time_left) *time_left = level.vote_end - level.time;
+    return qtrue;
+}
+

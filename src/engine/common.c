@@ -2886,6 +2886,60 @@ static void SCR_DrawHUD(float frametime)
         }
     }
 
+    /* Weapon heat meter — bottom center bar */
+    {
+        extern float SV_GetWeaponHeat(qboolean *overheated);
+        qboolean overheated = qfalse;
+        float heat = SV_GetWeaponHeat(&overheated);
+        if (heat > 0.1f) {
+            int bar_w = 120;
+            int bar_h = 6;
+            int bar_x = g_display.width / 2 - bar_w / 2;
+            int bar_y = g_display.height - 60;
+            int fill_w = (int)(heat * bar_w);
+
+            /* Background */
+            R_SetDrawColor(0.2f, 0.2f, 0.2f, 0.5f);
+            R_DrawFill(bar_x, bar_y, bar_w, bar_h, 0);
+
+            /* Heat fill — yellow to red based on heat level */
+            if (overheated)
+                R_SetDrawColor(1.0f, 0.0f, 0.0f, 0.9f);
+            else if (heat > 0.7f)
+                R_SetDrawColor(1.0f, 0.3f, 0.0f, 0.8f);
+            else
+                R_SetDrawColor(1.0f, 0.8f, 0.0f, 0.6f);
+            R_DrawFill(bar_x, bar_y, fill_w, bar_h, 0);
+
+            if (overheated) {
+                R_SetDrawColor(1.0f, 0.2f, 0.2f, 0.9f);
+                R_DrawString(bar_x + bar_w / 2 - 40, bar_y - 12, "OVERHEAT");
+            }
+            R_SetDrawColor(1.0f, 1.0f, 1.0f, 1.0f);
+        }
+    }
+
+    /* Active vote display — top of screen */
+    {
+        extern qboolean SV_GetVoteInfo(const char **display, int *yes_count, int *no_count, float *time_left);
+        const char *vote_text = NULL;
+        int yes_c = 0, no_c = 0;
+        float t_left = 0;
+        if (SV_GetVoteInfo(&vote_text, &yes_c, &no_c, &t_left)) {
+            char votebuf[256];
+            int vlen, vx;
+
+            snprintf(votebuf, sizeof(votebuf), "VOTE: %s [Y:%d N:%d] %.0fs",
+                     vote_text ? vote_text : "?", yes_c, no_c, t_left);
+            vlen = (int)strlen(votebuf);
+            vx = g_display.width / 2 - vlen * 4;
+
+            R_SetDrawColor(1.0f, 1.0f, 0.3f, 0.9f);
+            R_DrawString(vx, 24, votebuf);
+            R_SetDrawColor(1.0f, 1.0f, 1.0f, 1.0f);
+        }
+    }
+
     /* Developer HUD — FPS, position, entity count */
     if (developer && developer->value) {
         static int  fps_frame_count;

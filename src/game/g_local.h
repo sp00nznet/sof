@@ -456,6 +456,11 @@ struct gclient_s {
 
     /* Vote tracking */
     qboolean        has_voted;             /* already voted in current vote */
+
+    /* Weapon heat */
+    float           weapon_heat;           /* 0..1, builds with sustained fire */
+    qboolean        weapon_overheated;     /* in overheat cooldown state */
+    float           overheat_end;          /* level.time when overheat clears */
 };
 
 /* ==========================================================================

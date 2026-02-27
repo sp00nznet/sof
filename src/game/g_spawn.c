@@ -231,6 +231,7 @@ static void SP_misc_tripmine(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_env_lava(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_env_acid(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_debris(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_rope(edict_t *ent, epair_t *pairs, int num_pairs);
 static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
                            int damage, vec3_t point);
 
@@ -312,6 +313,8 @@ static spawn_func_t spawn_funcs[] = {
     { "misc_explobox",              SP_func_explosive },
     { "misc_explobox_big",          SP_misc_explobox_big },
     { "func_debris",                SP_func_debris },
+    { "func_rope",                  SP_func_rope },
+    { "func_zipline",               SP_func_rope },
 
     /* Splash effects */
     { "target_splash",              SP_target_splash },
@@ -2459,6 +2462,70 @@ static void SP_func_debris(edict_t *ent, epair_t *pairs, int num_pairs)
     gi.dprintf("  func_debris at (%.0f %.0f %.0f) hp=%d chunks=%d\n",
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
                ent->health, ent->count);
+}
+
+/* ==========================================================================
+   func_rope / func_zipline — Grab and slide along a line between two points
+   Player touches the trigger volume, gets pulled toward the target endpoint.
+   ========================================================================== */
+
+static void rope_touch(edict_t *self, edict_t *other, void *plane, csurface_t *surf)
+{
+    vec3_t dir;
+    float dist, slide_speed;
+
+    (void)plane; (void)surf;
+
+    if (!other || !other->client || other->health <= 0)
+        return;
+
+    /* Only grab if jumping/airborne or pressing USE */
+    if (other->groundentity && !(other->client->ps.pm_flags & 0))
+        return;
+
+    /* Compute direction from current position toward the endpoint */
+    VectorSubtract(self->move_origin, other->s.origin, dir);
+    dist = VectorLength(dir);
+
+    if (dist < 32.0f) {
+        /* Reached the end — release */
+        return;
+    }
+
+    VectorNormalize(dir);
+    slide_speed = self->speed > 0 ? self->speed : 300.0f;
+
+    /* Pull player along the rope toward the endpoint */
+    other->velocity[0] = dir[0] * slide_speed;
+    other->velocity[1] = dir[1] * slide_speed;
+    other->velocity[2] = dir[2] * slide_speed * 0.5f;  /* less vertical pull */
+
+    /* Prevent falling while on rope */
+    other->groundentity = self;
+}
+
+static void SP_func_rope(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *speed_str = ED_FindValue(pairs, num_pairs, "speed");
+    edict_t *endpoint;
+
+    (void)pairs; (void)num_pairs;
+
+    ent->solid = SOLID_TRIGGER;
+    ent->touch = rope_touch;
+    ent->speed = speed_str ? (float)atof(speed_str) : 300.0f;
+
+    /* Find the target endpoint — store its position */
+    VectorCopy(ent->s.origin, ent->move_origin);  /* default: end = start */
+    if (ent->target) {
+        endpoint = G_FindByTargetname(ent->target);
+        if (endpoint)
+            VectorCopy(endpoint->s.origin, ent->move_origin);
+    }
+
+    gi.linkentity(ent);
+    gi.dprintf("  func_rope at (%.0f %.0f %.0f) speed=%.0f\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2], ent->speed);
 }
 
 static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,

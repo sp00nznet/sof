@@ -1506,3 +1506,41 @@ void SP_monster_boss(edict_t *ent, void *pairs, int num_pairs)
     monster_start(ent, 500, 30, AI_CHASE_SPEED * 0.5f);
     ent->yaw_speed = 15.0f;
 }
+
+/* ==========================================================================
+   AI Hearing — gunshots alert idle monsters within hearing range
+   ========================================================================== */
+
+#define AI_HEAR_RANGE_LOUD  1200.0f  /* normal gunfire */
+#define AI_HEAR_RANGE_QUIET  400.0f  /* silenced weapon */
+
+void AI_HearGunshot(vec3_t origin, edict_t *shooter, qboolean silenced)
+{
+    extern game_export_t globals;
+    float hear_range = silenced ? AI_HEAR_RANGE_QUIET : AI_HEAR_RANGE_LOUD;
+    int i;
+
+    for (i = 1; i < globals.num_edicts; i++) {
+        edict_t *e = &globals.edicts[i];
+        vec3_t diff;
+        float dist;
+
+        if (e == shooter || !e->inuse || e->health <= 0)
+            continue;
+        if (!(e->svflags & SVF_MONSTER))
+            continue;
+        if (e->enemy)  /* already in combat */
+            continue;
+
+        VectorSubtract(e->s.origin, origin, diff);
+        dist = VectorLength(diff);
+        if (dist > hear_range)
+            continue;
+
+        /* Heard the shot — investigate the source */
+        e->enemy = shooter;
+        e->count = AI_STATE_ALERT;
+        VectorCopy(origin, e->move_origin);  /* remember sound location */
+        e->nextthink = level.time + 0.3f + ((float)(rand() % 50)) * 0.01f;
+    }
+}
