@@ -404,6 +404,13 @@ struct gclient_s {
 
     /* Held throwable object */
     edict_t         *held_object;          /* entity being carried, NULL if none */
+
+    /* Weapon recoil accumulation */
+    float           recoil_accum;          /* 0..1, builds with sustained fire */
+
+    /* Dual wielding */
+    qboolean        dual_wield;            /* true if dual wielding pistols */
+    qboolean        dual_fire_left;        /* alternate left/right fire */
 };
 
 /* ==========================================================================

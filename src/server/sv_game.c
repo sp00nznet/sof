@@ -1535,3 +1535,15 @@ qboolean SV_IsBulletTimeActive(void)
     if (!player->inuse || !player->client) return qfalse;
     return player->client->bullet_time_end > level.time;
 }
+
+/*
+ * SV_GetPlayerRecoil — Get weapon recoil accumulation for crosshair spread
+ */
+float SV_GetPlayerRecoil(void)
+{
+    edict_t *player;
+    if (!ge || !ge->edicts) return 0;
+    player = (edict_t *)ge->edicts;
+    if (!player->inuse || !player->client) return 0;
+    return player->client->recoil_accum;
+}

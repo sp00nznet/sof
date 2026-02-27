@@ -737,6 +737,24 @@ static void ClientCommand(edict_t *ent)
         return;
     }
 
+    if (Q_stricmp(cmd, "dualwield") == 0) {
+        /* Toggle dual wielding — requires ammo for both pistols */
+        if (ent->client->ammo[WEAP_PISTOL1] > 0 && ent->client->ammo[WEAP_PISTOL2] > 0) {
+            ent->client->dual_wield = !ent->client->dual_wield;
+            if (ent->client->dual_wield) {
+                ent->client->pers_weapon = WEAP_PISTOL1;
+                gi.cprintf(ent, PRINT_ALL, "Dual wielding: ON\n");
+                SCR_AddPickupMessage("Dual Wield!");
+            } else {
+                gi.cprintf(ent, PRINT_ALL, "Dual wielding: OFF\n");
+                SCR_AddPickupMessage("Single Wield");
+            }
+        } else {
+            gi.cprintf(ent, PRINT_ALL, "Need both pistols for dual wield\n");
+        }
+        return;
+    }
+
     if (Q_stricmp(cmd, "save") == 0) {
         const char *savename = gi.argc() > 1 ? gi.argv(1) : "quick";
         char gamefile[256], levelfile[256];
@@ -1844,6 +1862,18 @@ static void G_FireHitscan(edict_t *ent)
     if (ent->client->weapon_change_time > level.time)
         return;
 
+    /* Dual wield: alternate between pistol 1 and pistol 2 */
+    if (ent->client->dual_wield &&
+        (weap == WEAP_PISTOL1 || weap == WEAP_PISTOL2)) {
+        /* Alternate which pistol fires */
+        if (ent->client->dual_fire_left) {
+            weap = WEAP_PISTOL2;
+        } else {
+            weap = WEAP_PISTOL1;
+        }
+        ent->client->dual_fire_left = !ent->client->dual_fire_left;
+    }
+
     /* Handle utility weapons (medkit, etc.) */
     if (G_UseUtilityWeapon(ent)) {
         player_next_fire = level.time + ((weap > 0 && weap < WEAP_COUNT) ? weapon_firerate[weap] : 0.5f);
@@ -1882,7 +1912,14 @@ static void G_FireHitscan(edict_t *ent)
     }
 
     damage = (weap > 0 && weap < WEAP_COUNT) ? weapon_damage[weap] : 15;
-    player_next_fire = level.time + ((weap > 0 && weap < WEAP_COUNT) ? weapon_firerate[weap] : 0.2f);
+    {
+        float firerate = (weap > 0 && weap < WEAP_COUNT) ? weapon_firerate[weap] : 0.2f;
+        /* Dual wield: faster fire rate but less accurate */
+        if (ent->client->dual_wield &&
+            (weap == WEAP_PISTOL1 || weap == WEAP_PISTOL2))
+            firerate *= 0.6f;  /* 40% faster fire rate */
+        player_next_fire = level.time + firerate;
+    }
     player_last_fire_time = level.time;
 
     /* Track shots fired for accuracy stats */
@@ -1931,6 +1968,23 @@ static void G_FireHitscan(edict_t *ent)
         /* Apply base weapon spread */
         if (weap > 0 && weap < WEAP_COUNT)
             spread = weapon_spread[weap];
+
+        /* Recoil accumulation: sustained fire increases spread */
+        {
+            float recoil_add = 0.08f;  /* base recoil per shot */
+            if (weap == WEAP_MACHINEGUN || weap == WEAP_ASSAULT)
+                recoil_add = 0.12f;    /* full-auto weapons build faster */
+            else if (weap == WEAP_SNIPER)
+                recoil_add = 0.25f;    /* bolt-action: big kick per shot */
+            else if (weap == WEAP_SHOTGUN)
+                recoil_add = 0.2f;
+
+            ent->client->recoil_accum += recoil_add;
+            if (ent->client->recoil_accum > 1.0f)
+                ent->client->recoil_accum = 1.0f;
+
+            spread += ent->client->recoil_accum * 0.04f;
+        }
 
         /* Zoomed sniper: drastically reduce spread for precision */
         if (ent->client->zoomed && weap == WEAP_SNIPER)
@@ -2149,19 +2203,53 @@ static void G_FireHitscan(edict_t *ent)
         hitscan_impact_done:
             (void)0;  /* label requires a statement */
         } else {
-            /* Bullet impact sparks + ricochet sound */
-            R_ParticleEffect(tr.endpos, tr.plane.normal, 0, 6);    /* dust */
-            R_ParticleEffect(tr.endpos, tr.plane.normal, 12, 3);   /* ricochet sparks */
-            G_AddDecal(tr.endpos, tr.plane.normal, 0);  /* bullet decal */
+            /* Surface-type impact effects */
             {
-                int ric_snd = 0;
-                int r = gi.irand(0, 2);
-                if (r == 0) ric_snd = snd_ric1;
-                else if (r == 1) ric_snd = snd_ric2;
-                else ric_snd = snd_ric3;
-                if (ric_snd)
-                    gi.positioned_sound(tr.endpos, NULL, CHAN_AUTO,
-                                        ric_snd, 0.7f, ATTN_NORM, 0);
+                const char *sname = (tr.surface && tr.surface->name[0]) ?
+                    tr.surface->name : "";
+                int is_metal = (strstr(sname, "metal") || strstr(sname, "iron") ||
+                                strstr(sname, "steel") || strstr(sname, "grate"));
+                int is_wood = (strstr(sname, "wood") || strstr(sname, "plank") ||
+                               strstr(sname, "crate"));
+                int is_glass = (strstr(sname, "glass") || strstr(sname, "window"));
+                int is_dirt = (strstr(sname, "dirt") || strstr(sname, "sand") ||
+                               strstr(sname, "ground") || strstr(sname, "grass"));
+
+                if (is_metal) {
+                    /* Metal: bright orange sparks, metallic clang */
+                    R_ParticleEffect(tr.endpos, tr.plane.normal, 12, 8);
+                    R_ParticleEffect(tr.endpos, tr.plane.normal, 3, 2);
+                } else if (is_wood) {
+                    /* Wood: splinters, subtle dust */
+                    R_ParticleEffect(tr.endpos, tr.plane.normal, 11, 4);
+                    R_ParticleEffect(tr.endpos, tr.plane.normal, 0, 3);
+                } else if (is_glass) {
+                    /* Glass: shards + sparks */
+                    R_ParticleEffect(tr.endpos, tr.plane.normal, 12, 6);
+                    R_ParticleEffect(tr.endpos, tr.plane.normal, 3, 4);
+                } else if (is_dirt) {
+                    /* Dirt/sand: dust cloud, no sparks */
+                    R_ParticleEffect(tr.endpos, tr.plane.normal, 0, 10);
+                    R_ParticleEffect(tr.endpos, tr.plane.normal, 13, 3);
+                } else {
+                    /* Default: concrete/stone — dust + small sparks */
+                    R_ParticleEffect(tr.endpos, tr.plane.normal, 0, 6);
+                    R_ParticleEffect(tr.endpos, tr.plane.normal, 12, 3);
+                }
+
+                G_AddDecal(tr.endpos, tr.plane.normal, 0);
+
+                /* Ricochet sound */
+                {
+                    int ric_snd = 0;
+                    int r = gi.irand(0, 2);
+                    if (r == 0) ric_snd = snd_ric1;
+                    else if (r == 1) ric_snd = snd_ric2;
+                    else ric_snd = snd_ric3;
+                    if (ric_snd)
+                        gi.positioned_sound(tr.endpos, NULL, CHAN_AUTO,
+                                            ric_snd, 0.7f, ATTN_NORM, 0);
+                }
             }
         }
     }
@@ -2668,6 +2756,12 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
             if (other && other->touch)
                 other->touch(other, ent, NULL, NULL);
         }
+    }
+
+    /* Recoil decay — spread recovers when not firing */
+    if (client->recoil_accum > 0) {
+        client->recoil_accum -= 2.5f * level.frametime;  /* recover in ~0.4s */
+        if (client->recoil_accum < 0) client->recoil_accum = 0;
     }
 
     /* Reload completion check */

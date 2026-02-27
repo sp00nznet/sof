@@ -165,6 +165,11 @@ static kbutton_t   in_prone;
 static void IN_ProneDown(void)      { KeyDown(&in_prone); }
 static void IN_ProneUp(void)        { KeyUp(&in_prone); }
 
+/* Quick save/load */
+extern void Cmd_ExecuteString(char *text);
+static void IN_QuickSave(void)      { Cmd_ExecuteString("cmd save quick"); }
+static void IN_QuickLoad(void)      { Cmd_ExecuteString("cmd load quick"); }
+
 /* ==========================================================================
    Build Usercmd
    ========================================================================== */
@@ -280,4 +285,8 @@ void CL_InitInput(void)
     /* Prone */
     Cmd_AddCommand("+prone", IN_ProneDown);
     Cmd_AddCommand("-prone", IN_ProneUp);
+
+    /* Quick save/load */
+    Cmd_AddCommand("quicksave", IN_QuickSave);
+    Cmd_AddCommand("quickload", IN_QuickLoad);
 }

@@ -2172,6 +2172,13 @@ static void SCR_DrawCrosshair(void)
         }
     }
 
+    /* Recoil-based crosshair expansion — sustained fire widens crosshair */
+    {
+        extern float SV_GetPlayerRecoil(void);
+        float recoil = SV_GetPlayerRecoil();
+        move_spread += recoil * 12.0f;  /* up to 12 extra pixels at max recoil */
+    }
+
     gap = 3 + (int)(crosshair_spread_extra + move_spread);
 
     /* Green crosshair normally */
