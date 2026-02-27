@@ -1172,6 +1172,19 @@ static void ClientCommand(edict_t *ent)
         return;
     }
 
+    if (Q_stricmp(cmd, "nightvision") == 0 || Q_stricmp(cmd, "nv") == 0) {
+        ent->client->nightvision = !ent->client->nightvision;
+        {
+            int snd = gi.soundindex(ent->client->nightvision ?
+                                     "items/nv_on.wav" : "items/nv_off.wav");
+            if (snd)
+                gi.sound(ent, CHAN_ITEM, snd, 1.0f, ATTN_NORM, 0);
+        }
+        gi.cprintf(ent, PRINT_ALL, "Night vision %s\n",
+                   ent->client->nightvision ? "ON" : "OFF");
+        return;
+    }
+
     if (Q_stricmp(cmd, "+leanleft") == 0) {
         ent->client->lean_state = -1;
         return;
@@ -3905,6 +3918,16 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
         client->blend[1] = 1.0f;
         client->blend[2] = 1.0f;
         client->blend[3] = intensity * 0.9f;
+    }
+
+    /* Night vision green tint */
+    if (!ent->deadflag && client->nightvision) {
+        client->blend[0] = 0.0f;
+        client->blend[1] = 0.3f;
+        client->blend[2] = 0.0f;
+        client->blend[3] = 0.15f;
+        /* Boost ambient light via rdflags */
+        client->rdflags |= 0x04;  /* RDF_IRGOGGLES */
     }
 
     /* Lean system — smoothly interpolate lean offset */

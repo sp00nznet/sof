@@ -239,6 +239,8 @@ static void SP_info_checkpoint(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_item_medkit(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_misc_security_camera(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_env_smoke(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_item_armor(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_item_ammo_crate(edict_t *ent, epair_t *pairs, int num_pairs);
 static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
                            int damage, vec3_t point);
 
@@ -393,6 +395,13 @@ static spawn_func_t spawn_funcs[] = {
     /* Smoke/fog volumes */
     { "env_smoke",                  SP_env_smoke },
     { "env_fog_volume",             SP_env_smoke },
+
+    /* Armor & ammo pickups */
+    { "item_armor",                 SP_item_armor },
+    { "item_armor_body",            SP_item_armor },
+    { "item_armor_jacket",          SP_item_armor },
+    { "item_ammo_crate",            SP_item_ammo_crate },
+    { "item_ammo",                  SP_item_ammo_crate },
 
     /* Weapons (SoF) */
     { "weapon_knife",               SP_item_pickup },
@@ -4394,6 +4403,124 @@ static void SP_env_smoke(edict_t *ent, epair_t *pairs, int num_pairs)
 
     gi.linkentity(ent);
     gi.dprintf("  env_smoke at (%.0f %.0f %.0f)\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
+}
+
+/* ==========================================================================
+   item_armor — Armor pickup, restores 50 armor on touch, respawns after 30s
+   ========================================================================== */
+
+static void armor_touch(edict_t *self, edict_t *other, void *plane, csurface_t *surf)
+{
+    (void)plane; (void)surf;
+
+    if (!other || !other->client || other->deadflag)
+        return;
+    if (other->client->armor >= other->client->armor_max)
+        return;
+
+    other->client->armor += 50;
+    if (other->client->armor > other->client->armor_max)
+        other->client->armor = other->client->armor_max;
+
+    {
+        int snd = gi.soundindex("items/armor.wav");
+        if (snd)
+            gi.sound(other, CHAN_ITEM, snd, 1.0f, ATTN_NORM, 0);
+    }
+
+    SCR_AddPickupMessage("Armor (+50)");
+
+    self->solid = SOLID_NOT;
+    self->svflags |= SVF_NOCLIENT;
+    self->nextthink = level.time + 30.0f;
+    gi.linkentity(self);
+}
+
+static void armor_respawn(edict_t *self)
+{
+    self->solid = SOLID_TRIGGER;
+    self->svflags &= ~SVF_NOCLIENT;
+    self->nextthink = 0;
+    gi.linkentity(self);
+}
+
+static void SP_item_armor(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+
+    ent->solid = SOLID_TRIGGER;
+    ent->touch = armor_touch;
+    ent->think = armor_respawn;
+    ent->s.modelindex = gi.modelindex("models/items/armor/tris.md2");
+
+    VectorSet(ent->mins, -16, -16, 0);
+    VectorSet(ent->maxs, 16, 16, 16);
+
+    gi.linkentity(ent);
+    gi.dprintf("  item_armor at (%.0f %.0f %.0f)\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
+}
+
+/* ==========================================================================
+   item_ammo_crate — Refills current weapon ammo on touch, respawns after 45s
+   ========================================================================== */
+
+static void ammo_crate_touch(edict_t *self, edict_t *other, void *plane, csurface_t *surf)
+{
+    (void)plane; (void)surf;
+
+    if (!other || !other->client || other->deadflag)
+        return;
+
+    {
+        int w = other->client->pers_weapon;
+        if (w <= 0 || w >= WEAP_COUNT)
+            return;
+
+        if (other->client->ammo[w] >= other->client->ammo_max[w])
+            return;
+
+        /* Refill to max */
+        other->client->ammo[w] = other->client->ammo_max[w];
+
+        {
+            int snd = gi.soundindex("items/ammo.wav");
+            if (snd)
+                gi.sound(other, CHAN_ITEM, snd, 1.0f, ATTN_NORM, 0);
+        }
+
+        SCR_AddPickupMessage("Ammo Crate (ammo refilled)");
+    }
+
+    self->solid = SOLID_NOT;
+    self->svflags |= SVF_NOCLIENT;
+    self->nextthink = level.time + 45.0f;
+    gi.linkentity(self);
+}
+
+static void ammo_crate_respawn(edict_t *self)
+{
+    self->solid = SOLID_TRIGGER;
+    self->svflags &= ~SVF_NOCLIENT;
+    self->nextthink = 0;
+    gi.linkentity(self);
+}
+
+static void SP_item_ammo_crate(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+
+    ent->solid = SOLID_TRIGGER;
+    ent->touch = ammo_crate_touch;
+    ent->think = ammo_crate_respawn;
+    ent->s.modelindex = gi.modelindex("models/items/ammo/tris.md2");
+
+    VectorSet(ent->mins, -16, -16, 0);
+    VectorSet(ent->maxs, 16, 16, 24);
+
+    gi.linkentity(ent);
+    gi.dprintf("  item_ammo_crate at (%.0f %.0f %.0f)\n",
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
 }
 

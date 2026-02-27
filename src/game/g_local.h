@@ -489,6 +489,9 @@ struct gclient_s {
 
     /* Flashbang blindness */
     float           flash_end;             /* level.time when flash blindness clears */
+
+    /* Night vision */
+    qboolean        nightvision;           /* night vision goggles active */
 };
 
 /* ==========================================================================
