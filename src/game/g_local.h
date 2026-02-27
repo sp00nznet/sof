@@ -472,6 +472,13 @@ struct gclient_s {
 
     /* Concussion effect */
     float           concussion_end;        /* level.time when concussion clears */
+
+    /* Dive mechanic */
+    float           dive_end;              /* level.time when dive completes */
+    vec3_t          dive_dir;              /* dive direction */
+
+    /* Weapon inspect */
+    float           inspect_end;           /* level.time when inspect animation done */
 };
 
 /* ==========================================================================

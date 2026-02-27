@@ -1084,6 +1084,49 @@ static void ClientCommand(edict_t *ent)
         return;
     }
 
+    /* Weapon inspect animation */
+    if (Q_stricmp(cmd, "inspect") == 0) {
+        if (ent->client->inspect_end > level.time) {
+            gi.cprintf(ent, PRINT_ALL, "Already inspecting.\n");
+            return;
+        }
+        ent->client->inspect_end = level.time + 2.0f;
+        gi.cprintf(ent, PRINT_ALL, "Inspecting weapon...\n");
+        return;
+    }
+
+    /* Slow-motion dive: bullet time + jump for cinematic dive */
+    if (Q_stricmp(cmd, "dive") == 0) {
+        if (ent->client->dive_end > level.time || ent->deadflag)
+            return;
+        if (ent->client->bullet_time_charge < 20.0f) {
+            gi.cprintf(ent, PRINT_ALL, "Not enough bullet time charge (need 20).\n");
+            return;
+        }
+
+        /* Calculate dive direction from view */
+        {
+            vec3_t fwd_d, rt_d, up_d;
+            G_AngleVectors(ent->client->viewangles, fwd_d, rt_d, up_d);
+
+            ent->client->dive_end = level.time + 0.6f;
+            VectorCopy(fwd_d, ent->client->dive_dir);
+            ent->client->dive_dir[2] = 0;
+            VectorNormalize(ent->client->dive_dir);
+
+            /* Launch player forward + slightly up */
+            ent->velocity[0] = ent->client->dive_dir[0] * 400.0f;
+            ent->velocity[1] = ent->client->dive_dir[1] * 400.0f;
+            ent->velocity[2] = 150.0f;
+
+            /* Activate slow-motion */
+            level.time_scale = 0.3f;
+            ent->client->bullet_time_charge -= 20.0f;
+            SCR_AddPickupMessage("DIVE!");
+        }
+        return;
+    }
+
     gi.cprintf(ent, PRINT_ALL, "Unknown command: %s\n", cmd);
 }
 
@@ -3166,6 +3209,19 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
         client->kick_angles[0] += sinf(sway_t) * 2.0f * intensity;
         client->kick_angles[1] += cosf(sway_t * 0.7f) * 3.0f * intensity;
         client->kick_angles[2] += sinf(sway_t * 1.3f) * 1.5f * intensity;
+    }
+
+    /* Slow-motion dive completion */
+    if (client->dive_end > 0 && level.time >= client->dive_end) {
+        level.time_scale = 1.0f;  /* restore normal speed */
+        client->dive_end = 0;
+    }
+
+    /* Weapon inspect animation: sway weapon while inspecting */
+    if (client->inspect_end > level.time) {
+        float t = (client->inspect_end - level.time) / 2.0f;
+        client->kick_angles[1] += sinf(t * 8.0f) * 5.0f;  /* yaw wobble */
+        client->kick_angles[0] += cosf(t * 6.0f) * 3.0f;  /* pitch wobble */
     }
 
     /* Footstep sounds — on ground and moving, with surface material detection */

@@ -786,6 +786,12 @@ static void ai_think_attack(edict_t *self)
         AI_Dodge(self);
     }
 
+    /* Combat callout: periodically re-alert allies with updated enemy position */
+    if (level.time > self->move_angles[0] + 5.0f) {
+        self->move_angles[0] = level.time;
+        AI_AlertNearby(self, self->enemy);
+    }
+
     /* Strafe while attacking (change direction periodically) */
     if (dist > AI_MELEE_RANGE) {
         /* Use move_angles[2] as strafe timer */

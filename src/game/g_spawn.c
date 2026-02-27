@@ -233,6 +233,8 @@ static void SP_env_acid(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_debris(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_rope(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_misc_corpse(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_trap_pressure_plate(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_trap_swinging_blade(edict_t *ent, epair_t *pairs, int num_pairs);
 static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
                            int damage, vec3_t point);
 
@@ -370,6 +372,9 @@ static spawn_func_t spawn_funcs[] = {
     { "misc_mounted_gun",           SP_misc_turret },
     { "misc_tripmine",              SP_misc_tripmine },
     { "misc_trap",                  SP_misc_tripmine },
+    { "trap_pressure_plate",        SP_trap_pressure_plate },
+    { "trap_swinging_blade",        SP_trap_swinging_blade },
+    { "trap_blade",                 SP_trap_swinging_blade },
 
     /* Weapons (SoF) */
     { "weapon_knife",               SP_item_pickup },
@@ -2585,6 +2590,127 @@ static void SP_misc_corpse(edict_t *ent, epair_t *pairs, int num_pairs)
     gi.dprintf("  misc_corpse at (%.0f %.0f %.0f) frame=%d\n",
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
                ent->s.frame);
+}
+
+/* ==========================================================================
+   trap_pressure_plate — Steps on it to fire targets (like trigger_once but
+   visible and with a click sound + visual depression)
+   ========================================================================== */
+
+static void pressure_plate_touch(edict_t *self, edict_t *other, void *plane, csurface_t *surf)
+{
+    (void)plane; (void)surf;
+
+    if (!other || !other->client || self->count)
+        return;
+
+    self->count = 1;  /* triggered — only once */
+
+    /* Click sound */
+    {
+        int snd = gi.soundindex("world/switch.wav");
+        if (snd)
+            gi.sound(self, CHAN_AUTO, snd, 1.0f, ATTN_NORM, 0);
+    }
+
+    /* Fire targets */
+    if (self->target)
+        G_UseTargets(other, self->target);
+
+    /* Visual: depress the plate slightly */
+    self->s.origin[2] -= 2.0f;
+    gi.linkentity(self);
+
+    SCR_AddPickupMessage("*click*");
+}
+
+static void SP_trap_pressure_plate(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+
+    ent->solid = SOLID_TRIGGER;
+    ent->touch = pressure_plate_touch;
+    ent->count = 0;  /* not yet triggered */
+
+    VectorSet(ent->mins, -16, -16, -2);
+    VectorSet(ent->maxs, 16, 16, 2);
+
+    gi.linkentity(ent);
+    gi.dprintf("  trap_pressure_plate at (%.0f %.0f %.0f)\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
+}
+
+/* ==========================================================================
+   trap_swinging_blade — Pendulum blade that damages entities in its arc
+   ========================================================================== */
+
+static void blade_think(edict_t *self)
+{
+    edict_t *touch[16];
+    int num, i;
+    vec3_t blade_mins, blade_maxs;
+    float range = self->dmg_radius > 0 ? (float)self->dmg_radius : 48.0f;
+
+    if (!self->inuse) return;
+    self->nextthink = level.time + 0.2f;
+
+    /* Swing animation — oscillate yaw angle */
+    self->s.angles[2] = sinf(level.time * self->speed) * 45.0f;
+
+    /* Check for entities within blade reach */
+    VectorSet(blade_mins, self->s.origin[0] - range,
+                           self->s.origin[1] - range,
+                           self->s.origin[2] - range);
+    VectorSet(blade_maxs, self->s.origin[0] + range,
+                           self->s.origin[1] + range,
+                           self->s.origin[2] + range);
+
+    num = gi.BoxEdicts(blade_mins, blade_maxs, touch, 16, AREA_SOLID);
+    for (i = 0; i < num; i++) {
+        if (touch[i] && touch[i] != self && touch[i]->inuse &&
+            touch[i]->takedamage && touch[i]->health > 0) {
+            /* Damage debounce per victim */
+            if (self->dmg_debounce_time > level.time)
+                continue;
+            self->dmg_debounce_time = level.time + 0.8f;
+
+            touch[i]->health -= self->dmg;
+            R_ParticleEffect(touch[i]->s.origin, touch[i]->mins, 1, 8);
+
+            if (touch[i]->client) {
+                touch[i]->client->blend[0] = 1.0f;
+                touch[i]->client->blend[1] = 0.0f;
+                touch[i]->client->blend[2] = 0.0f;
+                touch[i]->client->blend[3] = 0.3f;
+                touch[i]->client->pers_health = touch[i]->health;
+                touch[i]->client->kick_angles[0] -= 3.0f;
+            }
+
+            if (touch[i]->health <= 0 && touch[i]->die)
+                touch[i]->die(touch[i], self, self, self->dmg, touch[i]->s.origin);
+        }
+    }
+}
+
+static void SP_trap_swinging_blade(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *dmg_str = ED_FindValue(pairs, num_pairs, "dmg");
+    const char *speed_str = ED_FindValue(pairs, num_pairs, "speed");
+    const char *radius_str = ED_FindValue(pairs, num_pairs, "dmg_radius");
+    (void)pairs; (void)num_pairs;
+
+    ent->solid = SOLID_NOT;  /* blade itself is non-solid */
+    ent->movetype = MOVETYPE_NONE;
+    ent->dmg = dmg_str ? atoi(dmg_str) : 25;
+    ent->dmg_radius = radius_str ? atoi(radius_str) : 48;
+    ent->speed = speed_str ? (float)atof(speed_str) : 3.0f;
+    ent->think = blade_think;
+    ent->nextthink = level.time + 0.5f;
+
+    gi.linkentity(ent);
+    gi.dprintf("  trap_swinging_blade at (%.0f %.0f %.0f) dmg=%d speed=%.1f\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->dmg, ent->speed);
 }
 
 static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
