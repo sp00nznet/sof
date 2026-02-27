@@ -739,6 +739,8 @@ static void ai_think_attack(edict_t *self)
                 inaccuracy = 0.3f;     /* precise */
             else if (Q_stricmp(self->classname, "monster_guard") == 0)
                 inaccuracy = 0.25f;    /* very precise, slow rate */
+            else if (Q_stricmp(self->classname, "monster_sniper") == 0)
+                inaccuracy = 0.1f;     /* extremely precise */
         }
 
         /* Difficulty scales accuracy: easy=worse, hard/nightmare=better */
@@ -823,6 +825,8 @@ static void ai_think_attack(edict_t *self)
                     fire_rate = 0.6f;   /* aggressive rate */
                 else if (Q_stricmp(self->classname, "monster_soldier_light") == 0)
                     fire_rate = 1.2f;   /* hesitant */
+                else if (Q_stricmp(self->classname, "monster_sniper") == 0)
+                    fire_rate = 2.5f;   /* slow but deadly */
             }
 
             /* Difficulty scales fire rate: easy=slower, hard/nightmare=faster */
@@ -1314,6 +1318,24 @@ void SP_monster_guard(edict_t *ent, void *pairs, int num_pairs)
     ent->classname = "monster_guard";
     ent->ai_flags |= AI_STAND_GROUND;
     monster_start(ent, 200, 20, AI_CHASE_SPEED * 0.6f);
+}
+
+/*
+ * SP_monster_sniper - Long-range sniper enemy
+ * Very accurate, high damage, slow fire rate. Stays at distance.
+ */
+void SP_monster_sniper(edict_t *ent, void *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+
+    gi.dprintf("  Spawning sniper at (%.0f %.0f %.0f)\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
+
+    ent->classname = "monster_sniper";
+    ent->ai_flags |= AI_STAND_GROUND;  /* snipers don't chase */
+    monster_start(ent, 80, 35, AI_CHASE_SPEED * 0.4f);
+    ent->yaw_speed = 12.0f;
+    ent->weapon_index = 7;  /* WEAP_SNIPER for drops */
 }
 
 /*

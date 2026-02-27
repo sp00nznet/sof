@@ -1270,6 +1270,27 @@ static void T_RadiusDamage(edict_t *inflictor, edict_t *attacker,
 
         t->health -= (int)dmg_applied;
 
+        /* Explosion knockback — push entities away from blast */
+        {
+            vec3_t knockback_dir;
+            float knockback_force;
+
+            VectorCopy(diff, knockback_dir);
+            if (dist < 1.0f) {
+                knockback_dir[0] = 0; knockback_dir[1] = 0; knockback_dir[2] = 1.0f;
+            } else {
+                VectorScale(knockback_dir, 1.0f / dist, knockback_dir);
+            }
+
+            /* Force scales inversely with distance, proportional to damage */
+            knockback_force = dmg_applied * 8.0f;
+            if (knockback_force > 600.0f) knockback_force = 600.0f;
+
+            t->velocity[0] += knockback_dir[0] * knockback_force;
+            t->velocity[1] += knockback_dir[1] * knockback_force;
+            t->velocity[2] += knockback_dir[2] * knockback_force * 0.5f + 80.0f;
+        }
+
         /* Pain flash for players */
         if (t->client) {
             t->client->blend[0] = 1.0f;

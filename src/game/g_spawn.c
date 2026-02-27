@@ -42,6 +42,7 @@ extern void SP_monster_soldier(edict_t *ent, void *pairs, int num_pairs);
 extern void SP_monster_soldier_light(edict_t *ent, void *pairs, int num_pairs);
 extern void SP_monster_soldier_ss(edict_t *ent, void *pairs, int num_pairs);
 extern void SP_monster_guard(edict_t *ent, void *pairs, int num_pairs);
+extern void SP_monster_sniper(edict_t *ent, void *pairs, int num_pairs);
 extern void SP_monster_boss(edict_t *ent, void *pairs, int num_pairs);
 
 /* Forward declarations for precache functions */
@@ -185,6 +186,7 @@ static void SP_trigger_once(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_trigger_multiple(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_target_speaker(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_misc_model(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_misc_particles(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_item_pickup(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_trigger_changelevel(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_rotating(edict_t *ent, epair_t *pairs, int num_pairs);
@@ -315,6 +317,7 @@ static spawn_func_t spawn_funcs[] = {
     { "monster_soldier_light",      (void (*)(edict_t *, epair_t *, int))SP_monster_soldier_light },
     { "monster_soldier_ss",         (void (*)(edict_t *, epair_t *, int))SP_monster_soldier_ss },
     { "monster_guard",              (void (*)(edict_t *, epair_t *, int))SP_monster_guard },
+    { "monster_sniper",             (void (*)(edict_t *, epair_t *, int))SP_monster_sniper },
     { "monster_boss",               (void (*)(edict_t *, epair_t *, int))SP_monster_boss },
     /* Q2-compatible monster names */
     { "monster_soldier_light",      (void (*)(edict_t *, epair_t *, int))SP_monster_soldier_light },
@@ -324,6 +327,7 @@ static spawn_func_t spawn_funcs[] = {
 
     /* Misc */
     { "misc_model",                 SP_misc_model },
+    { "misc_particles",             SP_misc_particles },
     { "info_npc",                   SP_info_npc },
     { "info_npc_talk",              SP_info_npc },
 
@@ -2817,6 +2821,62 @@ static void SP_target_speaker(edict_t *ent, epair_t *pairs, int num_pairs)
     }
 }
 
+/*
+ * misc_particles — Persistent environmental particle emitter
+ * Spawns particles at its origin periodically.
+ *   "style" = particle type (0=sparks, 1=blood, 2=fire, 3=muzzle, 4=flame,
+ *             10=smoke, 11=debris, 13=dust, 14=rain, 15=snow)
+ *   "count" = particles per emission (default 4)
+ *   "wait"  = seconds between emissions (default 0.5)
+ *   Can be toggled on/off via use trigger
+ */
+static void misc_particles_think(edict_t *self)
+{
+    vec3_t dir;
+    VectorCopy(self->move_origin, dir);
+    R_ParticleEffect(self->s.origin, dir, self->style, self->count ? self->count : 4);
+    self->nextthink = level.time + (self->wait > 0 ? self->wait : 0.5f);
+}
+
+static void misc_particles_use(edict_t *self, edict_t *other, edict_t *activator)
+{
+    (void)other; (void)activator;
+    if (self->think == misc_particles_think) {
+        /* Turn off */
+        self->think = NULL;
+        self->nextthink = 0;
+    } else {
+        /* Turn on */
+        self->think = misc_particles_think;
+        self->nextthink = level.time + 0.1f;
+    }
+}
+
+static void SP_misc_particles(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *dir_str = ED_FindValue(pairs, num_pairs, "movedir");
+
+    (void)num_pairs;
+
+    if (!ent->style) ent->style = 0;  /* default: sparks */
+    if (!ent->count) ent->count = 4;
+
+    /* Default emit direction: up */
+    VectorSet(ent->move_origin, 0, 0, 1);
+    if (dir_str) {
+        sscanf(dir_str, "%f %f %f", &ent->move_origin[0], &ent->move_origin[1], &ent->move_origin[2]);
+    }
+
+    ent->use = misc_particles_use;
+
+    /* Always start emitting (use trigger to toggle on/off) */
+    ent->think = misc_particles_think;
+    ent->nextthink = level.time + 0.5f + ((float)(rand() % 100)) * 0.01f;
+
+    gi.linkentity(ent);
+    gi.dprintf("  misc_particles type=%d count=%d\n", ent->style, ent->count);
+}
+
 static void SP_misc_model(edict_t *ent, epair_t *pairs, int num_pairs)
 {
     const char *mdl = ED_FindValue(pairs, num_pairs, "model");
@@ -3144,6 +3204,8 @@ static void monster_maker_use(edict_t *self, edict_t *other, edict_t *activator)
             SP_monster_soldier_light(monster, NULL, 0);
         else if (Q_stricmp(type, "monster_guard") == 0)
             SP_monster_guard(monster, NULL, 0);
+        else if (Q_stricmp(type, "monster_sniper") == 0)
+            SP_monster_sniper(monster, NULL, 0);
         else if (Q_stricmp(type, "monster_boss") == 0)
             SP_monster_boss(monster, NULL, 0);
         else
