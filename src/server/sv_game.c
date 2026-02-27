@@ -1198,3 +1198,45 @@ void SV_SpawnMapEntities(const char *mapname, const char *entstring)
         }
     }
 }
+
+/* ==========================================================================
+   Radar Entity Data — Provides entity positions/types for minimap
+   ========================================================================== */
+
+typedef struct {
+    vec3_t  origin;
+    int     type;       /* 0=generic, 1=monster, 2=other player, 3=item */
+    int     health;
+} radar_ent_t;
+
+int SV_GetRadarEntities(radar_ent_t *out, int max_ents)
+{
+    int count = 0;
+    int i;
+
+    if (!ge || !ge->edicts)
+        return 0;
+
+    for (i = 2; i < ge->num_edicts && count < max_ents; i++) {
+        edict_t *ent = (edict_t *)((byte *)ge->edicts + i * ge->edict_size);
+
+        if (!ent->inuse)
+            continue;
+
+        if (ent->svflags & SVF_MONSTER) {
+            if (ent->health <= 0) continue;
+            VectorCopy(ent->s.origin, out[count].origin);
+            out[count].type = 1;
+            out[count].health = ent->health;
+            count++;
+        } else if (ent->s.modelindex > 0 && ent->solid != SOLID_BSP &&
+                   ent->solid != SOLID_TRIGGER) {
+            VectorCopy(ent->s.origin, out[count].origin);
+            out[count].type = 3;
+            out[count].health = 0;
+            count++;
+        }
+    }
+
+    return count;
+}

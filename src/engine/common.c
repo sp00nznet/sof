@@ -128,6 +128,7 @@ static void SCR_DrawChat(void);
 static void SCR_DrawDamageNumbers(void);
 static void SCR_DrawPickupMessages(void);
 static void SCR_DrawKillFeed(void);
+static void SCR_DrawMinimap(void);
 static void SCR_DrawIntermission(void);
 
 /* Intermission state */
@@ -952,10 +953,10 @@ static void SCR_DrawMenu(void)
     R_DrawFadeScreenColor(0, 0, 0, 0.7f);
 
     /* Title */
-    R_SetDrawColor(0xFF, 0xCC, 0x00, 0xFF);
+    R_SetDrawColor(1.0f, 0.8f, 0.0f, 1.0f);
     R_DrawString(x + 40, y + 20, "SOLDIER OF FORTUNE");
 
-    R_SetDrawColor(0x88, 0x88, 0x88, 0xFF);
+    R_SetDrawColor(0.53f, 0.53f, 0.53f, 1.0f);
     R_DrawString(x + 40, y + 40, "Static Recompilation v0.1");
 
     if (menu_active == 1) {
@@ -966,10 +967,10 @@ static void SCR_DrawMenu(void)
             if (i == menu_cursor) {
                 /* Highlight bar */
                 R_DrawFill(x + 20, item_y - 2, menu_w - 40, 24, (int)0x40FFFFFF);
-                R_SetDrawColor(0xFF, 0xFF, 0x00, 0xFF);
+                R_SetDrawColor(1.0f, 1.0f, 0.0f, 1.0f);
                 R_DrawString(x + 10, item_y, ">");
             } else {
-                R_SetDrawColor(0xCC, 0xCC, 0xCC, 0xFF);
+                R_SetDrawColor(0.8f, 0.8f, 0.8f, 1.0f);
             }
 
             R_DrawString(x + 30, item_y, menu_labels[i]);
@@ -978,10 +979,10 @@ static void SCR_DrawMenu(void)
         /* Options sub-menu */
         char val[64];
 
-        R_SetDrawColor(0xFF, 0xFF, 0x00, 0xFF);
+        R_SetDrawColor(1.0f, 1.0f, 0.0f, 1.0f);
         R_DrawString(x + 40, y + 80, "OPTIONS");
 
-        R_SetDrawColor(0xCC, 0xCC, 0xCC, 0xFF);
+        R_SetDrawColor(0.8f, 0.8f, 0.8f, 1.0f);
         Com_sprintf(val, sizeof(val), "Sensitivity: %.1f", Cvar_VariableValue("sensitivity"));
         R_DrawString(x + 40, y + 120, val);
 
@@ -992,12 +993,12 @@ static void SCR_DrawMenu(void)
                     Cvar_VariableValue("gore_detail") >= 2 ? "Full" : "Reduced");
         R_DrawString(x + 40, y + 160, val);
 
-        R_SetDrawColor(0x88, 0x88, 0x88, 0xFF);
+        R_SetDrawColor(0.53f, 0.53f, 0.53f, 1.0f);
         R_DrawString(x + 40, y + 200, "Press ESC to return");
     }
 
     /* Reset draw color */
-    R_SetDrawColor(0xFF, 0xFF, 0xFF, 0xFF);
+    R_SetDrawColor(1.0f, 1.0f, 1.0f, 1.0f);
 }
 
 /* ==========================================================================
@@ -1039,10 +1040,10 @@ static void SCR_DrawScoreboard(void)
     R_DrawFill(x, y, sb_w, 40 + count * 20, (int)0xC0000000);
 
     /* Header */
-    R_SetDrawColor(0xFF, 0xCC, 0x00, 0xFF);
+    R_SetDrawColor(1.0f, 0.8f, 0.0f, 1.0f);
     R_DrawString(x + 10, y + 8, "SCOREBOARD");
 
-    R_SetDrawColor(0xAA, 0xAA, 0xAA, 0xFF);
+    R_SetDrawColor(0.67f, 0.67f, 0.67f, 1.0f);
     R_DrawString(x + 10,  y + 28, "Name");
     R_DrawString(x + 180, y + 28, "Kills");
     R_DrawString(x + 240, y + 28, "Deaths");
@@ -1052,7 +1053,7 @@ static void SCR_DrawScoreboard(void)
     for (i = 0; i < count; i++) {
         int row_y = y + 48 + i * 20;
 
-        R_SetDrawColor(0xFF, 0xFF, 0xFF, 0xFF);
+        R_SetDrawColor(1.0f, 1.0f, 1.0f, 1.0f);
         R_DrawString(x + 10, row_y, entries[i].name);
 
         Com_sprintf(line, sizeof(line), "%d", entries[i].kills);
@@ -1065,7 +1066,7 @@ static void SCR_DrawScoreboard(void)
         R_DrawString(x + 320, row_y, line);
     }
 
-    R_SetDrawColor(0xFF, 0xFF, 0xFF, 0xFF);
+    R_SetDrawColor(1.0f, 1.0f, 1.0f, 1.0f);
 }
 
 /* ==========================================================================
@@ -1110,17 +1111,17 @@ static void SCR_DrawChat(void)
 
         /* Fade out in last second */
         if (age > CHAT_FADE_TIME - 1.0f) {
-            int alpha = (int)(255.0f * (CHAT_FADE_TIME - age));
-            R_SetDrawColor(0xFF, 0xFF, 0xFF, alpha);
+            float alpha = CHAT_FADE_TIME - age;
+            R_SetDrawColor(1.0f, 1.0f, 1.0f, alpha);
         } else {
-            R_SetDrawColor(0xFF, 0xFF, 0xFF, 0xFF);
+            R_SetDrawColor(1.0f, 1.0f, 1.0f, 1.0f);
         }
 
         R_DrawString(10, y, cl->text);
         y += 12;
     }
 
-    R_SetDrawColor(0xFF, 0xFF, 0xFF, 0xFF);
+    R_SetDrawColor(1.0f, 1.0f, 1.0f, 1.0f);
 }
 
 /* ==========================================================================
@@ -1167,7 +1168,6 @@ static void SCR_DrawDamageNumbers(void)
         damage_num_t *d = &dmg_nums[i];
         float age;
         int y;
-        int alpha;
         char buf[16];
 
         if (!d->active) continue;
@@ -1179,22 +1179,24 @@ static void SCR_DrawDamageNumbers(void)
         }
 
         y = d->screen_y + (int)(d->vel_y * age);
-        alpha = (int)(255.0f * (1.0f - age / DAMAGE_NUM_LIFETIME));
-        if (alpha < 0) alpha = 0;
+        {
+            float a = 1.0f - age / DAMAGE_NUM_LIFETIME;
+            if (a < 0) a = 0;
 
-        /* Color based on damage: high=red, medium=yellow, low=white */
-        if (d->value >= 50)
-            R_SetDrawColor(0xFF, 0x40, 0x40, alpha);
-        else if (d->value >= 20)
-            R_SetDrawColor(0xFF, 0xFF, 0x40, alpha);
-        else
-            R_SetDrawColor(0xFF, 0xFF, 0xFF, alpha);
+            /* Color based on damage: high=red, medium=yellow, low=white */
+            if (d->value >= 50)
+                R_SetDrawColor(1.0f, 0.25f, 0.25f, a);
+            else if (d->value >= 20)
+                R_SetDrawColor(1.0f, 1.0f, 0.25f, a);
+            else
+                R_SetDrawColor(1.0f, 1.0f, 1.0f, a);
+        }
 
         Com_sprintf(buf, sizeof(buf), "%d", d->value);
         R_DrawString(d->screen_x, y, buf);
     }
 
-    R_SetDrawColor(0xFF, 0xFF, 0xFF, 0xFF);
+    R_SetDrawColor(1.0f, 1.0f, 1.0f, 1.0f);
 }
 
 /* ==========================================================================
@@ -1229,23 +1231,22 @@ static void SCR_DrawPickupMessages(void)
 
     for (i = 0; i < MAX_PICKUP_MSGS; i++) {
         pickup_msg_t *m = &pickup_msgs[i];
-        float age;
-        int alpha;
+        float age, a;
 
         if (m->text[0] == '\0') continue;
 
         age = now - m->birth_time;
         if (age > PICKUP_MSG_TIME) continue;
 
-        alpha = (int)(255.0f * (1.0f - age / PICKUP_MSG_TIME));
-        if (alpha < 0) alpha = 0;
+        a = 1.0f - age / PICKUP_MSG_TIME;
+        if (a < 0) a = 0;
 
-        R_SetDrawColor(0xFF, 0xFF, 0x80, alpha);
+        R_SetDrawColor(1.0f, 1.0f, 0.5f, a);
         R_DrawString(cx - (int)(strlen(m->text) * 4), y, m->text);
         y += 14;
     }
 
-    R_SetDrawColor(0xFF, 0xFF, 0xFF, 0xFF);
+    R_SetDrawColor(1.0f, 1.0f, 1.0f, 1.0f);
 }
 
 /* ==========================================================================
@@ -1288,17 +1289,17 @@ static void SCR_DrawKillFeed(void)
         if (age > KILLFEED_TIME) continue;
 
         {
-            int alpha = (age > KILLFEED_TIME - 1.0f) ?
-                        (int)(255.0f * (KILLFEED_TIME - age)) : 255;
-            if (alpha < 0) alpha = 0;
-            R_SetDrawColor(0xFF, 0xDD, 0xDD, alpha);
+            float a = (age > KILLFEED_TIME - 1.0f) ?
+                      (KILLFEED_TIME - age) : 1.0f;
+            if (a < 0) a = 0;
+            R_SetDrawColor(1.0f, 0.87f, 0.87f, a);
         }
 
         R_DrawString(x, y, k->text);
         y += 12;
     }
 
-    R_SetDrawColor(0xFF, 0xFF, 0xFF, 0xFF);
+    R_SetDrawColor(1.0f, 1.0f, 1.0f, 1.0f);
 }
 
 /* ==========================================================================
@@ -1529,6 +1530,110 @@ static void SCR_DrawCrosshair(void)
     R_DrawFill(cx, cy, 1, 1, color);
 }
 
+/*
+ * SCR_DrawMinimap — Small radar display showing nearby entities
+ * Player at center, rotated to match view direction
+ * Red dots = monsters, yellow dots = items
+ */
+
+typedef struct {
+    vec3_t  origin;
+    int     type;       /* 0=generic, 1=monster, 2=other player, 3=item */
+    int     health;
+} radar_ent_t;
+
+extern int SV_GetRadarEntities(radar_ent_t *out, int max_ents);
+
+static void SCR_DrawMinimap(void)
+{
+    int map_size = 100;     /* pixel size of minimap */
+    int map_x = g_display.width - map_size - 12;
+    int map_y = g_display.height - map_size - 60;  /* above HUD bar */
+    int map_cx = map_x + map_size / 2;
+    int map_cy = map_y + map_size / 2;
+    float map_range = 1024.0f;  /* world units visible on radar */
+    float scale = (float)map_size / (2.0f * map_range);
+
+    vec3_t player_org, player_ang;
+    float vh;
+    float yaw_rad;
+    float cos_yaw, sin_yaw;
+    radar_ent_t ents[64];
+    int num_ents, i;
+
+    if (!SV_GetPlayerState(player_org, player_ang, &vh))
+        return;
+
+    /* Convert player yaw to radians for rotation */
+    yaw_rad = player_ang[1] * (3.14159265f / 180.0f);
+    cos_yaw = (float)cos(yaw_rad);
+    sin_yaw = (float)sin(yaw_rad);
+
+    /* Background */
+    R_DrawFill(map_x, map_y, map_size, map_size, (int)0x80000000);
+
+    /* Border */
+    R_DrawFill(map_x, map_y, map_size, 1, (int)0x60FFFFFF);
+    R_DrawFill(map_x, map_y + map_size - 1, map_size, 1, (int)0x60FFFFFF);
+    R_DrawFill(map_x, map_y, 1, map_size, (int)0x60FFFFFF);
+    R_DrawFill(map_x + map_size - 1, map_y, 1, map_size, (int)0x60FFFFFF);
+
+    /* Get entity data through bridge function */
+    num_ents = SV_GetRadarEntities(ents, 64);
+
+    for (i = 0; i < num_ents; i++) {
+        float dx, dy, rx, ry;
+        int px, py;
+        int dot_color;
+
+        /* Calculate world offset from player */
+        dx = ents[i].origin[0] - player_org[0];
+        dy = ents[i].origin[1] - player_org[1];
+
+        /* Rotate to player-relative (forward = up on radar) */
+        rx = dx * cos_yaw + dy * sin_yaw;
+        ry = -dx * sin_yaw + dy * cos_yaw;
+
+        /* Scale to map pixels */
+        px = map_cx + (int)(rx * scale);
+        py = map_cy - (int)(ry * scale);
+
+        /* Clip to radar bounds */
+        if (px < map_x + 2 || px > map_x + map_size - 3 ||
+            py < map_y + 2 || py > map_y + map_size - 3)
+            continue;
+
+        /* Color by type */
+        if (ents[i].type == 1)
+            dot_color = (int)0xFFFF2020;     /* red = monster */
+        else if (ents[i].type == 3)
+            dot_color = (int)0xFFFFFF40;     /* yellow = item/entity */
+        else
+            dot_color = (int)0xFF40FF40;     /* green = other */
+
+        /* Draw 3x3 dot */
+        R_DrawFill(px - 1, py - 1, 3, 3, dot_color);
+    }
+
+    /* Player arrow at center */
+    R_DrawFill(map_cx - 1, map_cy - 3, 3, 2, (int)0xFF00FF00);
+    R_DrawFill(map_cx, map_cy - 5, 1, 2, (int)0xFF00FF00);
+    R_DrawFill(map_cx - 1, map_cy - 1, 3, 3, (int)0xFF008800);
+
+    /* "N" indicator at top of radar (rotated) */
+    {
+        float north_x = sin_yaw * (map_size / 2 - 8);
+        float north_y = cos_yaw * (map_size / 2 - 8);
+        int nx = map_cx + (int)north_x;
+        int ny = map_cy - (int)north_y;
+        if (nx >= map_x + 4 && nx <= map_x + map_size - 12 &&
+            ny >= map_y + 2 && ny <= map_y + map_size - 10) {
+            R_SetDrawColor(1.0f, 0.8f, 0.0f, 0.8f);
+            R_DrawChar(nx, ny, 'N');
+        }
+    }
+}
+
 static void SCR_DrawHUD(float frametime)
 {
     int health = 0, max_health = 100;
@@ -1706,6 +1811,9 @@ static void SCR_DrawHUD(float frametime)
         R_DrawString((g_display.width - 23 * 8) / 2, g_display.height / 2, "Press FIRE to respawn");
         R_SetDrawColor(0.0f, 1.0f, 0.0f, 1.0f);
     }
+
+    /* Minimap radar */
+    SCR_DrawMinimap();
 
     /* Developer HUD — FPS, position, entity count */
     if (developer && developer->value) {

@@ -497,6 +497,117 @@ static void R_DrawEntityBox(vec3_t origin, vec3_t mins, vec3_t maxs,
     qglColor4f(1, 1, 1, 1);
 }
 
+/*
+ * R_DrawSolidBox — Helper to draw a solid colored box
+ */
+static void R_DrawSolidBox(vec3_t mins, vec3_t maxs, float r, float g, float b, float a)
+{
+    float x0 = mins[0], y0 = mins[1], z0 = mins[2];
+    float x1 = maxs[0], y1 = maxs[1], z1 = maxs[2];
+
+    /* Slightly darker color for shading */
+    float rd = r * 0.6f, gd = g * 0.6f, bd = b * 0.6f;
+
+    qglBegin(GL_QUADS);
+    /* Front face (+Y) */
+    qglColor4f(r, g, b, a);
+    qglVertex3f(x0, y1, z0); qglVertex3f(x1, y1, z0);
+    qglVertex3f(x1, y1, z1); qglVertex3f(x0, y1, z1);
+    /* Back face (-Y) */
+    qglVertex3f(x1, y0, z0); qglVertex3f(x0, y0, z0);
+    qglVertex3f(x0, y0, z1); qglVertex3f(x1, y0, z1);
+    /* Top face (+Z) */
+    qglColor4f(r, g, b, a);
+    qglVertex3f(x0, y0, z1); qglVertex3f(x0, y1, z1);
+    qglVertex3f(x1, y1, z1); qglVertex3f(x1, y0, z1);
+    /* Bottom face (-Z) */
+    qglColor4f(rd, gd, bd, a);
+    qglVertex3f(x0, y1, z0); qglVertex3f(x0, y0, z0);
+    qglVertex3f(x1, y0, z0); qglVertex3f(x1, y1, z0);
+    /* Right face (+X) */
+    qglColor4f(rd, gd, bd, a);
+    qglVertex3f(x1, y0, z0); qglVertex3f(x1, y1, z0);
+    qglVertex3f(x1, y1, z1); qglVertex3f(x1, y0, z1);
+    /* Left face (-X) */
+    qglVertex3f(x0, y1, z0); qglVertex3f(x0, y0, z0);
+    qglVertex3f(x0, y0, z1); qglVertex3f(x0, y1, z1);
+    qglEnd();
+}
+
+/*
+ * R_DrawHumanoid — Draw a simple humanoid figure at the given position
+ * Draws: head, torso, 2 arms, 2 legs as solid colored boxes
+ * yaw: rotation angle in degrees
+ * deadflag: if nonzero, draw fallen/ragdoll pose
+ */
+static void R_DrawHumanoid(vec3_t origin, float yaw, float r, float g, float b,
+                            int deadflag, int health)
+{
+    vec3_t bmin, bmax;
+
+    qglDisable(GL_TEXTURE_2D);
+    qglEnable(GL_BLEND);
+    qglBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    qglEnable(GL_DEPTH_TEST);
+
+    qglPushMatrix();
+    qglTranslatef(origin[0], origin[1], origin[2]);
+    qglRotatef(yaw, 0, 0, 1);
+
+    if (deadflag) {
+        /* Dead: flat on the ground */
+        VectorSet(bmin, -16, -6, 0);
+        VectorSet(bmax, 16, 6, 4);
+        R_DrawSolidBox(bmin, bmax, r * 0.5f, g * 0.5f, b * 0.5f, 0.7f);
+    } else {
+        /* Torso */
+        VectorSet(bmin, -6, -4, 24);
+        VectorSet(bmax, 6, 4, 48);
+        R_DrawSolidBox(bmin, bmax, r, g, b, 0.9f);
+
+        /* Head */
+        VectorSet(bmin, -4, -4, 48);
+        VectorSet(bmax, 4, 4, 58);
+        R_DrawSolidBox(bmin, bmax, r * 0.9f, g * 0.9f + 0.1f, b * 0.9f + 0.1f, 0.9f);
+
+        /* Left arm */
+        VectorSet(bmin, -9, -2, 28);
+        VectorSet(bmax, -6, 2, 48);
+        R_DrawSolidBox(bmin, bmax, r * 0.8f, g * 0.8f, b * 0.8f, 0.9f);
+
+        /* Right arm */
+        VectorSet(bmin, 6, -2, 28);
+        VectorSet(bmax, 9, 2, 48);
+        R_DrawSolidBox(bmin, bmax, r * 0.8f, g * 0.8f, b * 0.8f, 0.9f);
+
+        /* Left leg */
+        VectorSet(bmin, -5, -3, 0);
+        VectorSet(bmax, -1, 3, 24);
+        R_DrawSolidBox(bmin, bmax, r * 0.7f, g * 0.7f, b * 0.7f, 0.9f);
+
+        /* Right leg */
+        VectorSet(bmin, 1, -3, 0);
+        VectorSet(bmax, 5, 3, 24);
+        R_DrawSolidBox(bmin, bmax, r * 0.7f, g * 0.7f, b * 0.7f, 0.9f);
+
+        /* Health bar above head (if injured) */
+        if (health > 0 && health < 100) {
+            float bar_w = 12.0f * ((float)health / 100.0f);
+            float hr = (health < 30) ? 1.0f : 0.0f;
+            float hg = (health >= 30) ? 1.0f : 0.0f;
+            VectorSet(bmin, -6, -0.5f, 62);
+            VectorSet(bmax, -6 + bar_w, 0.5f, 63);
+            R_DrawSolidBox(bmin, bmax, hr, hg, 0.0f, 0.8f);
+        }
+    }
+
+    qglPopMatrix();
+
+    qglDisable(GL_BLEND);
+    qglEnable(GL_TEXTURE_2D);
+    qglColor4f(1, 1, 1, 1);
+}
+
 /* ==========================================================================
    Entity Interpolation
 
@@ -618,24 +729,28 @@ static void R_DrawBrushEntities(void)
             }
         }
 
-        /* Non-BSP entities — draw placeholder boxes */
+        /* Non-BSP entities — draw placeholder geometry */
         if (ent->solid != SOLID_NOT && ent->svflags != SVF_NOCLIENT) {
-            float r_c = 1.0f, g_c = 1.0f, b_c = 0.0f;
-
-            /* Color by entity type */
-            if (ent->svflags & SVF_MONSTER) {
-                r_c = 1.0f; g_c = 0.0f; b_c = 0.0f;   /* red = monster */
-            } else if (ent->client) {
-                r_c = 0.0f; g_c = 1.0f; b_c = 0.0f;   /* green = player */
-            } else if (ent->solid == SOLID_TRIGGER) {
+            if (ent->solid == SOLID_TRIGGER)
                 continue;   /* don't draw triggers */
-            }
 
-            /* Only draw if entity has nonzero bounds */
-            if (ent->mins[0] != 0 || ent->maxs[0] != 0 ||
-                ent->mins[2] != 0 || ent->maxs[2] != 0) {
-                R_DrawEntityBox(render_origin, ent->mins, ent->maxs,
-                                r_c, g_c, b_c);
+            /* Humanoid rendering for monsters and player */
+            if ((ent->svflags & SVF_MONSTER) || ent->client) {
+                float r_c, g_c, b_c;
+                if (ent->svflags & SVF_MONSTER) {
+                    r_c = 0.7f; g_c = 0.15f; b_c = 0.1f;  /* dark red = monster */
+                } else {
+                    r_c = 0.1f; g_c = 0.6f; b_c = 0.1f;   /* green = player */
+                }
+                R_DrawHumanoid(render_origin, render_angles[1],
+                               r_c, g_c, b_c, ent->deadflag, ent->health);
+            } else {
+                /* Generic entity — yellow wireframe box */
+                if (ent->mins[0] != 0 || ent->maxs[0] != 0 ||
+                    ent->mins[2] != 0 || ent->maxs[2] != 0) {
+                    R_DrawEntityBox(render_origin, ent->mins, ent->maxs,
+                                    1.0f, 1.0f, 0.0f);
+                }
             }
         }
     }
