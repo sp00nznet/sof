@@ -984,9 +984,9 @@ void SCR_SetCrosshairSpread(float spread)
    Main Menu System
    ========================================================================== */
 
-#define MENU_ITEMS  4
+#define MENU_ITEMS  5
 static const char *menu_labels[MENU_ITEMS] = {
-    "NEW GAME", "LOAD GAME", "OPTIONS", "QUIT"
+    "NEW GAME", "LOAD GAME", "OPTIONS", "CREDITS", "QUIT"
 };
 
 #define MAP_COUNT  8
@@ -1027,6 +1027,15 @@ void M_Close(void)
 
 void M_Keydown(int key)
 {
+    if (menu_active == 4) {
+        /* Credits screen — ESC returns to main */
+        if (key == K_ESCAPE || key == K_ENTER || key == K_SPACE) {
+            menu_active = 1;
+            menu_cursor = 3;
+        }
+        return;
+    }
+
     if (menu_active == 2) {
         /* Options sub-menu — interactive settings */
         if (key == K_ESCAPE) {
@@ -1117,8 +1126,12 @@ void M_Keydown(int key)
             break;
         case 2: /* OPTIONS */
             menu_active = 2;
+            opt_cursor = 0;
             break;
-        case 3: /* QUIT */
+        case 3: /* CREDITS */
+            menu_active = 4;
+            break;
+        case 4: /* QUIT */
             Cbuf_AddText("quit\n");
             break;
         }
@@ -1247,6 +1260,47 @@ static void SCR_DrawMenu(void)
 
         R_SetDrawColor(0.53f, 0.53f, 0.53f, 1.0f);
         R_DrawString(x + 40, y + menu_h - 20, "Press ESC to return");
+    } else if (menu_active == 4) {
+        /* Credits screen */
+        static const char *credits[] = {
+            "SOLDIER OF FORTUNE",
+            "Static Recompilation",
+            "",
+            "ORIGINAL GAME",
+            "Raven Software (2000)",
+            "id Software (Engine)",
+            "",
+            "RECOMPILATION",
+            "Engine & Renderer",
+            "Game Logic & AI",
+            "Sound & Input",
+            "",
+            "TECHNOLOGY",
+            "id Tech 2 / Quake II Engine",
+            "SDL2, OpenGL 1.1",
+            "",
+            "Press any key to return",
+            NULL
+        };
+        int ci;
+        int cy = y + 30;
+
+        for (ci = 0; credits[ci]; ci++) {
+            if (credits[ci][0] == '\0') {
+                cy += 8;  /* blank line spacing */
+                continue;
+            }
+            /* Section headers in gold, content in white */
+            if (ci == 0) {
+                R_SetDrawColor(1.0f, 0.8f, 0.0f, 1.0f);
+            } else if (credits[ci - 1][0] == '\0' || ci == 1) {
+                R_SetDrawColor(1.0f, 0.8f, 0.0f, 0.9f);
+            } else {
+                R_SetDrawColor(0.8f, 0.8f, 0.8f, 1.0f);
+            }
+            R_DrawString(x + 40, cy, credits[ci]);
+            cy += 16;
+        }
     }
 
     /* Reset draw color */

@@ -538,6 +538,64 @@ static void R_DrawSolidBox(vec3_t mins, vec3_t maxs, float r, float g, float b, 
 }
 
 /*
+ * R_DrawBlobShadow — Simple circular shadow projected on ground below entity.
+ * Traces downward from origin to find ground, draws a dark ellipse there.
+ * Opacity fades with height above ground.
+ */
+static void R_DrawBlobShadow(vec3_t origin, float radius)
+{
+    vec3_t down, ground;
+    trace_t tr;
+    float alpha, height;
+    int i, segments;
+
+    /* Trace straight down to find ground */
+    VectorCopy(origin, down);
+    down[2] -= 128.0f;  /* max shadow distance */
+
+    extern trace_t SV_Trace(vec3_t start, vec3_t mins, vec3_t maxs,
+                             vec3_t end, int passent, int contentmask);
+    tr = SV_Trace(origin, NULL, NULL, down, -1, 1);  /* MASK_SOLID = 1 */
+
+    if (tr.fraction >= 1.0f)
+        return;  /* no ground below */
+
+    VectorCopy(tr.endpos, ground);
+    ground[2] += 0.5f;  /* slightly above surface to avoid z-fighting */
+
+    height = origin[2] - ground[2];
+    if (height < 0 || height > 128.0f)
+        return;
+
+    /* Fade opacity with height */
+    alpha = 0.4f * (1.0f - height / 128.0f);
+    if (alpha < 0.02f)
+        return;
+
+    segments = 12;
+
+    qglDisable(GL_TEXTURE_2D);
+    qglEnable(GL_BLEND);
+    qglBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    qglDepthMask(GL_FALSE);
+
+    qglColor4f(0.0f, 0.0f, 0.0f, alpha);
+    qglBegin(GL_TRIANGLE_FAN);
+    qglVertex3f(ground[0], ground[1], ground[2]);
+    for (i = 0; i <= segments; i++) {
+        float angle = (float)i / (float)segments * 6.2831853f;
+        qglVertex3f(ground[0] + cosf(angle) * radius,
+                     ground[1] + sinf(angle) * radius,
+                     ground[2]);
+    }
+    qglEnd();
+
+    qglDepthMask(GL_TRUE);
+    qglColor4f(1, 1, 1, 1);
+    qglEnable(GL_TEXTURE_2D);
+}
+
+/*
  * R_DrawHumanoid — Draw a simple humanoid figure at the given position
  * Draws: head, torso, 2 arms, 2 legs as solid colored boxes
  * yaw: rotation angle in degrees
@@ -759,6 +817,7 @@ static void R_DrawBrushEntities(void)
                     R_DrawAliasModel(mod, render_origin, render_angles,
                                      ent->s.frame, oldframe, backlerp,
                                      r_c, g_c, b_c);
+                    R_DrawBlobShadow(render_origin, 16.0f);
                     continue;
                 }
             }
@@ -779,6 +838,8 @@ static void R_DrawBrushEntities(void)
                 }
                 R_DrawHumanoid(render_origin, render_angles[1],
                                r_c, g_c, b_c, ent->deadflag, ent->health);
+                if (!ent->deadflag)
+                    R_DrawBlobShadow(render_origin, 14.0f);
             } else {
                 /* Generic entity — yellow wireframe box */
                 if (ent->mins[0] != 0 || ent->maxs[0] != 0 ||
