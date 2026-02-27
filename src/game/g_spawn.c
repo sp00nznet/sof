@@ -243,6 +243,8 @@ static void SP_item_armor(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_item_ammo_crate(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_env_wind(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_door_locked(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_env_water_current(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_misc_spotlight(edict_t *ent, epair_t *pairs, int num_pairs);
 static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
                            int damage, vec3_t point);
 
@@ -411,6 +413,14 @@ static spawn_func_t spawn_funcs[] = {
 
     /* Locked doors (require key item use to open) */
     { "func_door_locked",           SP_func_door_locked },
+
+    /* Water current */
+    { "env_water_current",          SP_env_water_current },
+    { "func_current",               SP_env_water_current },
+
+    /* Spotlight (visual) */
+    { "misc_spotlight",             SP_misc_spotlight },
+    { "light_spot",                 SP_misc_spotlight },
 
     /* Weapons (SoF) */
     { "weapon_knife",               SP_item_pickup },
@@ -4631,6 +4641,98 @@ static void SP_func_door_locked(edict_t *ent, epair_t *pairs, int num_pairs)
     ent->use = (void (*)(edict_t *, edict_t *, edict_t *))locked_door_use;
 
     gi.dprintf("  func_door_locked (key=%d)\n", ent->count);
+}
+
+/* ==========================================================================
+   env_water_current — Underwater current that pushes entities along a
+   direction. Like env_wind but also applies drag and buoyancy effects.
+   ========================================================================== */
+
+static void water_current_touch(edict_t *self, edict_t *other, void *plane, csurface_t *surf)
+{
+    (void)plane; (void)surf;
+
+    if (!other || other->movetype == MOVETYPE_NONE)
+        return;
+
+    {
+        float force = self->speed ? self->speed : 150.0f;
+        float angle = self->s.angles[1] * (3.14159265f / 180.0f);
+
+        other->velocity[0] += (float)cos(angle) * force * level.frametime;
+        other->velocity[1] += (float)sin(angle) * force * level.frametime;
+
+        /* Slight upward buoyancy */
+        other->velocity[2] += 20.0f * level.frametime;
+
+        /* Drag: slow existing velocity slightly */
+        other->velocity[0] *= 0.98f;
+        other->velocity[1] *= 0.98f;
+    }
+
+    /* Blue water tint */
+    if (other->client) {
+        other->client->blend[0] = 0.1f;
+        other->client->blend[1] = 0.2f;
+        other->client->blend[2] = 0.6f;
+        other->client->blend[3] = 0.15f;
+    }
+}
+
+static void SP_env_water_current(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+
+    ent->solid = SOLID_TRIGGER;
+    ent->touch = water_current_touch;
+    ent->movetype = MOVETYPE_NONE;
+
+    VectorSet(ent->mins, -64, -64, -32);
+    VectorSet(ent->maxs, 64, 64, 32);
+
+    gi.linkentity(ent);
+    gi.dprintf("  env_water_current at (%.0f %.0f %.0f)\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
+}
+
+/* ==========================================================================
+   misc_spotlight — Decorative rotating spotlight entity. Emits a visible
+   light cone particle effect.
+   ========================================================================== */
+
+static void spotlight_think(edict_t *self)
+{
+    self->nextthink = level.time + 0.5f;
+
+    /* Rotate beam */
+    self->s.angles[1] += 10.0f;
+    if (self->s.angles[1] >= 360.0f)
+        self->s.angles[1] -= 360.0f;
+
+    /* Light cone particles */
+    {
+        float angle = self->s.angles[1] * (3.14159265f / 180.0f);
+        vec3_t beam_end;
+        beam_end[0] = self->s.origin[0] + (float)cos(angle) * 256.0f;
+        beam_end[1] = self->s.origin[1] + (float)sin(angle) * 256.0f;
+        beam_end[2] = self->s.origin[2] - 128.0f;
+
+        R_AddTracer(self->s.origin, beam_end, 1.0f, 1.0f, 0.8f);
+    }
+}
+
+static void SP_misc_spotlight(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+
+    ent->solid = SOLID_NOT;
+    ent->movetype = MOVETYPE_NONE;
+    ent->think = spotlight_think;
+    ent->nextthink = level.time + 1.0f;
+
+    gi.linkentity(ent);
+    gi.dprintf("  misc_spotlight at (%.0f %.0f %.0f)\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
 }
 
 /* ==========================================================================

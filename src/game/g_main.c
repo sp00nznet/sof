@@ -2472,6 +2472,18 @@ static void G_FireHitscan(edict_t *ent)
         if (ent->client->zoomed && weap == WEAP_SNIPER)
             spread *= 0.1f;
 
+        /* Crouching reduces spread (steadier aim) */
+        if (ent->client->viewheight < 20.0f)
+            spread *= 0.6f;
+
+        /* Moving increases spread (check velocity magnitude) */
+        {
+            float speed_sq = ent->velocity[0] * ent->velocity[0] +
+                             ent->velocity[1] * ent->velocity[1];
+            if (speed_sq > 100.0f * 100.0f)
+                spread *= 1.3f;
+        }
+
         /* Weapon-specific parameters */
         if (weap == WEAP_KNIFE) {
             trace_range = 96;  /* melee range */
