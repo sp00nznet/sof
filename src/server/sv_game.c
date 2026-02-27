@@ -1034,6 +1034,55 @@ void SV_GetPlayerAccuracy(int *shots_fired, int *shots_hit, int *headshots)
 }
 
 /*
+ * SV_GetCrosshairTarget — Trace from player view, return targeted enemy info
+ */
+qboolean SV_GetCrosshairTarget(int *health, int *max_health, const char **name)
+{
+    edict_t *player;
+    vec3_t start, forward, end;
+    trace_t tr;
+
+    *health = 0;
+    *max_health = 0;
+    *name = NULL;
+
+    if (!ge || !ge->edicts)
+        return qfalse;
+
+    player = (edict_t *)((byte *)ge->edicts + ge->edict_size);
+    if (!player->inuse || !player->client)
+        return qfalse;
+
+    /* Trace from eyes forward */
+    VectorCopy(player->s.origin, start);
+    start[2] += player->client->viewheight;
+
+    {
+        float yaw = player->client->viewangles[1] * 3.14159265f / 180.0f;
+        float pitch = player->client->viewangles[0] * 3.14159265f / 180.0f;
+        forward[0] = (float)(cos(yaw) * cos(pitch));
+        forward[1] = (float)(sin(yaw) * cos(pitch));
+        forward[2] = (float)(-sin(pitch));
+    }
+
+    VectorMA(start, 1024, forward, end);
+    tr = GI_trace(start, NULL, NULL, end, player, MASK_SHOT);
+
+    if (tr.fraction < 1.0f && tr.ent) {
+        edict_t *target = tr.ent;
+        if (target->inuse && target->takedamage && target->health > 0 &&
+            target->max_health > 0 && (target->svflags & SVF_MONSTER)) {
+            *health = target->health;
+            *max_health = target->max_health;
+            *name = target->classname;
+            return qtrue;
+        }
+    }
+
+    return qfalse;
+}
+
+/*
  * SV_GetEntityCount — Get active entity count for debug HUD
  */
 int SV_GetEntityCount(void)

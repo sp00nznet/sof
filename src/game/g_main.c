@@ -142,6 +142,7 @@ static int snd_footstep1, snd_footstep2, snd_footstep3, snd_footstep4;
 static int snd_player_pain1, snd_player_pain2;
 static int snd_player_die;
 static int snd_drown;
+static int snd_heartbeat;               /* low health warning */
 static int snd_reload;                  /* reload sound */
 static int snd_splash_in;              /* water entry splash */
 static int snd_splash_out;             /* water exit splash */
@@ -2761,6 +2762,27 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
         }
     }
 
+    /* Low health heartbeat warning — plays periodically when health is critical */
+    if (!ent->deadflag && ent->health > 0 && ent->health <= 25) {
+        /* Heartbeat rate increases as health decreases */
+        float interval = 1.5f;
+        if (ent->health <= 10) interval = 0.8f;
+        else if (ent->health <= 15) interval = 1.0f;
+
+        if (level.time >= client->next_pain_sound + interval - 0.5f) {
+            if (snd_heartbeat)
+                gi.sound(ent, CHAN_AUTO, snd_heartbeat, 0.6f, ATTN_NORM, 0);
+
+            /* Slight red screen pulse to match heartbeat */
+            if (client->blend[3] < 0.15f) {
+                client->blend[0] = 0.8f;
+                client->blend[1] = 0.0f;
+                client->blend[2] = 0.0f;
+                client->blend[3] = 0.15f;
+            }
+        }
+    }
+
     gi.linkentity(ent);
 }
 
@@ -3140,6 +3162,7 @@ static void G_RegisterWeapons(void)
     snd_player_pain2 = gi.soundindex("player/pain50_1.wav");
     snd_player_die = gi.soundindex("player/death1.wav");
     snd_drown = gi.soundindex("player/drown1.wav");
+    snd_heartbeat = gi.soundindex("player/heartbeat.wav");
 
     /* Reload sound */
     snd_reload = gi.soundindex("weapons/reload.wav");

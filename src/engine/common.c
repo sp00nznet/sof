@@ -48,6 +48,7 @@ extern void SV_GetPlayerBlend(float *blend);
 extern qboolean SV_GetPlayerArmor(int *armor, int *armor_max);
 extern void SV_GetPlayerScore(int *kills, int *deaths, int *score);
 extern void SV_GetPlayerAccuracy(int *shots_fired, int *shots_hit, int *headshots);
+extern qboolean SV_GetCrosshairTarget(int *health, int *max_health, const char **name);
 extern void SV_GetLevelStats(int *killed_monsters, int *total_monsters,
                              int *found_secrets, int *total_secrets);
 extern int  SV_GetEntityCount(void);
@@ -2150,15 +2151,28 @@ static void SCR_DrawCrosshair(void)
     int cx = g_display.width / 2;
     int cy = g_display.height / 2;
     int size = 2;
-    int gap = 3 + (int)crosshair_spread_extra;
+    int gap;
     int len = 6;
     int color;
+    float move_spread = 0;
 
     /* Decay spread expansion over time */
     if (crosshair_spread_extra > 0) {
         crosshair_spread_extra -= 0.5f;
         if (crosshair_spread_extra < 0) crosshair_spread_extra = 0;
     }
+
+    /* Dynamic crosshair expansion from player movement */
+    {
+        vec3_t vel;
+        if (SV_GetPlayerVelocity(vel)) {
+            float speed = (float)sqrt(vel[0] * vel[0] + vel[1] * vel[1]);
+            move_spread = speed * 0.02f;  /* scale velocity to pixel spread */
+            if (move_spread > 8.0f) move_spread = 8.0f;
+        }
+    }
+
+    gap = 3 + (int)(crosshair_spread_extra + move_spread);
 
     /* Green crosshair normally */
     color = (int)(0xFF00FF00);
@@ -2334,6 +2348,42 @@ static void SCR_DrawHUD(float frametime)
             SCR_DrawScopeOverlay();
         } else {
             SCR_DrawCrosshair();
+        }
+    }
+
+    /* Enemy health bar — shown when crosshair is over a monster */
+    {
+        int ehealth, emax;
+        const char *ename;
+        if (SV_GetCrosshairTarget(&ehealth, &emax, &ename)) {
+            int bar_w = 80;
+            int bar_h = 6;
+            int bx = g_display.width / 2 - bar_w / 2;
+            int by = g_display.height / 2 - 30;
+            float pct = emax > 0 ? (float)ehealth / (float)emax : 0;
+            int fill_w;
+
+            if (pct > 1.0f) pct = 1.0f;
+            if (pct < 0) pct = 0;
+            fill_w = (int)(bar_w * pct);
+
+            /* Background */
+            R_DrawFill(bx - 1, by - 1, bar_w + 2, bar_h + 2, (int)0x80000000);
+
+            /* Health fill — green > yellow > red */
+            if (pct > 0.5f)
+                R_DrawFill(bx, by, fill_w, bar_h, (int)0xFF00CC00);
+            else if (pct > 0.25f)
+                R_DrawFill(bx, by, fill_w, bar_h, (int)0xFFCCCC00);
+            else
+                R_DrawFill(bx, by, fill_w, bar_h, (int)0xFFCC0000);
+
+            /* Enemy name */
+            if (ename) {
+                int nlen = (int)strlen(ename);
+                R_SetDrawColor(0.9f, 0.9f, 0.9f, 0.8f);
+                R_DrawString(g_display.width / 2 - nlen * 4, by - 14, ename);
+            }
         }
     }
 
