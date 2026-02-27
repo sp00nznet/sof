@@ -311,6 +311,26 @@ typedef enum {
     mod_ghoul       /* GHOUL skeletal model */
 } modtype_t;
 
+/* MD2 mesh data (loaded from file) */
+typedef struct {
+    int         num_tris;       /* triangle count */
+    int         num_verts;      /* vertices per frame */
+    int         num_frames;     /* animation frame count */
+    int         num_skins;      /* skin texture count */
+    int         skinwidth, skinheight;
+
+    /* Triangle indices (3 ints per triangle) */
+    int         *tris;          /* [num_tris * 3] vertex indices */
+    float       *texcoords;     /* [num_verts * 2] s/t per vertex */
+
+    /* Frame data: each frame has num_verts * 3 floats */
+    float       *frames;        /* [num_frames * num_verts * 3] */
+    char        (*frame_names)[16]; /* frame name strings */
+
+    /* Bounding box (first frame) */
+    vec3_t      mins, maxs;
+} md2_mesh_t;
+
 struct model_s {
     char        name[MAX_QPATH];
     modtype_t   type;
@@ -322,8 +342,22 @@ struct model_s {
     /* For skins/textures */
     image_t     *skins[4];      /* model skins (up to 4) */
     int         num_skins;
+
+    /* For alias (MD2) models */
+    md2_mesh_t  *md2;           /* NULL if not loaded */
 };
 
 typedef struct model_s model_t;
+
+/* MD2 model loading and rendering (r_model.c) */
+qboolean    R_LoadMD2(model_t *mod, const char *name);
+void        R_FreeMD2(model_t *mod);
+void        R_DrawAliasModel(model_t *mod, vec3_t origin, vec3_t angles,
+                             int frame, int oldframe, float backlerp,
+                             float r, float g, float b);
+
+/* Entity interpolation (r_main.c) */
+void        R_SetInterpFraction(float frac);
+void        R_UpdateEntityInterp(void);
 
 #endif /* R_LOCAL_H */

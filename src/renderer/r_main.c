@@ -331,6 +331,7 @@ static void R_DrawParticles(void);
 static void R_DrawDlights(void);
 static void R_DrawDecals(void);
 static void R_UpdateDlights(void);
+static model_t *R_FindModel(const char *name);
 
 /* ==========================================================================
    Frame Rendering
@@ -493,6 +494,83 @@ static void R_DrawEntityBox(vec3_t origin, vec3_t mins, vec3_t maxs,
     qglColor4f(1, 1, 1, 1);
 }
 
+/* ==========================================================================
+   Entity Interpolation
+
+   Tracks previous entity positions and lerps between old and current
+   for smooth visual movement at frame rates higher than 10Hz tick.
+   ========================================================================== */
+
+#define MAX_INTERP_ENTS     256
+
+typedef struct {
+    int         index;          /* entity index */
+    vec3_t      prev_origin;    /* position at last server tick */
+    vec3_t      prev_angles;    /* angles at last server tick */
+    qboolean    valid;          /* has valid previous state */
+} interp_ent_t;
+
+static interp_ent_t    interp_ents[MAX_INTERP_ENTS];
+static int             interp_count;
+static float           interp_frac;     /* 0..1 fractional server tick */
+
+void R_SetInterpFraction(float frac)
+{
+    interp_frac = frac;
+}
+
+void R_UpdateEntityInterp(void)
+{
+    game_export_t *ge = SV_GetGameExport();
+    int i;
+
+    interp_count = 0;
+    if (!ge || !ge->edicts)
+        return;
+
+    for (i = 1; i < ge->num_edicts && interp_count < MAX_INTERP_ENTS; i++) {
+        edict_t *ent = (edict_t *)((byte *)ge->edicts + i * ge->edict_size);
+
+        if (!ent->inuse)
+            continue;
+
+        /* Only interpolate moving entities */
+        if (ent->velocity[0] != 0 || ent->velocity[1] != 0 || ent->velocity[2] != 0 ||
+            ent->avelocity[0] != 0 || ent->avelocity[1] != 0 || ent->avelocity[2] != 0) {
+            interp_ent_t *ie = &interp_ents[interp_count++];
+            ie->index = i;
+            VectorCopy(ent->s.origin, ie->prev_origin);
+            VectorCopy(ent->s.angles, ie->prev_angles);
+            ie->valid = qtrue;
+        }
+    }
+}
+
+static qboolean R_GetInterpOrigin(int index, vec3_t out_origin, vec3_t cur_origin,
+                                  vec3_t out_angles, vec3_t cur_angles)
+{
+    int i;
+    for (i = 0; i < interp_count; i++) {
+        if (interp_ents[i].index == index && interp_ents[i].valid) {
+            out_origin[0] = interp_ents[i].prev_origin[0] +
+                            (cur_origin[0] - interp_ents[i].prev_origin[0]) * interp_frac;
+            out_origin[1] = interp_ents[i].prev_origin[1] +
+                            (cur_origin[1] - interp_ents[i].prev_origin[1]) * interp_frac;
+            out_origin[2] = interp_ents[i].prev_origin[2] +
+                            (cur_origin[2] - interp_ents[i].prev_origin[2]) * interp_frac;
+
+            out_angles[0] = interp_ents[i].prev_angles[0] +
+                            (cur_angles[0] - interp_ents[i].prev_angles[0]) * interp_frac;
+            out_angles[1] = interp_ents[i].prev_angles[1] +
+                            (cur_angles[1] - interp_ents[i].prev_angles[1]) * interp_frac;
+            out_angles[2] = interp_ents[i].prev_angles[2] +
+                            (cur_angles[2] - interp_ents[i].prev_angles[2]) * interp_frac;
+            return qtrue;
+        }
+    }
+    return qfalse;
+}
+
 static void R_DrawBrushEntities(void)
 {
     game_export_t *ge = SV_GetGameExport();
@@ -504,17 +582,36 @@ static void R_DrawBrushEntities(void)
     for (i = 1; i < ge->num_edicts; i++) {
         edict_t *ent = (edict_t *)((byte *)ge->edicts + i * ge->edict_size);
         const char *model_name;
+        vec3_t render_origin, render_angles;
 
         if (!ent->inuse)
             continue;
+
+        /* Get interpolated position if available, otherwise use current */
+        if (!R_GetInterpOrigin(i, render_origin, ent->s.origin,
+                               render_angles, ent->s.angles)) {
+            VectorCopy(ent->s.origin, render_origin);
+            VectorCopy(ent->s.angles, render_angles);
+        }
 
         /* Entities with models */
         if (ent->s.modelindex > 0) {
             model_name = SV_GetConfigstring(CS_MODELS + ent->s.modelindex);
             if (model_name && model_name[0] == '*') {
                 /* Inline BSP model (doors, platforms, etc.) */
-                R_DrawBrushModel(atoi(model_name + 1), ent->s.origin, ent->s.angles);
+                R_DrawBrushModel(atoi(model_name + 1), render_origin, render_angles);
                 continue;
+            }
+            /* Check for loaded MD2 model */
+            if (model_name && model_name[0]) {
+                model_t *mod = R_FindModel(model_name);
+                if (mod && mod->md2) {
+                    float r_c = 0.8f, g_c = 0.8f, b_c = 0.8f;
+                    R_DrawAliasModel(mod, render_origin, render_angles,
+                                     ent->s.frame, ent->s.frame, 0.0f,
+                                     r_c, g_c, b_c);
+                    continue;
+                }
             }
         }
 
@@ -534,7 +631,7 @@ static void R_DrawBrushEntities(void)
             /* Only draw if entity has nonzero bounds */
             if (ent->mins[0] != 0 || ent->maxs[0] != 0 ||
                 ent->mins[2] != 0 || ent->maxs[2] != 0) {
-                R_DrawEntityBox(ent->s.origin, ent->mins, ent->maxs,
+                R_DrawEntityBox(render_origin, ent->mins, ent->maxs,
                                 r_c, g_c, b_c);
             }
         }
@@ -1619,6 +1716,10 @@ struct model_s *R_RegisterModel(const char *name)
         mod->type = mod_ghoul;
     } else if (strstr(name, ".md2") || strstr(name, ".mdx")) {
         mod->type = mod_alias;
+        /* Attempt to load MD2 mesh data */
+        if (!R_LoadMD2(mod, name)) {
+            Com_DPrintf("R_RegisterModel: MD2 load failed for %s\n", name);
+        }
     } else {
         /* Default to alias for unknown extensions */
         mod->type = mod_alias;

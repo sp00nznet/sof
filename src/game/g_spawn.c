@@ -29,6 +29,8 @@
 
 #include "g_local.h"
 
+#include <math.h>
+
 /* Particle/light effects from renderer (unified binary) */
 extern void R_ParticleEffect(vec3_t org, vec3_t dir, int type, int count);
 extern void R_AddDlight(vec3_t origin, float r, float g, float b,
@@ -2503,6 +2505,28 @@ static void item_touch(edict_t *self, edict_t *other, void *plane, csurface_t *s
     }
 }
 
+/*
+ * item_bob_think — Rotate item and bob up/down
+ * Classic id Tech 2 pickup animation.
+ */
+static void item_bob_think(edict_t *self)
+{
+    /* Rotate 90 degrees per second */
+    self->s.angles[1] += 9.0f;     /* ~90 deg/s at 10Hz */
+    if (self->s.angles[1] >= 360.0f)
+        self->s.angles[1] -= 360.0f;
+
+    /* Bob up and down using a sine wave (stored phase in speed field) */
+    self->speed += 0.628f;  /* ~2*pi / 10Hz = one cycle per second */
+    if (self->speed > 6.2832f)
+        self->speed -= 6.2832f;
+
+    self->s.origin[2] = self->move_origin[2] + (float)sin(self->speed) * 4.0f;
+
+    self->nextthink = level.time + level.frametime;
+    gi.linkentity(self);
+}
+
 static void SP_item_pickup(edict_t *ent, epair_t *pairs, int num_pairs)
 {
     (void)pairs; (void)num_pairs;
@@ -2514,6 +2538,14 @@ static void SP_item_pickup(edict_t *ent, epair_t *pairs, int num_pairs)
     /* Items have a pickup bbox */
     VectorSet(ent->mins, -16, -16, -16);
     VectorSet(ent->maxs, 16, 16, 16);
+
+    /* Save base position for bob animation */
+    VectorCopy(ent->s.origin, ent->move_origin);
+    ent->speed = ((float)(rand() % 628)) * 0.01f;  /* random phase */
+
+    /* Start bob/rotate animation */
+    ent->think = item_bob_think;
+    ent->nextthink = level.time + 0.1f + ((float)(rand() % 100)) * 0.001f;
 
     gi.linkentity(ent);
 }

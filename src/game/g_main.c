@@ -1189,8 +1189,16 @@ static void rocket_think(edict_t *self)
 
     VectorCopy(end, self->s.origin);
 
-    /* Rocket trail particles */
-    R_ParticleEffect(self->s.origin, self->velocity, 3, 2);
+    /* Rocket trail: smoke particles + engine glow */
+    {
+        vec3_t trail_dir;
+        VectorCopy(self->velocity, trail_dir);
+        VectorNormalize(trail_dir);
+        VectorNegate(trail_dir, trail_dir);
+        R_ParticleEffect(self->s.origin, trail_dir, 3, 3);   /* fire sparks */
+        R_ParticleEffect(self->s.origin, trail_dir, 4, 2);   /* smoke puffs */
+        R_AddDlight(self->s.origin, 1.0f, 0.5f, 0.1f, 120.0f, 0.15f);
+    }
 
     /* Timeout after 5 seconds */
     if (level.time > self->teleport_time) {

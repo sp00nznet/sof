@@ -1730,13 +1730,23 @@ void SV_Shutdown(const char *finalmsg, qboolean reconnect)
 /* Server frame — runs game at 10Hz tick rate */
 static int sv_frame_residual = 0;
 
+/* Forward declarations — entity interpolation (renderer/r_main.c) */
+extern void R_SetInterpFraction(float frac);
+extern void R_UpdateEntityInterp(void);
+
 void SV_Frame(int msec)
 {
     sv_frame_residual += msec;
 
     /* Run game frames at 100ms intervals (10 Hz) */
     while (sv_frame_residual >= 100) {
+        /* Snapshot entity positions before tick for interpolation */
+        R_UpdateEntityInterp();
+
         sv_frame_residual -= 100;
         SV_RunGameFrame();
     }
+
+    /* Calculate interpolation fraction for rendering (0..1 between ticks) */
+    R_SetInterpFraction(sv_frame_residual / 100.0f);
 }

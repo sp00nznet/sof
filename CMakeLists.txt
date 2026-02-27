@@ -70,6 +70,7 @@ add_executable(sof
     src/renderer/r_surf.c
     src/renderer/r_image.c
     src/renderer/r_light.c
+    src/renderer/r_model.c
 
     # Game module (was gamex86.dll)
     src/game/g_main.c
