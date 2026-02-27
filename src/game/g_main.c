@@ -2844,6 +2844,13 @@ static void G_FireHitscan(edict_t *ent)
         if (att & ATTACH_LASER)
             spread *= 0.7f;
 
+        /* Underwater combat: massively increased spread, reduced range */
+        if (ent->client->old_waterlevel >= 2) {
+            spread *= 3.0f;
+            trace_range *= 0.3f;  /* bullets slow dramatically in water */
+            damage = (int)(damage * 0.5f);  /* half damage underwater */
+        }
+
         /* Recoil accumulation: sustained fire increases spread */
         {
             float recoil_add = 0.08f;  /* base recoil per shot */
@@ -2927,6 +2934,14 @@ static void G_FireHitscan(edict_t *ent)
 
             VectorMA(start, trace_range, pellet_dir, end);
             tr = gi.trace(start, NULL, NULL, end, ent, MASK_SHOT);
+
+            /* Underwater bubble trail */
+            if (ent->client->old_waterlevel >= 2 && tr.fraction < 1.0f) {
+                vec3_t bubble_pos, bubble_up;
+                VectorSet(bubble_up, 0, 0, 1);
+                VectorMA(start, tr.fraction * trace_range * 0.5f, pellet_dir, bubble_pos);
+                R_ParticleEffect(bubble_pos, bubble_up, 0, 4); /* bubble particles */
+            }
 
             /* Bullet tracer from muzzle to impact */
             if (tr.fraction < 1.0f && weap != WEAP_KNIFE) {

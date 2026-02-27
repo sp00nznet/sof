@@ -28,6 +28,7 @@ extern edict_t *G_DropItem(vec3_t origin, const char *classname);
 
 /* Forward declarations */
 static void AI_FormationSpread(edict_t *self);
+static void AI_MedicThink(edict_t *self);
 void AI_AllyDied(vec3_t death_origin);
 
 /* Monster sound indices — precached in monster_start */
@@ -1397,6 +1398,11 @@ void monster_think(edict_t *self)
         return;
     }
 
+    /* Medic behavior: prioritize healing allies over combat */
+    if (self->ai_flags & 0x0200) {
+        AI_MedicThink(self);
+    }
+
     switch (self->count) {  /* count field used as AI state */
     case AI_STATE_IDLE:     ai_think_idle(self); break;
     case AI_STATE_ALERT:    ai_think_alert(self); break;
@@ -1751,6 +1757,72 @@ void SP_monster_boss(edict_t *ent, void *pairs, int num_pairs)
     ent->classname = "monster_boss";
     monster_start(ent, 500, 30, AI_CHASE_SPEED * 0.5f);
     ent->yaw_speed = 15.0f;
+}
+
+/*
+ * SP_monster_medic - Medic that heals wounded allies
+ * Runs to injured allies and restores health. Low combat ability.
+ */
+void SP_monster_medic(edict_t *ent, void *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+
+    gi.dprintf("  Spawning medic at (%.0f %.0f %.0f)\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
+
+    ent->classname = "monster_medic";
+    ent->ai_flags |= 0x0200;  /* AI_MEDIC flag */
+    monster_start(ent, 80, 5, AI_CHASE_SPEED * 0.9f);
+    ent->yaw_speed = 12.0f;
+}
+
+/* AI Medic behavior — called from monster_think for medic-flagged monsters */
+static void AI_MedicThink(edict_t *self)
+{
+    extern game_export_t globals;
+    int i;
+    edict_t *best_patient = NULL;
+    float best_dist = 512.0f;  /* max heal range */
+
+    /* Find nearest wounded ally */
+    for (i = 1; i < globals.num_edicts; i++) {
+        edict_t *e = &globals.edicts[i];
+        vec3_t diff;
+        float dist;
+
+        if (e == self || !e->inuse || e->health <= 0)
+            continue;
+        if (!(e->svflags & SVF_MONSTER))
+            continue;
+        if (e->health >= e->max_health)
+            continue;  /* not wounded */
+
+        VectorSubtract(e->s.origin, self->s.origin, diff);
+        dist = VectorLength(diff);
+        if (dist < best_dist) {
+            best_dist = dist;
+            best_patient = e;
+        }
+    }
+
+    if (best_patient) {
+        /* Move toward wounded ally */
+        AI_MoveToward(self, best_patient->s.origin, AI_CHASE_SPEED);
+
+        /* Heal if close enough */
+        if (best_dist < 64.0f) {
+            int heal = 5;
+            best_patient->health += heal;
+            if (best_patient->health > best_patient->max_health)
+                best_patient->health = best_patient->max_health;
+
+            /* Healing particles */
+            {
+                vec3_t up = {0, 0, 1};
+                R_ParticleEffect(best_patient->s.origin, up, 2, 4); /* green */
+            }
+        }
+    }
 }
 
 /* ==========================================================================

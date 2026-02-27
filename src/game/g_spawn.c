@@ -44,6 +44,7 @@ extern void SP_monster_soldier_ss(edict_t *ent, void *pairs, int num_pairs);
 extern void SP_monster_guard(edict_t *ent, void *pairs, int num_pairs);
 extern void SP_monster_sniper(edict_t *ent, void *pairs, int num_pairs);
 extern void SP_monster_boss(edict_t *ent, void *pairs, int num_pairs);
+extern void SP_monster_medic(edict_t *ent, void *pairs, int num_pairs);
 
 /* Forward declarations for precache functions */
 static void door_precache_sounds(void);
@@ -259,6 +260,7 @@ static void SP_func_valve(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_security_door(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_alarm(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_cover(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_trigger_cutscene(edict_t *ent, epair_t *pairs, int num_pairs);
 static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
                            int damage, vec3_t point);
 
@@ -369,6 +371,7 @@ static spawn_func_t spawn_funcs[] = {
     { "monster_guard",              (void (*)(edict_t *, epair_t *, int))SP_monster_guard },
     { "monster_sniper",             (void (*)(edict_t *, epair_t *, int))SP_monster_sniper },
     { "monster_boss",               (void (*)(edict_t *, epair_t *, int))SP_monster_boss },
+    { "monster_medic",              (void (*)(edict_t *, epair_t *, int))SP_monster_medic },
     /* Q2-compatible monster names */
     { "monster_soldier_light",      (void (*)(edict_t *, epair_t *, int))SP_monster_soldier_light },
     { "monster_infantry",           (void (*)(edict_t *, epair_t *, int))SP_monster_soldier },
@@ -490,6 +493,10 @@ static spawn_func_t spawn_funcs[] = {
     /* Destructible cover */
     { "func_cover",                 SP_func_cover },
     { "func_barricade",             SP_func_cover },
+
+    /* Cutscene triggers */
+    { "trigger_cutscene",           SP_trigger_cutscene },
+    { "trigger_cinematic",          SP_trigger_cutscene },
 
     /* Weapons (SoF) */
     { "weapon_knife",               SP_item_pickup },
@@ -5614,6 +5621,69 @@ static void SP_func_cover(edict_t *ent, epair_t *pairs, int num_pairs)
 
     gi.dprintf("  func_cover at (%.0f %.0f %.0f) hp=%d\n",
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2], ent->health);
+}
+
+/* ==========================================================================
+   trigger_cutscene — Locks player controls and displays message
+   message = text to display, delay = duration in seconds
+   Fires target when cutscene ends.
+   ========================================================================== */
+
+static void cutscene_end(edict_t *self)
+{
+    extern game_export_t globals;
+    edict_t *player = &globals.edicts[1];
+
+    if (player && player->inuse && player->client) {
+        player->client->ps.pm_type = PM_NORMAL;
+        gi.cprintf(player, PRINT_ALL, "[Cutscene ended]\n");
+    }
+
+    if (self->target)
+        G_UseTargets(self, self->target);
+
+    self->think = NULL;
+}
+
+static void cutscene_use(edict_t *self, edict_t *other, edict_t *activator)
+{
+    (void)other;
+
+    if (!activator || !activator->client)
+        return;
+
+    /* Lock player movement */
+    activator->client->ps.pm_type = PM_FREEZE;
+
+    /* Display cutscene message */
+    if (self->message) {
+        gi.centerprintf(activator, "%s", self->message);
+    }
+
+    /* Schedule end */
+    self->think = cutscene_end;
+    self->nextthink = level.time + self->speed;
+
+    self->use = NULL;  /* one-shot */
+}
+
+static void SP_trigger_cutscene(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *delay_str = ED_FindValue(pairs, num_pairs, "delay");
+    const char *msg_str = ED_FindValue(pairs, num_pairs, "message");
+
+    ent->movetype = MOVETYPE_NONE;
+    ent->solid = SOLID_NOT;
+    ent->svflags |= SVF_NOCLIENT;
+    ent->use = cutscene_use;
+    ent->speed = delay_str ? (float)atof(delay_str) : 5.0f;
+    if (msg_str)
+        ent->message = msg_str;
+
+    gi.linkentity(ent);
+
+    gi.dprintf("  trigger_cutscene at (%.0f %.0f %.0f) duration=%.1f\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2], ent->speed);
 }
 
 /* ==========================================================================
