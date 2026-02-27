@@ -241,6 +241,8 @@ static void SP_misc_security_camera(edict_t *ent, epair_t *pairs, int num_pairs)
 static void SP_env_smoke(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_item_armor(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_item_ammo_crate(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_env_wind(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_door_locked(edict_t *ent, epair_t *pairs, int num_pairs);
 static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
                            int damage, vec3_t point);
 
@@ -402,6 +404,13 @@ static spawn_func_t spawn_funcs[] = {
     { "item_armor_jacket",          SP_item_armor },
     { "item_ammo_crate",            SP_item_ammo_crate },
     { "item_ammo",                  SP_item_ammo_crate },
+
+    /* Wind/push zones */
+    { "env_wind",                   SP_env_wind },
+    { "trigger_wind",               SP_env_wind },
+
+    /* Locked doors (require key item use to open) */
+    { "func_door_locked",           SP_func_door_locked },
 
     /* Weapons (SoF) */
     { "weapon_knife",               SP_item_pickup },
@@ -4522,6 +4531,106 @@ static void SP_item_ammo_crate(edict_t *ent, epair_t *pairs, int num_pairs)
     gi.linkentity(ent);
     gi.dprintf("  item_ammo_crate at (%.0f %.0f %.0f)\n",
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
+}
+
+/* ==========================================================================
+   env_wind — Directional push zone (like trigger_push but continuous)
+   Uses entity angles to determine push direction
+   ========================================================================== */
+
+static void wind_touch(edict_t *self, edict_t *other, void *plane, csurface_t *surf)
+{
+    (void)plane; (void)surf;
+
+    if (!other || other->movetype == MOVETYPE_NONE)
+        return;
+
+    /* Push in the direction the wind entity faces */
+    {
+        float force = self->speed ? self->speed : 200.0f;
+        float angle = self->s.angles[1] * (3.14159265f / 180.0f);
+        float push_x = (float)cos(angle) * force * level.frametime;
+        float push_y = (float)sin(angle) * force * level.frametime;
+
+        other->velocity[0] += push_x;
+        other->velocity[1] += push_y;
+
+        /* Vertical push component from pitch */
+        if (self->s.angles[0] != 0) {
+            float pitch = self->s.angles[0] * (3.14159265f / 180.0f);
+            other->velocity[2] += (float)sin(-pitch) * force * level.frametime;
+        }
+    }
+}
+
+static void SP_env_wind(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+
+    ent->solid = SOLID_TRIGGER;
+    ent->touch = wind_touch;
+    ent->movetype = MOVETYPE_NONE;
+
+    VectorSet(ent->mins, -64, -64, -32);
+    VectorSet(ent->maxs, 64, 64, 64);
+
+    gi.linkentity(ent);
+    gi.dprintf("  env_wind at (%.0f %.0f %.0f) speed=%.0f\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->speed ? ent->speed : 200.0f);
+}
+
+/* ==========================================================================
+   func_door_locked — Door that requires a specific key to open and shows
+   a "locked" message when used without the key
+   ========================================================================== */
+
+static void locked_door_use(edict_t *self, edict_t *other, edict_t *activator)
+{
+    (void)other;
+
+    if (!activator || !activator->client)
+        return;
+
+    /* Check if player has required key */
+    if (self->count && !(activator->client->keys & self->count)) {
+        /* Locked! */
+        gi.cprintf(activator, PRINT_ALL, "This door is locked.\n");
+        {
+            int snd = gi.soundindex("world/door_locked.wav");
+            if (snd)
+                gi.sound(self, CHAN_AUTO, snd, 1.0f, ATTN_NORM, 0);
+        }
+        return;
+    }
+
+    /* Unlock and open — reuse standard door_use */
+    self->count = 0;  /* consumed key requirement */
+    door_use(self, other, activator);
+}
+
+static void SP_func_door_locked(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *key_str;
+
+    /* Initialize as a regular door first */
+    SP_func_door(ent, pairs, num_pairs);
+
+    /* Override use function with locked version */
+    key_str = ED_FindValue(pairs, num_pairs, "key");
+    if (key_str) {
+        if (Q_stricmp(key_str, "red") == 0) ent->count = KEY_RED;
+        else if (Q_stricmp(key_str, "blue") == 0) ent->count = KEY_BLUE;
+        else if (Q_stricmp(key_str, "silver") == 0) ent->count = KEY_SILVER;
+        else if (Q_stricmp(key_str, "gold") == 0) ent->count = KEY_GOLD;
+        else ent->count = atoi(key_str);
+    } else {
+        ent->count = KEY_RED;  /* default: requires red key */
+    }
+
+    ent->use = (void (*)(edict_t *, edict_t *, edict_t *))locked_door_use;
+
+    gi.dprintf("  func_door_locked (key=%d)\n", ent->count);
 }
 
 /* ==========================================================================

@@ -492,6 +492,9 @@ struct gclient_s {
 
     /* Night vision */
     qboolean        nightvision;           /* night vision goggles active */
+
+    /* Weapon quick-slots (1-4 mapped to specific weapons) */
+    int             quickslot[4];          /* weapon IDs bound to slots 1-4 */
 };
 
 /* ==========================================================================

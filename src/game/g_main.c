@@ -1229,6 +1229,41 @@ static void ClientCommand(edict_t *ent)
         return;
     }
 
+    /* Weapon quick-slots: bind and recall */
+    if (Q_stricmp(cmd, "quickslot") == 0) {
+        int slot = atoi(gi.argv(1));
+        if (slot >= 1 && slot <= 4) {
+            /* Bind current weapon to this slot */
+            ent->client->quickslot[slot - 1] = ent->client->pers_weapon;
+            gi.cprintf(ent, PRINT_ALL, "Slot %d: %s\n", slot,
+                       weapon_names[ent->client->pers_weapon]);
+        } else {
+            gi.cprintf(ent, PRINT_ALL, "Usage: quickslot <1-4>\n");
+        }
+        return;
+    }
+
+    if (Q_stricmp(cmd, "slot1") == 0 || Q_stricmp(cmd, "slot2") == 0 ||
+        Q_stricmp(cmd, "slot3") == 0 || Q_stricmp(cmd, "slot4") == 0) {
+        int slot = cmd[4] - '1';  /* 0-3 */
+        if (slot >= 0 && slot < 4 && ent->client->quickslot[slot] > 0) {
+            int w = ent->client->quickslot[slot];
+            if (w < WEAP_COUNT && w != ent->client->pers_weapon) {
+                player_prev_weapon = ent->client->pers_weapon;
+                ent->client->pers_weapon = w;
+                ent->weapon_index = w;
+                ent->client->weapon_change_time = level.time + WEAPON_SWITCH_TIME;
+                if (snd_weapon_switch)
+                    gi.sound(ent, CHAN_ITEM, snd_weapon_switch, 1.0f, ATTN_NORM, 0);
+                gi.cprintf(ent, PRINT_ALL, "Slot %d: %s\n", slot + 1, weapon_names[w]);
+            }
+        } else {
+            gi.cprintf(ent, PRINT_ALL, "Slot %d is empty. Use 'quickslot %d' to bind.\n",
+                       slot + 1, slot + 1);
+        }
+        return;
+    }
+
     gi.cprintf(ent, PRINT_ALL, "Unknown command: %s\n", cmd);
 }
 

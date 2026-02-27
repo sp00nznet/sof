@@ -482,6 +482,54 @@ static qboolean AI_SeekCover(edict_t *self)
     return qfalse;
 }
 
+/*
+ * AI_TryRetreat - When critically wounded (<20% HP), run directly away
+ * from the enemy. Returns qtrue if retreating.
+ */
+static qboolean AI_TryRetreat(edict_t *self)
+{
+    float health_pct;
+    vec3_t away, move_pos;
+    trace_t tr;
+
+    if (!self->enemy)
+        return qfalse;
+
+    health_pct = (float)self->health /
+                 (float)(self->max_health > 0 ? self->max_health : 100);
+
+    if (health_pct > 0.2f)
+        return qfalse;  /* not critically wounded */
+
+    /* Run directly away from enemy */
+    VectorSubtract(self->s.origin, self->enemy->s.origin, away);
+    away[2] = 0;
+    VectorNormalize(away);
+
+    move_pos[0] = self->s.origin[0] + away[0] * 200.0f;
+    move_pos[1] = self->s.origin[1] + away[1] * 200.0f;
+    move_pos[2] = self->s.origin[2];
+
+    /* Check if we can move there */
+    tr = gi.trace(self->s.origin, self->mins, self->maxs,
+                   move_pos, self, MASK_MONSTERSOLID);
+    if (tr.fraction < 0.3f)
+        return qfalse;  /* can't retreat, blocked */
+
+    VectorCopy(tr.endpos, self->move_origin);
+    self->velocity[0] = away[0] * AI_CHASE_SPEED * 1.2f;
+    self->velocity[1] = away[1] * AI_CHASE_SPEED * 1.2f;
+
+    /* Pain sound — fleeing */
+    {
+        extern int snd_monster_pain1;
+        if (snd_monster_pain1)
+            gi.sound(self, CHAN_VOICE, snd_monster_pain1, 1.0f, ATTN_NORM, 0);
+    }
+
+    return qtrue;
+}
+
 /* ==========================================================================
    AI State Handlers
    ========================================================================== */
@@ -768,6 +816,13 @@ static void ai_think_attack(edict_t *self)
     if (dist > AI_ATTACK_RANGE * 1.2f || !AI_Visible(self, self->enemy)) {
         self->count = AI_STATE_CHASE;
         VectorCopy(self->enemy->s.origin, self->move_origin);
+        self->nextthink = level.time + FRAMETIME;
+        return;
+    }
+
+    /* Full retreat when critically wounded */
+    if (AI_TryRetreat(self)) {
+        self->count = AI_STATE_CHASE;
         self->nextthink = level.time + FRAMETIME;
         return;
     }
