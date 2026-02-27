@@ -219,6 +219,7 @@ static void SP_env_drip(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_env_steam(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_env_sparks(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_env_dust(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_pushable(edict_t *ent, epair_t *pairs, int num_pairs);
 
 /*
  * Spawn function dispatch table
@@ -288,9 +289,11 @@ static spawn_func_t spawn_funcs[] = {
     { "target_monster_maker",       SP_target_monster_maker },
     { "target_objective",           SP_target_objective },
 
-    /* Breakable/explosive */
+    /* Breakable/explosive/pushable */
     { "func_breakable",             SP_func_breakable },
     { "func_explosive",             SP_func_explosive },
+    { "func_pushable",              SP_func_pushable },
+    { "func_object",                SP_func_pushable },
     { "misc_explobox",              SP_func_explosive },
     { "misc_explobox_big",          SP_misc_explobox_big },
 
@@ -1927,6 +1930,74 @@ static void SP_misc_explobox_big(edict_t *ent, epair_t *pairs, int num_pairs)
         ent->s.modelindex = gi.modelindex(ent->model);
     else
         ent->s.modelindex = gi.modelindex("models/objects/barrels/tris.md2");
+
+    gi.linkentity(ent);
+}
+
+/* ==========================================================================
+   func_pushable — Player-pushable crate or barrel
+   Slides when player walks into it; affected by gravity.
+   Keys: health (0=indestructible), mass (default 100), model
+   ========================================================================== */
+
+static void pushable_touch(edict_t *self, edict_t *other,
+                            void *plane, csurface_t *surf)
+{
+    vec3_t push_dir;
+    float push_speed;
+    float mass_factor;
+
+    (void)plane; (void)surf;
+
+    if (!other || !other->client)
+        return;  /* only players push */
+
+    /* Direction from player to pushable */
+    VectorSubtract(self->s.origin, other->s.origin, push_dir);
+    push_dir[2] = 0;  /* horizontal only */
+    VectorNormalize(push_dir);
+
+    /* Mass-based resistance: heavier = slower push */
+    mass_factor = 100.0f / (float)(self->mass > 0 ? self->mass : 100);
+    if (mass_factor > 1.0f) mass_factor = 1.0f;
+
+    /* Push speed based on player velocity toward the pushable */
+    push_speed = (other->velocity[0] * push_dir[0] +
+                  other->velocity[1] * push_dir[1]);
+    if (push_speed < 50.0f)
+        return;  /* not pushing hard enough */
+
+    push_speed *= 0.5f * mass_factor;  /* dampen */
+    if (push_speed > 200.0f) push_speed = 200.0f;
+
+    self->velocity[0] = push_dir[0] * push_speed;
+    self->velocity[1] = push_dir[1] * push_speed;
+}
+
+static void SP_func_pushable(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *health_str = ED_FindValue(pairs, num_pairs, "health");
+    const char *mass_str = ED_FindValue(pairs, num_pairs, "mass");
+
+    ent->solid = SOLID_BBOX;
+    ent->movetype = MOVETYPE_TOSS;
+    ent->touch = pushable_touch;
+    ent->mass = mass_str ? atoi(mass_str) : 100;
+
+    VectorSet(ent->mins, -16, -16, 0);
+    VectorSet(ent->maxs, 16, 16, 32);
+
+    if (health_str && atoi(health_str) > 0) {
+        ent->takedamage = DAMAGE_YES;
+        ent->health = atoi(health_str);
+        ent->max_health = ent->health;
+        ent->die = explosive_die;
+    }
+
+    if (ent->model)
+        ent->s.modelindex = gi.modelindex(ent->model);
+    else
+        ent->s.modelindex = gi.modelindex("models/objects/crate/tris.md2");
 
     gi.linkentity(ent);
 }

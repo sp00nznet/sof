@@ -830,11 +830,29 @@ void monster_pain(edict_t *self, edict_t *other, float kick, int damage)
     }
 }
 
-/* Corpse removal think — called after corpse delay expires */
+/* Corpse sink think — gradually lowers corpse into ground before removal */
+static void monster_corpse_sink(edict_t *self)
+{
+    self->s.origin[2] -= 1.0f;  /* sink 10 units/sec at 10Hz */
+
+    /* Remove after sinking ~20 units */
+    if (self->s.origin[2] < self->move_origin[2] - 20.0f) {
+        self->inuse = qfalse;
+        gi.unlinkentity(self);
+        return;
+    }
+
+    self->nextthink = level.time + FRAMETIME;
+    gi.linkentity(self);
+}
+
+/* Corpse removal think — start sinking after delay */
 static void monster_corpse_remove(edict_t *self)
 {
-    self->inuse = qfalse;
-    gi.unlinkentity(self);
+    /* Record starting Z for sink depth tracking */
+    VectorCopy(self->s.origin, self->move_origin);
+    self->think = monster_corpse_sink;
+    self->nextthink = level.time + FRAMETIME;
 }
 
 void monster_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
