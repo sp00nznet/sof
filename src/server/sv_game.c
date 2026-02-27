@@ -1487,3 +1487,51 @@ int SV_GetPlayerKeys(void)
     if (!player->inuse || !player->client) return 0;
     return player->client->keys;
 }
+
+/*
+ * SV_GetPlayerStamina — Get sprint stamina for HUD
+ */
+float SV_GetPlayerStamina(void)
+{
+    edict_t *player;
+    if (!ge || !ge->edicts) return 100.0f;
+    player = (edict_t *)ge->edicts;
+    if (!player->inuse || !player->client) return 100.0f;
+    return player->client->stamina;
+}
+
+/*
+ * SV_GetPlayerBulletTimeCharge — Get bullet time charge for HUD
+ */
+float SV_GetPlayerBulletTimeCharge(void)
+{
+    edict_t *player;
+    if (!ge || !ge->edicts) return 0;
+    player = (edict_t *)ge->edicts;
+    if (!player->inuse || !player->client) return 0;
+    return player->client->bullet_time_charge;
+}
+
+/*
+ * SV_IsPlayerSprinting — Check if player is currently sprinting
+ */
+qboolean SV_IsPlayerSprinting(void)
+{
+    edict_t *player;
+    if (!ge || !ge->edicts) return qfalse;
+    player = (edict_t *)ge->edicts;
+    if (!player->inuse || !player->client) return qfalse;
+    return player->client->sprinting;
+}
+
+/*
+ * SV_IsBulletTimeActive — Check if bullet time is currently active
+ */
+qboolean SV_IsBulletTimeActive(void)
+{
+    edict_t *player;
+    if (!ge || !ge->edicts) return qfalse;
+    player = (edict_t *)ge->edicts;
+    if (!player->inuse || !player->client) return qfalse;
+    return player->client->bullet_time_end > level.time;
+}

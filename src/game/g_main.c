@@ -1114,6 +1114,13 @@ static qboolean G_UseUtilityWeapon(edict_t *ent)
             int fdmg = weapon_damage[WEAP_FLAMEGUN];
             R_ParticleEffect(ftr.endpos, ftr.plane.normal, 4, 4);
             ftr.ent->health -= fdmg;
+
+            /* Flamethrower causes burning for 4 seconds */
+            if (ftr.ent->client && ftr.ent->health > 0) {
+                ftr.ent->client->burn_end = level.time + 4.0f;
+                ftr.ent->client->burn_next_tick = level.time + 0.5f;
+            }
+
             if (ftr.ent->health <= 0 && ftr.ent->die)
                 ftr.ent->die(ftr.ent, ent, ent, fdmg, ftr.endpos);
         }
@@ -1301,6 +1308,12 @@ static void T_RadiusDamage(edict_t *inflictor, edict_t *attacker,
             t->client->pers_health = t->health;
             G_DamageDirectionToPlayer(t, inflictor->s.origin);
             SCR_AddBloodSplatter((int)dmg_applied);
+
+            /* Explosion causes burning for 3 seconds */
+            if (t->health > 0 && dmg_applied > 10.0f) {
+                t->client->burn_end = level.time + 3.0f;
+                t->client->burn_next_tick = level.time + 0.5f;
+            }
         }
 
         if (t->health <= 0 && t->die) {
@@ -2084,6 +2097,11 @@ static void G_FireHitscan(edict_t *ent)
                     ent->client->kills++;
                     ent->client->score += 10;
 
+                    /* Bullet time charge: +15 per kill, capped at 100 */
+                    ent->client->bullet_time_charge += 15.0f;
+                    if (ent->client->bullet_time_charge > 100.0f)
+                        ent->client->bullet_time_charge = 100.0f;
+
                     /* Kill streak tracking — 3s window between kills */
                     if (level.time - ent->client->streak_last_kill < 3.0f)
                         ent->client->streak_count++;
@@ -2788,6 +2806,117 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
                 client->blend[2] = 0.0f;
                 client->blend[3] = 0.15f;
             }
+        }
+    }
+
+    /* Status effects: burning */
+    if (!ent->deadflag && client->burn_end > level.time) {
+        if (level.time >= client->burn_next_tick) {
+            ent->health -= 3;
+            client->pers_health = ent->health;
+            client->burn_next_tick = level.time + 0.5f;
+
+            /* Orange screen flash */
+            client->blend[0] = 1.0f;
+            client->blend[1] = 0.5f;
+            client->blend[2] = 0.0f;
+            client->blend[3] = 0.2f;
+
+            /* Fire particles on player */
+            {
+                vec3_t up = {0, 0, 1};
+                R_ParticleEffect(ent->s.origin, up, 4, 3);  /* flame */
+            }
+
+            if (ent->health <= 0) {
+                ent->deadflag = 1;
+                client->ps.pm_type = PM_DEAD;
+                SCR_AddKillFeed("Player", "fire", "environment");
+                client->deaths++;
+            }
+        }
+    }
+
+    /* Status effects: bleeding */
+    if (!ent->deadflag && client->bleed_end > level.time) {
+        if (level.time >= client->bleed_next_tick) {
+            ent->health -= 2;
+            client->pers_health = ent->health;
+            client->bleed_next_tick = level.time + 1.0f;
+
+            /* Blood drip particles */
+            {
+                vec3_t down = {0, 0, -1};
+                R_ParticleEffect(ent->s.origin, down, 1, 2);
+            }
+
+            if (ent->health <= 0) {
+                ent->deadflag = 1;
+                client->ps.pm_type = PM_DEAD;
+                SCR_AddKillFeed("Player", "bleeding", "environment");
+                client->deaths++;
+            }
+        }
+    }
+
+    /* Tactical sprint: activate on BUTTON_SPRINT when moving forward */
+    if (!ent->deadflag) {
+        /* Initialize stamina on first use */
+        if (client->stamina == 0 && !client->sprinting)
+            client->stamina = 100.0f;
+
+        if (ucmd->buttons & BUTTON_SPRINT) {
+            if (!client->sprinting && client->stamina > 10.0f &&
+                ucmd->forwardmove > 0) {
+                client->sprinting = qtrue;
+            }
+        } else {
+            client->sprinting = qfalse;
+        }
+
+        if (client->sprinting) {
+            /* Drain stamina while sprinting */
+            client->stamina -= 15.0f * level.frametime;
+            if (client->stamina <= 0) {
+                client->stamina = 0;
+                client->sprinting = qfalse;
+            }
+            /* Speed boost: 1.4x forward speed */
+            if (client->sprinting) {
+                ent->velocity[0] *= 1.4f;
+                ent->velocity[1] *= 1.4f;
+            }
+        } else {
+            /* Regen stamina when not sprinting */
+            if (client->stamina < 100.0f) {
+                client->stamina += 8.0f * level.frametime;
+                if (client->stamina > 100.0f) client->stamina = 100.0f;
+            }
+        }
+    }
+
+    /* Bullet time: activate on button press if charge >= 50 */
+    if (!ent->deadflag) {
+        extern qboolean cl_bullet_time_active;
+        if (cl_bullet_time_active && client->bullet_time_end <= level.time &&
+            client->bullet_time_charge >= 50.0f) {
+            /* Activate: 4 seconds of slow-mo */
+            client->bullet_time_end = level.time + 4.0f;
+            client->bullet_time_charge -= 50.0f;
+        }
+
+        if (client->bullet_time_end > level.time) {
+            level.time_scale = 0.3f;
+            /* Golden screen tint during bullet time */
+            if (client->blend[3] < 0.1f) {
+                client->blend[0] = 0.8f;
+                client->blend[1] = 0.7f;
+                client->blend[2] = 0.3f;
+                client->blend[3] = 0.1f;
+            }
+        } else {
+            if (level.time_scale < 1.0f)
+                level.time_scale = 1.0f;
         }
     }
 

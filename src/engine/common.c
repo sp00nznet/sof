@@ -2663,6 +2663,62 @@ static void SCR_DrawHUD(float frametime)
         }
     }
 
+    /* Stamina bar — above HUD bar, center-left */
+    {
+        extern float SV_GetPlayerStamina(void);
+        extern qboolean SV_IsPlayerSprinting(void);
+        float stam = SV_GetPlayerStamina();
+        int bar_w = 60, bar_h = 4;
+        int bx = g_display.width / 2 - bar_w / 2;
+        int by = g_display.height - 56;
+        int fill_w = (int)(bar_w * stam / 100.0f);
+
+        if (stam < 100.0f || SV_IsPlayerSprinting()) {
+            /* Only show when not full or sprinting */
+            R_DrawFill(bx, by, bar_w, bar_h, (int)0x60000000);
+            if (stam > 50.0f)
+                R_DrawFill(bx, by, fill_w, bar_h, (int)0xCC00CC00);
+            else if (stam > 20.0f)
+                R_DrawFill(bx, by, fill_w, bar_h, (int)0xCCCCCC00);
+            else
+                R_DrawFill(bx, by, fill_w, bar_h, (int)0xCCCC3300);
+
+            R_SetDrawColor(0.7f, 0.7f, 0.7f, 0.6f);
+            R_DrawString(bx - 56, by - 2, "SPRINT");
+            R_SetDrawColor(1.0f, 1.0f, 1.0f, 1.0f);
+        }
+    }
+
+    /* Bullet time charge — small bar below stamina */
+    {
+        extern float SV_GetPlayerBulletTimeCharge(void);
+        extern qboolean SV_IsBulletTimeActive(void);
+        float charge = SV_GetPlayerBulletTimeCharge();
+        int bar_w = 60, bar_h = 4;
+        int bx = g_display.width / 2 - bar_w / 2;
+        int by = g_display.height - 64;
+        int fill_w = (int)(bar_w * charge / 100.0f);
+
+        if (charge > 0 || SV_IsBulletTimeActive()) {
+            R_DrawFill(bx, by, bar_w, bar_h, (int)0x60000000);
+
+            if (SV_IsBulletTimeActive()) {
+                /* Pulsing gold when active */
+                R_DrawFill(bx, by, fill_w, bar_h, (int)0xFFFFD700);
+            } else if (charge >= 50.0f) {
+                /* Ready to activate — bright gold */
+                R_DrawFill(bx, by, fill_w, bar_h, (int)0xCCFFD700);
+            } else {
+                /* Charging — dim gold */
+                R_DrawFill(bx, by, fill_w, bar_h, (int)0x80997700);
+            }
+
+            R_SetDrawColor(0.8f, 0.7f, 0.3f, 0.6f);
+            R_DrawString(bx - 80, by - 2, "BULLET TIME");
+            R_SetDrawColor(1.0f, 1.0f, 1.0f, 1.0f);
+        }
+    }
+
     /* Minimap radar */
     SCR_DrawMinimap();
 

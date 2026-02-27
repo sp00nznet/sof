@@ -811,6 +811,12 @@ static void ai_think_attack(edict_t *self)
                         tr.ent->client->blend[2] = 0.0f;
                         tr.ent->client->blend[3] = 0.3f;
                         AI_DamageDirectionToPlayer(tr.ent, self->s.origin);
+
+                        /* Gunshot wounds cause bleeding for 5 seconds */
+                        if (tr.ent->health > 0 && damage >= 8) {
+                            tr.ent->client->bleed_end = level.time + 5.0f;
+                            tr.ent->client->bleed_next_tick = level.time + 1.0f;
+                        }
                     }
 
                     if (tr.ent->health <= 0 && tr.ent->deadflag == 0) {

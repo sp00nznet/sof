@@ -387,6 +387,20 @@ struct gclient_s {
 
     /* Ambient sound cooldown */
     float           next_ambient;           /* level.time for next ambient sound */
+
+    /* Status effects */
+    float           burn_end;               /* level.time when burning ends */
+    float           burn_next_tick;         /* next burn damage tick */
+    float           bleed_end;              /* level.time when bleeding ends */
+    float           bleed_next_tick;        /* next bleed damage tick */
+
+    /* Tactical sprint */
+    float           stamina;               /* 0..100, drains while sprinting */
+    qboolean        sprinting;             /* currently in sprint mode */
+
+    /* Bullet time */
+    float           bullet_time_end;       /* level.time when bullet time ends */
+    float           bullet_time_charge;    /* 0..100, builds from kills */
 };
 
 /* ==========================================================================
@@ -565,6 +579,9 @@ typedef struct {
     /* Weather */
     int         weather;            /* 0=none, 1=rain, 2=snow */
     float       weather_density;    /* particle density multiplier (1.0 = normal) */
+
+    /* Bullet time */
+    float       time_scale;         /* 1.0=normal, 0.3=slow motion */
 } level_t;
 
 extern level_t  level;

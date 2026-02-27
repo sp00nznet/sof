@@ -145,6 +145,17 @@ qboolean cl_show_scores = qfalse;
 static void IN_ScoresDown(void)     { KeyDown(&in_scores); cl_show_scores = qtrue; }
 static void IN_ScoresUp(void)       { KeyUp(&in_scores); cl_show_scores = qfalse; }
 
+/* Tactical sprint */
+static kbutton_t   in_sprint;
+static void IN_SprintDown(void)     { KeyDown(&in_sprint); }
+static void IN_SprintUp(void)       { KeyUp(&in_sprint); }
+
+/* Bullet time */
+static kbutton_t   in_bullettime;
+qboolean cl_bullet_time_active = qfalse;
+static void IN_BulletTimeDown(void) { KeyDown(&in_bullettime); cl_bullet_time_active = qtrue; }
+static void IN_BulletTimeUp(void)   { KeyUp(&in_bullettime); cl_bullet_time_active = qfalse; }
+
 /* ==========================================================================
    Build Usercmd
    ========================================================================== */
@@ -191,6 +202,9 @@ void CL_CreateCmd(usercmd_t *cmd, int msec)
         cmd->buttons |= BUTTON_LEAN_RIGHT;
     if (in_attack2.active)
         cmd->buttons |= BUTTON_ATTACK2;
+    if (in_sprint.active)
+        cmd->buttons |= BUTTON_SPRINT;
+
     if (in_attack.active || in_attack2.active ||
         in_forward.active || in_back.active ||
         in_moveleft.active || in_moveright.active ||
@@ -240,4 +254,12 @@ void CL_InitInput(void)
     /* Scoreboard toggle */
     Cmd_AddCommand("+scores", IN_ScoresDown);
     Cmd_AddCommand("-scores", IN_ScoresUp);
+
+    /* Tactical sprint */
+    Cmd_AddCommand("+sprint", IN_SprintDown);
+    Cmd_AddCommand("-sprint", IN_SprintUp);
+
+    /* Bullet time */
+    Cmd_AddCommand("+bullettime", IN_BulletTimeDown);
+    Cmd_AddCommand("-bullettime", IN_BulletTimeUp);
 }
