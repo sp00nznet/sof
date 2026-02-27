@@ -353,6 +353,41 @@ void    Pmove(pmove_t *pmove);
    Entity State — communicated by server to clients
    ========================================================================== */
 
+/* Entity effects flags (entity_state_t.effects) */
+#define EF_ROTATE           0x00000001  /* rotate on pedestal (items) */
+#define EF_GIB              0x00000002  /* leave blood trail */
+#define EF_BLASTER          0x00000008  /* blue muzzle flash */
+#define EF_ROCKET           0x00000010  /* rocket trail + dlight */
+#define EF_GRENADE          0x00000020  /* grenade trail */
+#define EF_HYPERBLASTER     0x00000040  /* hyper blaster effect */
+#define EF_BFG              0x00000080  /* BFG particle trail */
+#define EF_COLOR_SHELL      0x00000100  /* shell color from renderfx */
+#define EF_POWERSCREEN      0x00000200  /* power screen overlay */
+#define EF_ANIM01           0x00000400  /* auto-cycle 2-frame anim (01) */
+#define EF_ANIM23           0x00000800  /* auto-cycle 2-frame anim (23) */
+#define EF_ANIM_ALL         0x00001000  /* auto-cycle all frames */
+#define EF_ANIM_ALLFAST     0x00002000  /* fast auto-cycle all frames */
+#define EF_FLIES            0x00004000  /* buzzing flies around entity */
+#define EF_QUAD             0x00008000  /* quad damage shell */
+#define EF_PENT             0x00010000  /* invulnerability shell */
+#define EF_FLAG1            0x00040000  /* CTF flag 1 */
+#define EF_FLAG2            0x00080000  /* CTF flag 2 */
+
+/* Entity renderfx flags (entity_state_t.renderfx) */
+#define RF_MINLIGHT         1       /* always have some light */
+#define RF_VIEWERMODEL      2       /* don't draw through eyes */
+#define RF_WEAPONMODEL      4       /* only draw through eyes */
+#define RF_FULLBRIGHT       8       /* always full bright */
+#define RF_DEPTHHACK        16      /* for view weapon drawing */
+#define RF_TRANSLUCENT      32      /* alpha blended */
+#define RF_FRAMELERP        64      /* hardware frame interpolation */
+#define RF_BEAM             128     /* stretch between origin and old_origin */
+#define RF_GLOW             256     /* pulse lighting */
+#define RF_SHELL_RED        512
+#define RF_SHELL_GREEN      1024
+#define RF_SHELL_BLUE       2048
+#define RF_IR_VISIBLE       0x00008000  /* visible under IR goggles */
+
 typedef struct entity_state_s {
     int     number;         /* edict index */
     vec3_t  origin;

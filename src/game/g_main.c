@@ -744,6 +744,7 @@ static void ClientCommand(edict_t *ent)
         WriteGame(gamefile, qfalse);
         WriteLevel(levelfile);
         gi.cprintf(ent, PRINT_ALL, "Saved: %s\n", savename);
+        SCR_AddPickupMessage("Game Saved");
         return;
     }
 
@@ -755,6 +756,7 @@ static void ClientCommand(edict_t *ent)
         ReadGame(gamefile);
         ReadLevel(levelfile);
         gi.cprintf(ent, PRINT_ALL, "Loaded: %s\n", savename);
+        SCR_AddPickupMessage("Game Loaded");
         return;
     }
 
@@ -2042,6 +2044,35 @@ static void G_FireHitscan(edict_t *ent)
                 if (ent->client) {
                     ent->client->kills++;
                     ent->client->score += 10;
+
+                    /* Kill streak tracking — 3s window between kills */
+                    if (level.time - ent->client->streak_last_kill < 3.0f)
+                        ent->client->streak_count++;
+                    else
+                        ent->client->streak_count = 1;
+                    ent->client->streak_last_kill = level.time;
+
+                    /* Streak announcements + bonus score */
+                    switch (ent->client->streak_count) {
+                    case 2:
+                        SCR_AddPickupMessage("DOUBLE KILL!");
+                        ent->client->score += 5;
+                        break;
+                    case 3:
+                        SCR_AddPickupMessage("TRIPLE KILL!");
+                        ent->client->score += 10;
+                        break;
+                    case 4:
+                        SCR_AddPickupMessage("MULTI KILL!");
+                        ent->client->score += 20;
+                        break;
+                    default:
+                        if (ent->client->streak_count >= 5) {
+                            SCR_AddPickupMessage("RAMPAGE!");
+                            ent->client->score += 30;
+                        }
+                        break;
+                    }
 
                     /* Kill feed notification */
                     {

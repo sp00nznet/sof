@@ -336,6 +336,10 @@ struct gclient_s {
     int             deaths;                 /* times player has died */
     int             score;                  /* total score */
 
+    /* Kill streak tracking */
+    int             streak_count;           /* consecutive kills within time window */
+    float           streak_last_kill;       /* level.time of last kill */
+
     /* Magazine/reload system */
     int             magazine[WEAP_COUNT];    /* current rounds in magazine */
     float           reload_finish_time;     /* level.time when reload completes */
