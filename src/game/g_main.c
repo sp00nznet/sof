@@ -2316,6 +2316,8 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
                     ent->health = 0;
                     ent->deadflag = 1;
                     client->ps.pm_type = PM_DEAD;
+                    SCR_AddKillFeed("Player", "falling", "environment");
+                    client->deaths++;
                 }
             }
         }
@@ -2542,6 +2544,8 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
                     ent->health = 0;
                     ent->deadflag = 1;
                     client->ps.pm_type = PM_DEAD;
+                    SCR_AddKillFeed("Player", "lava", "environment");
+                    client->deaths++;
                 }
             }
         }
@@ -2560,6 +2564,8 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
                     ent->health = 0;
                     ent->deadflag = 1;
                     client->ps.pm_type = PM_DEAD;
+                    SCR_AddKillFeed("Player", "slime", "environment");
+                    client->deaths++;
                 }
             }
         }
@@ -2585,6 +2591,8 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
                         ent->health = 0;
                         ent->deadflag = 1;
                         client->ps.pm_type = PM_DEAD;
+                        SCR_AddKillFeed("Player", "drowning", "environment");
+                        client->deaths++;
                     }
                 }
             }

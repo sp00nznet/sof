@@ -47,6 +47,19 @@ static void AI_DamageDirectionToPlayer(edict_t *player, vec3_t source)
     while (angle < 0) angle += 360.0f;
     while (angle >= 360.0f) angle -= 360.0f;
     SCR_AddDamageDirection(angle);
+
+    /* View punch — camera flinches from hit direction */
+    {
+        float punch_pitch = ((float)(rand() % 60) - 30) * 0.1f;  /* random flinch */
+        float punch_yaw = ((float)(rand() % 40) - 20) * 0.1f;
+        /* Heavier flinch from the hit direction */
+        float rad = angle * 3.14159265f / 180.0f;
+        punch_yaw += sinf(rad) * 2.0f;
+        punch_pitch += -1.5f;  /* always flinch slightly up */
+
+        player->client->kick_angles[0] += punch_pitch;
+        player->client->kick_angles[1] += punch_yaw;
+    }
 }
 
 /* ==========================================================================

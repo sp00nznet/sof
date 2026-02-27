@@ -972,6 +972,7 @@ static int   vw_switch_target;      /* weapon to switch to */
 /* Weapon fire animation state */
 static float vw_fire_anim;          /* 0=idle, >0=animating (counts down) */
 static float vw_fire_anim_max;      /* max value for animation duration */
+static float vw_idle_time;          /* accumulated idle time for idle sway */
 
 void R_SetViewWeaponState(int weapon_id, float kick, float bob_phase,
                           float bob_amount, float sway_yaw, float sway_pitch,
@@ -1311,6 +1312,9 @@ static void R_DrawViewWeapon(refdef_t *fd)
         if (vw_fire_anim < 0) vw_fire_anim = 0;
     }
 
+    /* Accumulate idle time for idle sway */
+    vw_idle_time += 0.016f;  /* ~60fps */
+
     /* Advance weapon switch animation */
     if (vw_switch_phase == 1) {
         /* Lowering old weapon */
@@ -1388,11 +1392,27 @@ static void R_DrawViewWeapon(refdef_t *fd)
     /* Reload tilt */
     reload_angle = vw_reloading ? 25.0f : 0.0f;
 
-    /* Position weapon: right side, below center, forward */
-    /* switch_offset lowers weapon during weapon switch animation */
-    qglTranslatef(3.5f + bob_x + vw_sway_yaw,
-                  -3.5f + bob_y + vw_sway_pitch - switch_offset,
-                  -10.0f + kick_back);
+    /* Weapon idle sway — gentle breathing motion when not firing */
+    {
+        float idle_x = (float)sin(vw_idle_time * 0.7f) * 0.08f;
+        float idle_y = (float)sin(vw_idle_time * 1.1f) * 0.05f;
+        float idle_rot = (float)sin(vw_idle_time * 0.5f) * 0.3f;
+
+        /* Suppress idle sway during active fire/reload */
+        if (vw_kick > 0.3f || vw_reloading) {
+            idle_x = 0; idle_y = 0; idle_rot = 0;
+        }
+
+        /* Position weapon: right side, below center, forward */
+        /* switch_offset lowers weapon during weapon switch animation */
+        qglTranslatef(3.5f + bob_x + vw_sway_yaw + idle_x,
+                      -3.5f + bob_y + vw_sway_pitch - switch_offset + idle_y,
+                      -10.0f + kick_back);
+
+        /* Apply idle rotation as subtle roll */
+        if (idle_rot != 0)
+            qglRotatef(idle_rot, 0, 0, 1);
+    }
 
     /* Apply weapon rotations */
     qglRotatef(kick_pitch, 1, 0, 0);      /* recoil pitch */
