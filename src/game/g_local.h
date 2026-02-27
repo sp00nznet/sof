@@ -278,6 +278,12 @@ typedef enum {
     WEAP_COUNT
 } weapon_id_t;
 
+/* Key/keycard bitmask flags */
+#define KEY_RED     1
+#define KEY_BLUE    2
+#define KEY_SILVER  4
+#define KEY_GOLD    8
+
 /* ==========================================================================
    gclient_s — Per-client game state
    ========================================================================== */
@@ -360,6 +366,12 @@ struct gclient_s {
 
     /* View bob */
     float           bob_time;               /* sin cycle timer for head bob */
+
+    /* Ladder */
+    qboolean        on_ladder;              /* currently touching a func_ladder */
+
+    /* Keys */
+    int             keys;                   /* bitmask of collected keys */
 };
 
 /* ==========================================================================

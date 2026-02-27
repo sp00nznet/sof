@@ -355,6 +355,14 @@ static spawn_func_t spawn_funcs[] = {
     { "item_armor_combat",          SP_item_pickup },
     { "item_armor_jacket",          SP_item_pickup },
 
+    /* Keys */
+    { "key_red",                    SP_item_pickup },
+    { "key_blue",                   SP_item_pickup },
+    { "key_silver",                 SP_item_pickup },
+    { "key_gold",                   SP_item_pickup },
+    { "item_key_red",               SP_item_pickup },
+    { "item_key_blue",              SP_item_pickup },
+
     /* Sentinel */
     { NULL, NULL }
 };
@@ -778,12 +786,37 @@ static void door_use(edict_t *self, edict_t *other, edict_t *activator)
         door_go_down(self);
 }
 
+/* Check if player has the key required to open a door */
+static qboolean door_check_key(edict_t *door, edict_t *other)
+{
+    if (door->count == 0)
+        return qtrue;  /* no key required */
+    if (!other || !other->client)
+        return qfalse;
+    if (other->client->keys & door->count)
+        return qtrue;
+
+    /* Player doesn't have the key — show message */
+    if (door->count & KEY_RED)
+        gi.cprintf(other, PRINT_ALL, "You need the Red Key\n");
+    else if (door->count & KEY_BLUE)
+        gi.cprintf(other, PRINT_ALL, "You need the Blue Key\n");
+    else if (door->count & KEY_SILVER)
+        gi.cprintf(other, PRINT_ALL, "You need the Silver Key\n");
+    else if (door->count & KEY_GOLD)
+        gi.cprintf(other, PRINT_ALL, "You need the Gold Key\n");
+    return qfalse;
+}
+
 /* Touch callback for doors without targetname (auto-open) */
 static void door_touch(edict_t *self, edict_t *other, void *plane, csurface_t *surf)
 {
     (void)plane; (void)surf;
 
     if (!other || !other->client)
+        return;
+
+    if (!door_check_key(self, other))
         return;
 
     if (self->moveinfo.state == MSTATE_BOTTOM)
@@ -832,6 +865,18 @@ static void SP_func_door(edict_t *ent, epair_t *pairs, int num_pairs)
     ent->moveinfo.wait = ent->wait ? ent->wait : 3.0f;
     ent->moveinfo.state = MSTATE_BOTTOM;
 
+    /* Check for required key */
+    {
+        const char *key_str = ED_FindValue(pairs, num_pairs, "key");
+        if (key_str) {
+            if (Q_stricmp(key_str, "red") == 0) ent->count = KEY_RED;
+            else if (Q_stricmp(key_str, "blue") == 0) ent->count = KEY_BLUE;
+            else if (Q_stricmp(key_str, "silver") == 0) ent->count = KEY_SILVER;
+            else if (Q_stricmp(key_str, "gold") == 0) ent->count = KEY_GOLD;
+            else ent->count = atoi(key_str);
+        }
+    }
+
     /* If no targetname, door opens on touch */
     if (!ent->targetname) {
         ent->touch = door_touch;
@@ -839,7 +884,8 @@ static void SP_func_door(edict_t *ent, epair_t *pairs, int num_pairs)
     ent->use = door_use;
 
     gi.linkentity(ent);
-    gi.dprintf("  func_door '%s'\n", ent->targetname ? ent->targetname : "(auto)");
+    gi.dprintf("  func_door '%s'%s\n", ent->targetname ? ent->targetname : "(auto)",
+               ent->count ? " (locked)" : "");
 }
 
 /* ==========================================================================
@@ -1988,15 +2034,24 @@ static void SP_trigger_secret(edict_t *ent, epair_t *pairs, int num_pairs)
    BSP brush that sets CONTENTS_LADDER so player can climb
    ========================================================================== */
 
+static void ladder_touch(edict_t *self, edict_t *other, void *plane, csurface_t *surf)
+{
+    (void)self; (void)plane; (void)surf;
+    if (other && other->client)
+        other->client->on_ladder = qtrue;
+}
+
 static void SP_func_ladder(edict_t *ent, epair_t *pairs, int num_pairs)
 {
     (void)pairs; (void)num_pairs;
 
     ent->movetype = MOVETYPE_PUSH;
-    ent->solid = SOLID_BSP;
-    ent->svflags |= SVF_NOCLIENT;  /* invisible — just collision */
+    ent->solid = SOLID_TRIGGER;  /* trigger volume — player walks into it */
+    ent->svflags |= SVF_NOCLIENT;  /* invisible */
+    ent->touch = ladder_touch;
 
     gi.linkentity(ent);
+    gi.dprintf("  func_ladder\n");
 }
 
 /* ==========================================================================
@@ -2710,6 +2765,27 @@ static void item_touch(edict_t *self, edict_t *other, void *plane, csurface_t *s
     /* Goggles pickup — refill battery */
     else if (strstr(self->classname, "goggles") || strstr(self->classname, "nightvision")) {
         other->client->goggles_battery = 100.0f;
+    }
+    /* Key pickup */
+    else if (strstr(self->classname, "key_red") || strstr(self->classname, "key_Red")) {
+        if (other->client->keys & KEY_RED) return;
+        other->client->keys |= KEY_RED;
+        SCR_AddPickupMessage("Red Key");
+    }
+    else if (strstr(self->classname, "key_blue") || strstr(self->classname, "key_Blue")) {
+        if (other->client->keys & KEY_BLUE) return;
+        other->client->keys |= KEY_BLUE;
+        SCR_AddPickupMessage("Blue Key");
+    }
+    else if (strstr(self->classname, "key_silver") || strstr(self->classname, "key_Silver")) {
+        if (other->client->keys & KEY_SILVER) return;
+        other->client->keys |= KEY_SILVER;
+        SCR_AddPickupMessage("Silver Key");
+    }
+    else if (strstr(self->classname, "key_gold") || strstr(self->classname, "key_Gold")) {
+        if (other->client->keys & KEY_GOLD) return;
+        other->client->keys |= KEY_GOLD;
+        SCR_AddPickupMessage("Gold Key");
     }
     /* Weapon/ammo pickup */
     else {

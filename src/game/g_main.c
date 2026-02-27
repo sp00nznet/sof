@@ -2064,6 +2064,37 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
         VectorCopy(pm.viewangles, ent->s.angles);
         ent->s.angles[0] = 0;  /* don't pitch the player model */
 
+        /* Ladder climbing — override vertical velocity when on ladder */
+        if (client->on_ladder) {
+            float climb_speed = 200.0f;
+
+            /* Forward/back input → vertical movement */
+            if (ucmd->forwardmove > 0) {
+                ent->velocity[2] = climb_speed;
+            } else if (ucmd->forwardmove < 0) {
+                ent->velocity[2] = -climb_speed;
+            } else {
+                /* Hold position — cancel gravity */
+                ent->velocity[2] = 0;
+            }
+
+            /* Jump off ladder */
+            if (ucmd->upmove > 0) {
+                vec3_t fwd, rt, u;
+                G_AngleVectors(client->viewangles, fwd, rt, u);
+                ent->velocity[0] = fwd[0] * 200.0f;
+                ent->velocity[1] = fwd[1] * 200.0f;
+                ent->velocity[2] = 250.0f;
+                client->on_ladder = qfalse;
+            }
+
+            /* Sync back to pmove state */
+            VectorCopy(ent->velocity, client->ps.velocity);
+
+            /* Reset ladder flag — will be re-set by touch next frame */
+            client->on_ladder = qfalse;
+        }
+
         /* Fall damage — check if we were falling fast and just landed */
         if (pm.groundentity && !ent->groundentity && old_z_vel < -300) {
             float fall_speed = -old_z_vel;
