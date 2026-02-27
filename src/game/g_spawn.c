@@ -232,6 +232,7 @@ static void SP_env_lava(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_env_acid(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_debris(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_rope(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_misc_corpse(edict_t *ent, epair_t *pairs, int num_pairs);
 static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
                            int damage, vec3_t point);
 
@@ -363,6 +364,8 @@ static spawn_func_t spawn_funcs[] = {
     { "misc_readable",              SP_misc_readable },
     { "misc_note",                  SP_misc_readable },
     { "misc_sign",                  SP_misc_readable },
+    { "misc_corpse",                SP_misc_corpse },
+    { "misc_dead_body",             SP_misc_corpse },
     { "misc_turret",                SP_misc_turret },
     { "misc_mounted_gun",           SP_misc_turret },
     { "misc_tripmine",              SP_misc_tripmine },
@@ -2526,6 +2529,62 @@ static void SP_func_rope(edict_t *ent, epair_t *pairs, int num_pairs)
     gi.linkentity(ent);
     gi.dprintf("  func_rope at (%.0f %.0f %.0f) speed=%.0f\n",
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2], ent->speed);
+}
+
+/* ==========================================================================
+   misc_corpse — Environmental dead body for storytelling
+   Can be pushed/shot, spawns blood on damage, gibs on overkill.
+   ========================================================================== */
+
+static void corpse_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
+                        int damage, vec3_t point)
+{
+    vec3_t up = {0, 0, 1};
+    (void)inflictor; (void)attacker;
+
+    /* Gib the corpse */
+    R_ParticleEffect(point ? point : self->s.origin, up, 1, 16);
+    R_ParticleEffect(self->s.origin, up, 11, 8);  /* debris chunks */
+    R_ParticleEffect(self->s.origin, up, 10, 6);  /* smoke */
+
+    self->takedamage = DAMAGE_NO;
+    self->solid = SOLID_NOT;
+    self->inuse = qfalse;
+    gi.unlinkentity(self);
+}
+
+static void corpse_pain(edict_t *self, edict_t *other, float kick, int damage)
+{
+    vec3_t up = {0, 0, 1};
+    (void)other; (void)kick;
+
+    /* Blood spray when shot */
+    R_ParticleEffect(self->s.origin, up, 1, 4 + damage / 5);
+}
+
+static void SP_misc_corpse(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *frame_str = ED_FindValue(pairs, num_pairs, "frame");
+    (void)pairs; (void)num_pairs;
+
+    ent->solid = SOLID_BBOX;
+    ent->movetype = MOVETYPE_TOSS;  /* affected by gravity */
+    ent->takedamage = DAMAGE_YES;
+    ent->health = 20;
+    ent->max_health = 20;
+    ent->die = corpse_die;
+    ent->pain = corpse_pain;
+
+    /* Death pose frame */
+    ent->s.frame = frame_str ? atoi(frame_str) : 183;  /* FRAME_DEATH1_END */
+
+    VectorSet(ent->mins, -16, -16, -8);
+    VectorSet(ent->maxs, 16, 16, 8);
+
+    gi.linkentity(ent);
+    gi.dprintf("  misc_corpse at (%.0f %.0f %.0f) frame=%d\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->s.frame);
 }
 
 static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,

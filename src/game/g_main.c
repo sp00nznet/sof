@@ -1551,6 +1551,11 @@ static void T_RadiusDamage(edict_t *inflictor, edict_t *attacker,
                 t->client->kick_angles[0] += gi.flrand(-5.0f, 5.0f);
                 t->client->kick_angles[1] += gi.flrand(-5.0f, 5.0f);
             }
+
+            /* Concussion effect: medium-range explosions cause disorientation */
+            if (dist < radius * 0.6f && t->health > 0) {
+                t->client->concussion_end = level.time + 2.0f;  /* 2s of sway */
+            }
         }
 
         if (t->health <= 0 && t->die) {
@@ -2685,6 +2690,39 @@ static void G_FireHitscan(edict_t *ent)
                         }
                     }
                 }
+
+                /* Wall penetration: high-power weapons punch through thin surfaces */
+                if ((weap == WEAP_SNIPER || weap == WEAP_SLUGGER ||
+                     weap == WEAP_ASSAULT) && !is_metal) {
+                    vec3_t pen_start, pen_end;
+                    trace_t pen_tr;
+                    int pen_dmg = damage / 3;  /* 33% damage after penetration */
+
+                    /* Start trace 8 units past the wall surface */
+                    VectorMA(tr.endpos, 8.0f, pellet_dir, pen_start);
+                    VectorMA(pen_start, 1024.0f, pellet_dir, pen_end);
+                    pen_tr = gi.trace(pen_start, NULL, NULL, pen_end, ent, MASK_SHOT);
+
+                    if (pen_tr.fraction < 1.0f && pen_tr.ent &&
+                        pen_tr.ent->takedamage && pen_tr.ent->health > 0 &&
+                        pen_dmg > 0) {
+                        /* Penetration hit! */
+                        R_AddTracer(tr.endpos, pen_tr.endpos, 0.8f, 0.6f, 0.3f);
+                        R_ParticleEffect(pen_tr.endpos, pen_tr.plane.normal, 1, 4);
+                        pen_tr.ent->health -= pen_dmg;
+                        SCR_AddDamageNumber(pen_dmg, 0, 0);
+                        SCR_AddPickupMessage("WALLBANG!");
+
+                        if (pen_tr.ent->health <= 0 && pen_tr.ent->die) {
+                            pen_tr.ent->die(pen_tr.ent, ent, ent, pen_dmg, pen_tr.endpos);
+                            if (ent->client) {
+                                ent->client->kills++;
+                                ent->client->score += 15;
+                                SCR_AddScorePopup(15);
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -3118,6 +3156,16 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
         } else {
             VectorClear(client->kick_origin);
         }
+    }
+
+    /* Concussion effect — view sway and spread penalty */
+    if (client->concussion_end > level.time) {
+        float sway_t = level.time * 5.0f;
+        float intensity = (client->concussion_end - level.time) / 2.0f;
+        if (intensity > 1.0f) intensity = 1.0f;
+        client->kick_angles[0] += sinf(sway_t) * 2.0f * intensity;
+        client->kick_angles[1] += cosf(sway_t * 0.7f) * 3.0f * intensity;
+        client->kick_angles[2] += sinf(sway_t * 1.3f) * 1.5f * intensity;
     }
 
     /* Footstep sounds — on ground and moving, with surface material detection */

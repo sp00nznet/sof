@@ -469,6 +469,9 @@ struct gclient_s {
     qboolean        downed;                /* player is downed, waiting for revive */
     float           downed_time;           /* level.time when downed */
     float           bleedout_end;          /* level.time when bleedout kills */
+
+    /* Concussion effect */
+    float           concussion_end;        /* level.time when concussion clears */
 };
 
 /* ==========================================================================
