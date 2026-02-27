@@ -1535,6 +1535,33 @@ static void ClientCommand(edict_t *ent)
         return;
     }
 
+    /* Ammo type cycle: FMJ -> Hollow Point -> Incendiary -> FMJ */
+    if (Q_stricmp(cmd, "ammotype") == 0 || Q_stricmp(cmd, "ammoswitch") == 0) {
+        static const char *ammo_type_names[] = { "FMJ", "Hollow Point", "Incendiary" };
+        ent->client->ammo_type = (ent->client->ammo_type + 1) % 3;
+        gi.cprintf(ent, PRINT_ALL, "Ammo type: %s\n",
+                   ammo_type_names[ent->client->ammo_type]);
+        SCR_AddPickupMessage(ammo_type_names[ent->client->ammo_type]);
+        return;
+    }
+
+    /* Weapon wheel — show available weapons and ammo */
+    if (Q_stricmp(cmd, "weaponwheel") == 0 || Q_stricmp(cmd, "ww") == 0) {
+        int i;
+        gi.cprintf(ent, PRINT_ALL, "=== Weapon Wheel ===\n");
+        for (i = 1; i < WEAP_COUNT; i++) {
+            if (ent->client->ammo[i] > 0 || ent->client->magazine[i] > 0 ||
+                i == WEAP_KNIFE) {
+                gi.cprintf(ent, PRINT_ALL, " %s%s: %d/%d mag:%d\n",
+                           (i == ent->client->pers_weapon) ? ">" : " ",
+                           weapon_names[i],
+                           ent->client->ammo[i], ent->client->ammo_max[i],
+                           ent->client->magazine[i]);
+            }
+        }
+        return;
+    }
+
     gi.cprintf(ent, PRINT_ALL, "Unknown command: %s\n", cmd);
 }
 
@@ -2633,6 +2660,15 @@ static void G_FireHitscan(edict_t *ent)
 
     damage = (weap > 0 && weap < WEAP_COUNT) ? weapon_damage[weap] : 15;
 
+    /* Ammo type modifiers */
+    if (ent->client->ammo_type == 1) {
+        /* Hollow point: +30% damage, no penetration */
+        damage = (int)(damage * 1.3f);
+    } else if (ent->client->ammo_type == 2) {
+        /* Incendiary: -10% base damage, sets targets on fire */
+        damage = (int)(damage * 0.9f);
+    }
+
     /* Adrenaline rush damage boost */
     if (ent->client->adrenaline_end > level.time && ent->client->adrenaline_mult > 1.0f)
         damage = (int)(damage * ent->client->adrenaline_mult);
@@ -2887,6 +2923,14 @@ static void G_FireHitscan(edict_t *ent)
             if (weap == WEAP_KNIFE && tr.ent->client && tr.ent->health > 0) {
                 tr.ent->client->bleed_end = level.time + 4.0f;
                 tr.ent->client->bleed_next_tick = level.time + 1.0f;
+            }
+
+            /* Incendiary ammo: set target on fire */
+            if (ent->client->ammo_type == 2 && tr.ent->client &&
+                tr.ent->health > 0 && weap != WEAP_KNIFE) {
+                tr.ent->client->burn_end = level.time + 3.0f;
+                tr.ent->client->burn_next_tick = level.time + 0.5f;
+                R_ParticleEffect(tr.endpos, tr.plane.normal, 4, 6); /* fire */
             }
 
             /* Execution finisher — instant kill on low-HP enemy with melee */

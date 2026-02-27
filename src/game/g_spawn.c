@@ -257,6 +257,7 @@ static void SP_func_mirror(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_env_fog(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_valve(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_security_door(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_alarm(edict_t *ent, epair_t *pairs, int num_pairs);
 static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
                            int damage, vec3_t point);
 
@@ -480,6 +481,10 @@ static spawn_func_t spawn_funcs[] = {
     /* Security doors (keycard + delay) */
     { "func_security_door",         SP_func_security_door },
     { "func_blast_door",            SP_func_security_door },
+
+    /* Alarm system */
+    { "func_alarm",                 SP_func_alarm },
+    { "misc_alarm",                 SP_func_alarm },
 
     /* Weapons (SoF) */
     { "weapon_knife",               SP_item_pickup },
@@ -5472,6 +5477,81 @@ static void SP_func_security_door(edict_t *ent, epair_t *pairs, int num_pairs)
     gi.dprintf("  func_security_door at (%.0f %.0f %.0f) key=%d delay=%.1f\n",
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
                ent->count, ent->speed);
+}
+
+/* ==========================================================================
+   func_alarm — Alarm that alerts all monsters within range and fires target
+   Use/trigger to activate. Plays siren sound, wakes up monsters.
+   ========================================================================== */
+
+static void alarm_use(edict_t *self, edict_t *other, edict_t *activator)
+{
+    extern game_export_t globals;
+    int i;
+    int woke = 0;
+
+    (void)other;
+
+    /* Alarm siren sound */
+    {
+        int snd = gi.soundindex("world/alarm_siren.wav");
+        if (snd)
+            gi.positioned_sound(self->s.origin, self, CHAN_AUTO,
+                                snd, 1.0f, ATTN_NONE, 0);
+    }
+
+    /* Alert all monsters within range */
+    for (i = 1; i < globals.num_edicts; i++) {
+        edict_t *e = &globals.edicts[i];
+        vec3_t diff;
+        float dist;
+
+        if (!e->inuse || e->health <= 0)
+            continue;
+        if (!(e->svflags & SVF_MONSTER))
+            continue;
+        if (e->enemy)  /* already in combat */
+            continue;
+
+        VectorSubtract(e->s.origin, self->s.origin, diff);
+        dist = VectorLength(diff);
+        if (dist > self->speed)
+            continue;
+
+        /* Wake up and alert to activator */
+        if (activator && activator->client) {
+            e->enemy = activator;
+            e->count = 2;  /* AI_STATE_ALERT */
+            VectorCopy(activator->s.origin, e->move_origin);
+            e->nextthink = level.time + 0.5f;
+            woke++;
+        }
+    }
+
+    gi.dprintf("  Alarm triggered: woke %d monsters\n", woke);
+
+    /* Fire target */
+    if (self->target)
+        G_UseTargets(activator, self->target);
+
+    /* One-shot: disable after use */
+    self->use = NULL;
+}
+
+static void SP_func_alarm(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *range_str = ED_FindValue(pairs, num_pairs, "range");
+
+    ent->movetype = MOVETYPE_NONE;
+    ent->solid = SOLID_NOT;
+    ent->svflags |= SVF_NOCLIENT;
+    ent->use = alarm_use;
+    ent->speed = range_str ? (float)atof(range_str) : 2000.0f;
+
+    gi.linkentity(ent);
+
+    gi.dprintf("  func_alarm at (%.0f %.0f %.0f) range=%.0f\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2], ent->speed);
 }
 
 /* ==========================================================================

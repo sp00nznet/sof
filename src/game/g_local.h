@@ -517,6 +517,9 @@ struct gclient_s {
     /* Prone stance */
     qboolean        prone;                 /* player is in prone position */
     float           prone_transition;      /* 0=standing, 1=fully prone (lerp) */
+
+    /* Ammo type: 0=FMJ, 1=hollow point (more dmg, no pen), 2=incendiary */
+    int             ammo_type;
 };
 
 /* ==========================================================================
