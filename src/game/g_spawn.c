@@ -247,6 +247,9 @@ static void SP_env_water_current(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_misc_spotlight(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_elevator(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_env_fire(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_env_electric(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_trigger_objective(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_misc_supply_crate(edict_t *ent, epair_t *pairs, int num_pairs);
 static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
                            int damage, vec3_t point);
 
@@ -431,6 +434,18 @@ static spawn_func_t spawn_funcs[] = {
     /* Fire hazard */
     { "env_fire",                   SP_env_fire },
     { "env_flame",                  SP_env_fire },
+
+    /* Electricity hazard */
+    { "env_electric",               SP_env_electric },
+    { "env_tesla",                  SP_env_electric },
+
+    /* Objectives */
+    { "trigger_objective",          SP_trigger_objective },
+    { "info_objective",             SP_trigger_objective },
+
+    /* Supply crate */
+    { "misc_supply_crate",          SP_misc_supply_crate },
+    { "item_supply",                SP_misc_supply_crate },
 
     /* Weapons (SoF) */
     { "weapon_knife",               SP_item_pickup },
@@ -4895,6 +4910,225 @@ static void SP_env_fire(edict_t *ent, epair_t *pairs, int num_pairs)
 
     gi.linkentity(ent);
     gi.dprintf("  env_fire at (%.0f %.0f %.0f)\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
+}
+
+/* ==========================================================================
+   env_electric — Electrical hazard zone (sparking wires, tesla coils)
+   Periodic damage with electric stun effect
+   ========================================================================== */
+
+static void electric_think(edict_t *self)
+{
+    self->nextthink = level.time + 0.4f;
+    /* Spark particles */
+    {
+        vec3_t up = {0, 0, 1};
+        R_ParticleEffect(self->s.origin, up, 3, 3);  /* yellow/spark */
+    }
+}
+
+static void electric_touch(edict_t *self, edict_t *other, void *plane, csurface_t *surf)
+{
+    (void)self; (void)plane; (void)surf;
+
+    if (!other || other->deadflag)
+        return;
+
+    /* Damage */
+    other->health -= 5;
+    if (other->client) {
+        other->client->pers_health = other->health;
+
+        /* Electric blue flash */
+        other->client->blend[0] = 0.3f;
+        other->client->blend[1] = 0.5f;
+        other->client->blend[2] = 1.0f;
+        other->client->blend[3] = 0.3f;
+
+        /* Brief stun: lock view for a moment */
+        other->client->concussion_end = level.time + 0.5f;
+    }
+
+    /* Spark burst on victim */
+    {
+        vec3_t up = {0, 0, 1};
+        R_ParticleEffect(other->s.origin, up, 3, 6);
+    }
+
+    {
+        int snd = gi.soundindex("world/spark.wav");
+        if (snd)
+            gi.sound(other, CHAN_AUTO, snd, 1.0f, ATTN_NORM, 0);
+    }
+
+    if (other->health <= 0) {
+        if (other->client) {
+            other->deadflag = 1;
+            other->client->ps.pm_type = PM_DEAD;
+            SCR_AddKillFeed("Player", "electrocution", "environment");
+            other->client->deaths++;
+        } else if (other->die) {
+            other->die(other, self, self, 5, other->s.origin);
+        }
+    }
+}
+
+static void SP_env_electric(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+
+    ent->solid = SOLID_TRIGGER;
+    ent->movetype = MOVETYPE_NONE;
+    ent->touch = electric_touch;
+    ent->think = electric_think;
+    ent->nextthink = level.time + 1.0f;
+
+    VectorSet(ent->mins, -24, -24, 0);
+    VectorSet(ent->maxs, 24, 24, 48);
+
+    gi.linkentity(ent);
+    gi.dprintf("  env_electric at (%.0f %.0f %.0f)\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
+}
+
+/* ==========================================================================
+   trigger_objective — When player enters, marks an objective as complete
+   and updates the objective display with the next objective text
+   ========================================================================== */
+
+static void objective_touch(edict_t *self, edict_t *other, void *plane, csurface_t *surf)
+{
+    (void)plane; (void)surf;
+
+    if (!other || !other->client || self->count)
+        return;
+
+    self->count = 1;  /* completed — only once */
+
+    level.objectives_completed++;
+
+    /* Display completion message */
+    {
+        char msg[128];
+        Com_sprintf(msg, sizeof(msg), "OBJECTIVE COMPLETE (%d/%d)",
+                    level.objectives_completed, level.objectives_total);
+        SCR_AddPickupMessage(msg);
+    }
+
+    {
+        int snd = gi.soundindex("misc/objective.wav");
+        if (snd)
+            gi.sound(other, CHAN_ITEM, snd, 1.0f, ATTN_NONE, 0);
+    }
+
+    /* Update objective text if this entity has a message */
+    if (self->message) {
+        Com_sprintf(level.objective_text, sizeof(level.objective_text),
+                    "%s", self->message);
+        level.objective_active = qtrue;
+    } else if (level.objectives_completed >= level.objectives_total) {
+        Com_sprintf(level.objective_text, sizeof(level.objective_text),
+                    "All objectives complete!");
+        level.objective_active = qfalse;
+    }
+
+    /* Fire targets */
+    if (self->target)
+        G_UseTargets(other, self->target);
+}
+
+static void SP_trigger_objective(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+
+    ent->solid = SOLID_TRIGGER;
+    ent->touch = objective_touch;
+    ent->count = 0;
+
+    level.objectives_total++;
+
+    /* Check for initial objective text */
+    if (ent->message && level.objectives_completed == 0 && !level.objective_active) {
+        Com_sprintf(level.objective_text, sizeof(level.objective_text),
+                    "%s", ent->message);
+        level.objective_active = qtrue;
+    }
+
+    VectorSet(ent->mins, -32, -32, -32);
+    VectorSet(ent->maxs, 32, 32, 32);
+
+    gi.linkentity(ent);
+    gi.dprintf("  trigger_objective at (%.0f %.0f %.0f)\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
+}
+
+/* ==========================================================================
+   misc_supply_crate — Breakable crate that drops health and ammo on destroy
+   ========================================================================== */
+
+static void supply_crate_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
+                              int damage, vec3_t point)
+{
+    (void)inflictor; (void)damage; (void)point;
+
+    /* Spawn health and ammo pickups on destroy */
+    {
+        vec3_t up = {0, 0, 1};
+        R_ParticleEffect(self->s.origin, up, 8, 10);  /* debris */
+    }
+
+    {
+        int snd = gi.soundindex("world/crate_break.wav");
+        if (snd)
+            gi.sound(self, CHAN_AUTO, snd, 1.0f, ATTN_NORM, 0);
+    }
+
+    /* Grant health and ammo directly to attacker if player */
+    if (attacker && attacker->client) {
+        if (attacker->health < 100) {
+            attacker->health += 15;
+            if (attacker->health > 100)
+                attacker->health = 100;
+            attacker->client->pers_health = attacker->health;
+        }
+
+        {
+            int w = attacker->client->pers_weapon;
+            if (w > 0 && w < WEAP_COUNT) {
+                int add = attacker->client->ammo_max[w] / 4;
+                if (add < 5) add = 5;
+                attacker->client->ammo[w] += add;
+                if (attacker->client->ammo[w] > attacker->client->ammo_max[w])
+                    attacker->client->ammo[w] = attacker->client->ammo_max[w];
+            }
+        }
+
+        SCR_AddPickupMessage("Supply Crate (+15 HP, +ammo)");
+    }
+
+    self->solid = SOLID_NOT;
+    self->svflags |= SVF_NOCLIENT;
+    self->takedamage = DAMAGE_NO;
+    gi.linkentity(self);
+}
+
+static void SP_misc_supply_crate(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+
+    ent->solid = SOLID_BBOX;
+    ent->movetype = MOVETYPE_NONE;
+    ent->health = 30;
+    ent->takedamage = DAMAGE_YES;
+    ent->die = supply_crate_die;
+    ent->s.modelindex = gi.modelindex("models/objects/crate/tris.md2");
+
+    VectorSet(ent->mins, -16, -16, 0);
+    VectorSet(ent->maxs, 16, 16, 24);
+
+    gi.linkentity(ent);
+    gi.dprintf("  misc_supply_crate at (%.0f %.0f %.0f)\n",
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
 }
 

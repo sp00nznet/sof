@@ -691,6 +691,12 @@ typedef struct {
     int         vote_yes;           /* yes votes */
     int         vote_no;            /* no votes */
     int         vote_caller;        /* entity index who called the vote */
+
+    /* Objective system */
+    char        objective_text[256];    /* current objective description */
+    qboolean    objective_active;       /* an objective is displayed */
+    int         objectives_completed;   /* total objectives completed */
+    int         objectives_total;       /* total objectives in level */
 } level_t;
 
 extern level_t  level;

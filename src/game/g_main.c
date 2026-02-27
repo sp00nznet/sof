@@ -1264,6 +1264,35 @@ static void ClientCommand(edict_t *ent)
         return;
     }
 
+    if (Q_stricmp(cmd, "status") == 0 || Q_stricmp(cmd, "stats") == 0) {
+        float accuracy = (ent->client->shots_fired > 0) ?
+            (float)ent->client->shots_hit / (float)ent->client->shots_fired * 100.0f : 0;
+        gi.cprintf(ent, PRINT_ALL,
+            "--- Player Status ---\n"
+            "Health: %d/%d  Armor: %d/%d\n"
+            "Kills: %d  Deaths: %d  Score: %d\n"
+            "Accuracy: %.1f%% (%d/%d)  Headshots: %d\n"
+            "Streak: %d  Rank: %d  XP: %d\n",
+            ent->health, ent->client->pers_max_health,
+            ent->client->armor, ent->client->armor_max,
+            ent->client->kills, ent->client->deaths, ent->client->score,
+            accuracy, ent->client->shots_hit, ent->client->shots_fired,
+            ent->client->headshots,
+            ent->client->streak_count, ent->client->rank, ent->client->xp);
+        return;
+    }
+
+    if (Q_stricmp(cmd, "objective") == 0 || Q_stricmp(cmd, "obj") == 0) {
+        if (level.objective_active) {
+            gi.cprintf(ent, PRINT_ALL, "Objective: %s (%d/%d complete)\n",
+                       level.objective_text,
+                       level.objectives_completed, level.objectives_total);
+        } else {
+            gi.cprintf(ent, PRINT_ALL, "No active objective.\n");
+        }
+        return;
+    }
+
     gi.cprintf(ent, PRINT_ALL, "Unknown command: %s\n", cmd);
 }
 
