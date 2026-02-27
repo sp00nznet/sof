@@ -1800,7 +1800,10 @@ static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
     (void)inflictor; (void)damage; (void)point;
 
     /* Explosion particles and light */
-    R_ParticleEffect(self->s.origin, up, 2, 32);
+    R_ParticleEffect(self->s.origin, up, 2, 32);     /* fire burst */
+    R_ParticleEffect(self->s.origin, up, 11, 16);    /* debris chunks */
+    R_ParticleEffect(self->s.origin, up, 10, 8);     /* smoke cloud */
+    R_ParticleEffect(self->s.origin, up, 13, 10);    /* ground dust */
     R_AddDlight(self->s.origin, 1.0f, 0.6f, 0.1f, 400.0f, 0.5f);
 
     /* Fire targets */

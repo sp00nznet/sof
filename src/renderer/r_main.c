@@ -1410,6 +1410,8 @@ typedef struct {
     float   color[4];       /* RGBA */
     float   alpha_decay;    /* alpha lost per second */
     float   time;           /* time remaining */
+    float   size;           /* particle size (1.0 = default point, >4 = quad) */
+    float   size_decay;     /* size lost per second (shrink over time) */
 } r_particle_t;
 
 #define MAX_R_PARTICLES     2048
@@ -1445,6 +1447,33 @@ static void R_AddParticle(vec3_t org, vec3_t vel, vec3_t accel,
     p->color[2] = b; p->color[3] = a;
     p->alpha_decay = alpha_decay;
     p->time = lifetime;
+    p->size = 3.0f;
+    p->size_decay = 0.0f;
+}
+
+/*
+ * R_AddParticleSized - Spawn a particle with explicit size control
+ */
+static void R_AddParticleSized(vec3_t org, vec3_t vel, vec3_t accel,
+                                float r, float g, float b, float a,
+                                float alpha_decay, float lifetime,
+                                float size, float size_decay)
+{
+    r_particle_t *p;
+
+    if (r_num_particles >= MAX_R_PARTICLES)
+        return;
+
+    p = &r_particles[r_num_particles++];
+    VectorCopy(org, p->org);
+    VectorCopy(vel, p->vel);
+    VectorCopy(accel, p->accel);
+    p->color[0] = r; p->color[1] = g;
+    p->color[2] = b; p->color[3] = a;
+    p->alpha_decay = alpha_decay;
+    p->time = lifetime;
+    p->size = size;
+    p->size_decay = size_decay;
 }
 
 /*
@@ -1587,6 +1616,75 @@ void R_ParticleEffect(vec3_t org, vec3_t dir, int type, int count)
                           0.1f, 5.0f);
         }
         break;
+
+    case 10: /* smoke trail — large lingering smoke puffs for rockets/explosions */
+        for (i = 0; i < count; i++) {
+            vec3_t smoke_org;
+            float grey;
+            VectorCopy(org, smoke_org);
+            smoke_org[0] += ((float)(rand()%10) - 5);
+            smoke_org[1] += ((float)(rand()%10) - 5);
+            smoke_org[2] += ((float)(rand()%10) - 5);
+            vel[0] = dir[0] * 15.0f + ((float)(rand()%20) - 10);
+            vel[1] = dir[1] * 15.0f + ((float)(rand()%20) - 10);
+            vel[2] = 15.0f + (float)(rand()%20);   /* drift upward */
+            VectorSet(accel, 0, 0, 10);             /* gentle rise */
+            grey = 0.35f + (rand()%20) * 0.01f;
+            R_AddParticleSized(smoke_org, vel, accel,
+                               grey, grey, grey, 0.5f,
+                               0.2f, 2.5f,
+                               8.0f + (rand()%8), 0.0f);  /* large, stays big */
+        }
+        break;
+
+    case 11: /* debris chunks — dark heavy pieces from explosions */
+        for (i = 0; i < count; i++) {
+            vel[0] = ((float)(rand()%160) - 80);
+            vel[1] = ((float)(rand()%160) - 80);
+            vel[2] = 40.0f + (float)(rand()%100);
+            VectorSet(accel, 0, 0, -800);  /* very heavy gravity */
+            R_AddParticleSized(org, vel, accel,
+                               0.2f + (rand()%15)*0.01f,
+                               0.18f + (rand()%10)*0.01f,
+                               0.12f + (rand()%10)*0.01f,
+                               1.0f,
+                               0.8f, 1.2f,
+                               4.0f + (rand()%3), 1.0f);  /* shrink as they land */
+        }
+        break;
+
+    case 12: /* ricochet spark — single bright spark that bounces off surfaces */
+        for (i = 0; i < count; i++) {
+            float bright = 0.8f + (rand()%20)*0.01f;
+            vel[0] = dir[0] * 200.0f + ((float)(rand()%120) - 60);
+            vel[1] = dir[1] * 200.0f + ((float)(rand()%120) - 60);
+            vel[2] = dir[2] * 200.0f + 50.0f + (float)(rand()%60);
+            VectorSet(accel, 0, 0, -600);
+            R_AddParticleSized(org, vel, accel,
+                               1.0f, bright, bright * 0.4f, 1.0f,
+                               5.0f, 0.3f,
+                               2.0f, 0.0f);  /* small bright point */
+        }
+        break;
+
+    case 13: /* ground dust — kicked up by movement/impacts near floor */
+        for (i = 0; i < count; i++) {
+            vec3_t gd_org;
+            float brown;
+            VectorCopy(org, gd_org);
+            gd_org[0] += ((float)(rand()%20) - 10);
+            gd_org[1] += ((float)(rand()%20) - 10);
+            vel[0] = ((float)(rand()%60) - 30);
+            vel[1] = ((float)(rand()%60) - 30);
+            vel[2] = 10.0f + (float)(rand()%30);
+            VectorSet(accel, 0, 0, -20);  /* settles slowly */
+            brown = 0.5f + (rand()%15)*0.01f;
+            R_AddParticleSized(gd_org, vel, accel,
+                               brown, brown * 0.85f, brown * 0.6f, 0.35f,
+                               0.25f, 1.5f,
+                               6.0f + (rand()%4), 1.0f);
+        }
+        break;
     }
 }
 
@@ -1617,35 +1715,97 @@ void R_UpdateParticles(float frametime)
         p->org[1] += p->vel[1] * frametime;
         p->org[2] += p->vel[2] * frametime;
 
+        /* Size decay */
+        if (p->size_decay > 0) {
+            p->size -= p->size_decay * frametime;
+            if (p->size < 1.0f) p->size = 1.0f;
+        }
+
         i++;
     }
 }
 
 /*
- * R_DrawParticles - Render all active particles as GL_POINTS
+ * R_DrawParticles - Render all active particles
+ *
+ * Small particles (size < 6) render as GL_POINTS with variable size.
+ * Large particles (size >= 6) render as camera-facing billboard quads
+ * for a softer, more volumetric look (smoke, dust clouds, etc).
  */
 static void R_DrawParticles(void)
 {
     int i;
+    int has_points = 0, has_quads = 0;
 
     if (r_num_particles == 0)
         return;
+
+    /* Check what we need to render */
+    for (i = 0; i < r_num_particles; i++) {
+        if (r_particles[i].size >= 6.0f)
+            has_quads = 1;
+        else
+            has_points = 1;
+        if (has_points && has_quads) break;
+    }
 
     qglDisable(GL_TEXTURE_2D);
     qglEnable(GL_BLEND);
     qglBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     qglDepthMask(GL_FALSE);
-    if (qglPointSize) qglPointSize(3.0f);
 
-    qglBegin(GL_POINTS);
-    for (i = 0; i < r_num_particles; i++) {
-        r_particle_t *p = &r_particles[i];
-        qglColor4f(p->color[0], p->color[1], p->color[2], p->color[3]);
-        qglVertex3f(p->org[0], p->org[1], p->org[2]);
+    /* Pass 1: small particles as GL_POINTS */
+    if (has_points) {
+        if (qglPointSize) qglPointSize(3.0f);
+        qglBegin(GL_POINTS);
+        for (i = 0; i < r_num_particles; i++) {
+            r_particle_t *p = &r_particles[i];
+            if (p->size >= 6.0f) continue;
+            qglColor4f(p->color[0], p->color[1], p->color[2], p->color[3]);
+            qglVertex3f(p->org[0], p->org[1], p->org[2]);
+        }
+        qglEnd();
+        if (qglPointSize) qglPointSize(1.0f);
     }
-    qglEnd();
 
-    if (qglPointSize) qglPointSize(1.0f);
+    /* Pass 2: large particles as camera-facing quads */
+    if (has_quads) {
+        vec3_t cam_ang, right, up;
+        float yaw_rad;
+
+        R_GetCameraAngles(cam_ang);
+        yaw_rad = cam_ang[1] * (3.14159265f / 180.0f);
+
+        right[0] = -(float)sin(yaw_rad);
+        right[1] = (float)cos(yaw_rad);
+        right[2] = 0;
+        up[0] = 0; up[1] = 0; up[2] = 1;
+
+        qglBegin(GL_QUADS);
+        for (i = 0; i < r_num_particles; i++) {
+            r_particle_t *p = &r_particles[i];
+            float sz;
+            if (p->size < 6.0f) continue;
+            sz = p->size * 0.5f;
+
+            qglColor4f(p->color[0], p->color[1], p->color[2], p->color[3]);
+
+            qglVertex3f(p->org[0] - right[0]*sz - up[0]*sz,
+                         p->org[1] - right[1]*sz - up[1]*sz,
+                         p->org[2] - right[2]*sz - up[2]*sz);
+            qglVertex3f(p->org[0] + right[0]*sz - up[0]*sz,
+                         p->org[1] + right[1]*sz - up[1]*sz,
+                         p->org[2] + right[2]*sz - up[2]*sz);
+            qglVertex3f(p->org[0] + right[0]*sz + up[0]*sz,
+                         p->org[1] + right[1]*sz + up[1]*sz,
+                         p->org[2] + right[2]*sz + up[2]*sz);
+            qglVertex3f(p->org[0] - right[0]*sz + up[0]*sz,
+                         p->org[1] - right[1]*sz + up[1]*sz,
+                         p->org[2] - right[2]*sz + up[2]*sz);
+        }
+        qglEnd();
+    }
+
     qglDepthMask(GL_TRUE);
     qglDisable(GL_BLEND);
     qglEnable(GL_TEXTURE_2D);

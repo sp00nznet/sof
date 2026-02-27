@@ -974,7 +974,10 @@ static qboolean G_UseUtilityWeapon(edict_t *ent)
                     c4->classname && Q_stricmp(c4->classname, "c4_charge") == 0) {
                     /* Detonate this C4 */
                     VectorCopy(c4->s.origin, c4->s.origin);
-                    R_ParticleEffect(c4->s.origin, c4->s.angles, 2, 48);
+                    R_ParticleEffect(c4->s.origin, c4->s.angles, 2, 48);    /* fire burst */
+                    R_ParticleEffect(c4->s.origin, c4->s.angles, 11, 20);   /* debris */
+                    R_ParticleEffect(c4->s.origin, c4->s.angles, 10, 10);   /* smoke cloud */
+                    R_ParticleEffect(c4->s.origin, c4->s.angles, 13, 12);   /* ground dust */
                     R_AddDlight(c4->s.origin, 1.0f, 0.6f, 0.1f, 500.0f, 0.6f);
                     R_AddSprite(c4->s.origin, 56.0f, 1.0f, 0.7f, 0.2f, 1.0f, 0.8f, 150.0f);  /* fireball */
                     R_AddSprite(c4->s.origin, 80.0f, 0.4f, 0.4f, 0.4f, 0.6f, 1.5f, 20.0f);   /* smoke */
@@ -1232,7 +1235,10 @@ static void rocket_think(edict_t *self)
 
     if (tr.fraction < 1.0f) {
         /* Impact — explode */
-        R_ParticleEffect(tr.endpos, tr.plane.normal, 2, 32);
+        R_ParticleEffect(tr.endpos, tr.plane.normal, 2, 32);   /* fire burst */
+        R_ParticleEffect(tr.endpos, tr.plane.normal, 11, 12);  /* debris chunks */
+        R_ParticleEffect(tr.endpos, tr.plane.normal, 10, 6);   /* smoke cloud */
+        R_ParticleEffect(tr.endpos, tr.plane.normal, 13, 8);   /* ground dust */
         R_AddDlight(tr.endpos, 1.0f, 0.6f, 0.1f, 400.0f, 0.5f);
         R_AddSprite(tr.endpos, 48.0f, 1.0f, 0.6f, 0.1f, 0.9f, 0.6f, 120.0f);  /* fireball */
         R_AddSprite(tr.endpos, 64.0f, 0.3f, 0.3f, 0.3f, 0.5f, 1.2f, 30.0f);   /* smoke */
@@ -1259,14 +1265,15 @@ static void rocket_think(edict_t *self)
 
     VectorCopy(end, self->s.origin);
 
-    /* Rocket trail: smoke particles + engine glow */
+    /* Rocket trail: smoke + fire sparks + engine glow */
     {
         vec3_t trail_dir;
         VectorCopy(self->velocity, trail_dir);
         VectorNormalize(trail_dir);
         VectorNegate(trail_dir, trail_dir);
-        R_ParticleEffect(self->s.origin, trail_dir, 3, 3);   /* fire sparks */
-        R_ParticleEffect(self->s.origin, trail_dir, 4, 2);   /* smoke puffs */
+        R_ParticleEffect(self->s.origin, trail_dir, 3, 3);    /* fire sparks */
+        R_ParticleEffect(self->s.origin, trail_dir, 10, 2);   /* lingering smoke puffs */
+        R_ParticleEffect(self->s.origin, trail_dir, 4, 1);    /* small flame */
         R_AddDlight(self->s.origin, 1.0f, 0.5f, 0.1f, 120.0f, 0.15f);
     }
 
@@ -1288,7 +1295,10 @@ void grenade_explode(edict_t *self)
 {
     vec3_t up = {0, 0, 1};
 
-    R_ParticleEffect(self->s.origin, up, 2, 24);
+    R_ParticleEffect(self->s.origin, up, 2, 24);     /* fire burst */
+    R_ParticleEffect(self->s.origin, up, 11, 16);    /* debris chunks */
+    R_ParticleEffect(self->s.origin, up, 10, 8);     /* smoke cloud */
+    R_ParticleEffect(self->s.origin, up, 13, 6);     /* ground dust */
     R_AddDlight(self->s.origin, 1.0f, 0.5f, 0.1f, 350.0f, 0.4f);
     R_AddSprite(self->s.origin, 40.0f, 1.0f, 0.5f, 0.1f, 0.8f, 0.5f, 100.0f);  /* fireball */
     R_AddSprite(self->s.origin, 56.0f, 0.3f, 0.3f, 0.3f, 0.4f, 1.0f, 25.0f);   /* smoke */
@@ -1983,7 +1993,8 @@ static void G_FireHitscan(edict_t *ent)
             (void)0;  /* label requires a statement */
         } else {
             /* Bullet impact sparks + ricochet sound */
-            R_ParticleEffect(tr.endpos, tr.plane.normal, 0, 6);
+            R_ParticleEffect(tr.endpos, tr.plane.normal, 0, 6);    /* dust */
+            R_ParticleEffect(tr.endpos, tr.plane.normal, 12, 3);   /* ricochet sparks */
             G_AddDecal(tr.endpos, tr.plane.normal, 0);  /* bullet decal */
             {
                 int ric_snd = 0;
