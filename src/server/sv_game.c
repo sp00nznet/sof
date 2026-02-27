@@ -1094,6 +1094,67 @@ int SV_GetScoreboard(scoreboard_entry_t *entries, int max_entries)
 }
 
 /*
+ * SV_GetPlayerWeaponIndex — Get weapon enum value for view weapon rendering
+ */
+int SV_GetPlayerWeaponIndex(void)
+{
+    edict_t *player;
+
+    if (!ge || !ge->edicts)
+        return 0;
+
+    player = (edict_t *)((byte *)ge->edicts + ge->edict_size);
+    if (!player->inuse || !player->client)
+        return 0;
+
+    return player->client->pers_weapon;
+}
+
+/*
+ * SV_GetPlayerVelocity — Get player velocity for head bob calculation
+ */
+qboolean SV_GetPlayerVelocity(vec3_t vel)
+{
+    edict_t *player;
+
+    if (!ge || !ge->edicts)
+        return qfalse;
+
+    player = (edict_t *)((byte *)ge->edicts + ge->edict_size);
+    if (!player->inuse)
+        return qfalse;
+
+    VectorCopy(player->velocity, vel);
+    return qtrue;
+}
+
+/*
+ * SV_GetPlayerFireTime — Get last fire time for weapon kick animation
+ */
+float SV_GetPlayerFireTime(void)
+{
+    extern float player_last_fire_time;
+    return player_last_fire_time;
+}
+
+/*
+ * SV_IsPlayerReloading — Check if player is in reload animation
+ */
+qboolean SV_IsPlayerReloading(void)
+{
+    edict_t *player;
+
+    if (!ge || !ge->edicts)
+        return qfalse;
+
+    player = (edict_t *)((byte *)ge->edicts + ge->edict_size);
+    if (!player->inuse || !player->client)
+        return qfalse;
+
+    return (player->client->reloading_weapon != 0);
+}
+
+/*
  * SV_RunGameFrame — Called from SV_Frame at 10Hz
  * Drives the game module's RunFrame which iterates all entities.
  */

@@ -292,6 +292,11 @@ void        R_SetCameraAngles(vec3_t angles);
 void        R_UpdateCamera(float forward, float right, float up,
                            float mouse_dx, float mouse_dy, float frametime);
 
+/* View weapon */
+void        R_SetViewWeaponState(int weapon_id, float kick, float bob_phase,
+                                 float bob_amount, float sway_yaw, float sway_pitch,
+                                 qboolean reloading);
+
 /* ==========================================================================
    Model Registration
    ========================================================================== */

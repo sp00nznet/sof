@@ -607,6 +607,407 @@ static void R_DrawSkyBox(void)
     qglDepthMask(GL_TRUE);
 }
 
+/* ==========================================================================
+   First-Person View Weapon Model
+
+   Draws simple 3D geometry for the currently held weapon in view space.
+   Uses a separate projection with narrow depth range to prevent
+   clipping into world geometry.
+   ========================================================================== */
+
+/* View weapon state — set by engine before rendering */
+static int   vw_weapon_id;          /* current weapon enum value */
+static float vw_kick;               /* recoil kick (0..1, decays) */
+static float vw_bob_phase;          /* head bob cycle phase */
+static float vw_bob_amount;         /* head bob amplitude */
+static float vw_sway_yaw;           /* weapon sway offset (yaw lag) */
+static float vw_sway_pitch;         /* weapon sway offset (pitch lag) */
+static qboolean vw_reloading;       /* currently reloading */
+
+void R_SetViewWeaponState(int weapon_id, float kick, float bob_phase,
+                          float bob_amount, float sway_yaw, float sway_pitch,
+                          qboolean reloading)
+{
+    vw_weapon_id = weapon_id;
+    vw_kick = kick;
+    vw_bob_phase = bob_phase;
+    vw_bob_amount = bob_amount;
+    vw_sway_yaw = sway_yaw;
+    vw_sway_pitch = sway_pitch;
+    vw_reloading = reloading;
+}
+
+/*
+ * Draw a simple box shape (used as building block for weapon geometry)
+ */
+static void VW_DrawBox(float x1, float y1, float z1,
+                       float x2, float y2, float z2,
+                       float r, float g, float b)
+{
+    /* Front face */
+    qglColor4f(r, g, b, 1.0f);
+    qglNormal3f(0, 0, 1);
+    qglVertex3f(x1, y1, z2);
+    qglVertex3f(x2, y1, z2);
+    qglVertex3f(x2, y2, z2);
+    qglVertex3f(x1, y2, z2);
+
+    /* Back face */
+    qglColor4f(r * 0.6f, g * 0.6f, b * 0.6f, 1.0f);
+    qglNormal3f(0, 0, -1);
+    qglVertex3f(x2, y1, z1);
+    qglVertex3f(x1, y1, z1);
+    qglVertex3f(x1, y2, z1);
+    qglVertex3f(x2, y2, z1);
+
+    /* Top face */
+    qglColor4f(r * 0.9f, g * 0.9f, b * 0.9f, 1.0f);
+    qglNormal3f(0, 1, 0);
+    qglVertex3f(x1, y2, z1);
+    qglVertex3f(x1, y2, z2);
+    qglVertex3f(x2, y2, z2);
+    qglVertex3f(x2, y2, z1);
+
+    /* Bottom face */
+    qglColor4f(r * 0.5f, g * 0.5f, b * 0.5f, 1.0f);
+    qglNormal3f(0, -1, 0);
+    qglVertex3f(x1, y1, z1);
+    qglVertex3f(x2, y1, z1);
+    qglVertex3f(x2, y1, z2);
+    qglVertex3f(x1, y1, z2);
+
+    /* Right face */
+    qglColor4f(r * 0.75f, g * 0.75f, b * 0.75f, 1.0f);
+    qglNormal3f(1, 0, 0);
+    qglVertex3f(x2, y1, z1);
+    qglVertex3f(x2, y1, z2);
+    qglVertex3f(x2, y2, z2);
+    qglVertex3f(x2, y2, z1);
+
+    /* Left face */
+    qglColor4f(r * 0.7f, g * 0.7f, b * 0.7f, 1.0f);
+    qglNormal3f(-1, 0, 0);
+    qglVertex3f(x1, y1, z2);
+    qglVertex3f(x1, y1, z1);
+    qglVertex3f(x1, y2, z1);
+    qglVertex3f(x1, y2, z2);
+}
+
+/*
+ * Draw weapon-specific geometry in view space.
+ * Coordinate system: X = right, Y = up, Z = forward (into screen).
+ */
+static void VW_DrawWeaponGeometry(int weapon_id)
+{
+    qglBegin(GL_QUADS);
+
+    switch (weapon_id) {
+    case 1: /* WEAP_KNIFE */
+        /* Blade */
+        VW_DrawBox(-0.3f, -0.5f, 3.0f,  0.3f, 0.1f, 7.0f,
+                   0.75f, 0.75f, 0.8f);
+        /* Handle */
+        VW_DrawBox(-0.4f, -2.5f, 3.5f,  0.4f, -0.5f, 5.0f,
+                   0.35f, 0.2f, 0.1f);
+        /* Guard */
+        VW_DrawBox(-0.6f, -0.6f, 3.2f,  0.6f, 0.3f, 3.6f,
+                   0.5f, 0.5f, 0.55f);
+        break;
+
+    case 2: /* WEAP_PISTOL1 (.44 Desert Eagle) */
+        /* Slide */
+        VW_DrawBox(-0.5f, 0.0f, 2.0f,  0.5f, 1.0f, 7.5f,
+                   0.55f, 0.55f, 0.55f);
+        /* Barrel */
+        VW_DrawBox(-0.25f, 0.3f, 7.5f,  0.25f, 0.7f, 9.0f,
+                   0.4f, 0.4f, 0.42f);
+        /* Grip */
+        VW_DrawBox(-0.5f, -2.5f, 2.5f,  0.5f, 0.0f, 5.0f,
+                   0.3f, 0.25f, 0.15f);
+        /* Trigger guard */
+        VW_DrawBox(-0.3f, -1.0f, 5.0f,  0.3f, -0.5f, 6.0f,
+                   0.45f, 0.45f, 0.45f);
+        break;
+
+    case 3: /* WEAP_PISTOL2 (Silver Talon) */
+        /* Slide */
+        VW_DrawBox(-0.4f, 0.0f, 2.0f,  0.4f, 0.8f, 7.0f,
+                   0.7f, 0.7f, 0.72f);
+        /* Barrel */
+        VW_DrawBox(-0.2f, 0.2f, 7.0f,  0.2f, 0.6f, 8.5f,
+                   0.6f, 0.6f, 0.62f);
+        /* Grip */
+        VW_DrawBox(-0.4f, -2.2f, 2.5f,  0.4f, 0.0f, 4.8f,
+                   0.25f, 0.2f, 0.15f);
+        break;
+
+    case 4: /* WEAP_SHOTGUN */
+        /* Barrel */
+        VW_DrawBox(-0.35f, -0.1f, 0.0f,  0.35f, 0.5f, 12.0f,
+                   0.3f, 0.3f, 0.32f);
+        /* Pump */
+        VW_DrawBox(-0.4f, -0.5f, 4.0f,  0.4f, -0.1f, 8.0f,
+                   0.5f, 0.35f, 0.15f);
+        /* Stock */
+        VW_DrawBox(-0.5f, -1.5f, -2.0f,  0.5f, 0.3f, 1.0f,
+                   0.35f, 0.25f, 0.12f);
+        /* Receiver */
+        VW_DrawBox(-0.5f, -0.5f, 0.0f,  0.5f, 0.8f, 3.0f,
+                   0.35f, 0.35f, 0.35f);
+        break;
+
+    case 5: /* WEAP_MACHINEGUN (MP5) */
+        /* Body */
+        VW_DrawBox(-0.4f, -0.3f, 0.0f,  0.4f, 0.5f, 10.0f,
+                   0.25f, 0.25f, 0.27f);
+        /* Magazine */
+        VW_DrawBox(-0.25f, -2.0f, 3.0f,  0.25f, -0.3f, 5.0f,
+                   0.2f, 0.2f, 0.22f);
+        /* Stock */
+        VW_DrawBox(-0.3f, -0.5f, -3.0f,  0.3f, 0.3f, 0.0f,
+                   0.22f, 0.22f, 0.24f);
+        /* Barrel */
+        VW_DrawBox(-0.2f, 0.1f, 10.0f,  0.2f, 0.4f, 12.0f,
+                   0.3f, 0.3f, 0.32f);
+        break;
+
+    case 6: /* WEAP_ASSAULT (M4) */
+        /* Body/receiver */
+        VW_DrawBox(-0.4f, -0.3f, 0.0f,  0.4f, 0.6f, 8.0f,
+                   0.35f, 0.35f, 0.3f);
+        /* Barrel + handguard */
+        VW_DrawBox(-0.3f, 0.0f, 8.0f,  0.3f, 0.4f, 14.0f,
+                   0.3f, 0.3f, 0.32f);
+        /* Magazine */
+        VW_DrawBox(-0.2f, -2.5f, 3.0f,  0.2f, -0.3f, 5.5f,
+                   0.2f, 0.2f, 0.2f);
+        /* Stock */
+        VW_DrawBox(-0.35f, -0.3f, -4.0f,  0.35f, 0.5f, 0.0f,
+                   0.3f, 0.25f, 0.15f);
+        /* Carry handle / sight */
+        VW_DrawBox(-0.15f, 0.6f, 2.0f,  0.15f, 1.0f, 6.0f,
+                   0.3f, 0.3f, 0.3f);
+        break;
+
+    case 7: /* WEAP_SNIPER (MSG90) */
+        /* Long barrel */
+        VW_DrawBox(-0.3f, -0.1f, 0.0f,  0.3f, 0.4f, 16.0f,
+                   0.3f, 0.3f, 0.28f);
+        /* Scope */
+        VW_DrawBox(-0.2f, 0.6f, 4.0f,  0.2f, 1.2f, 10.0f,
+                   0.15f, 0.15f, 0.17f);
+        /* Magazine */
+        VW_DrawBox(-0.2f, -1.8f, 5.0f,  0.2f, -0.1f, 7.0f,
+                   0.2f, 0.2f, 0.2f);
+        /* Stock */
+        VW_DrawBox(-0.4f, -0.5f, -5.0f,  0.4f, 0.4f, 0.0f,
+                   0.3f, 0.25f, 0.12f);
+        break;
+
+    case 8: /* WEAP_SLUGGER */
+        /* Drum body */
+        VW_DrawBox(-0.6f, -0.8f, 1.0f,  0.6f, 0.8f, 6.0f,
+                   0.4f, 0.4f, 0.35f);
+        /* Barrel */
+        VW_DrawBox(-0.3f, 0.0f, 6.0f,  0.3f, 0.5f, 11.0f,
+                   0.35f, 0.35f, 0.37f);
+        /* Handle */
+        VW_DrawBox(-0.4f, -2.0f, 2.0f,  0.4f, -0.8f, 5.0f,
+                   0.3f, 0.2f, 0.12f);
+        break;
+
+    case 9: /* WEAP_ROCKET (M202A2) */
+        /* Quad tube launcher */
+        VW_DrawBox(-0.8f, -0.4f, 0.0f,  0.8f, 0.8f, 12.0f,
+                   0.3f, 0.35f, 0.25f);
+        /* Handle */
+        VW_DrawBox(-0.3f, -2.0f, 3.0f,  0.3f, -0.4f, 6.0f,
+                   0.2f, 0.2f, 0.15f);
+        /* Sight */
+        VW_DrawBox(-0.1f, 0.8f, 3.0f,  0.1f, 1.3f, 5.0f,
+                   0.25f, 0.25f, 0.25f);
+        break;
+
+    case 10: /* WEAP_FLAMEGUN */
+        /* Tank body */
+        VW_DrawBox(-0.5f, -0.5f, -1.0f,  0.5f, 0.7f, 6.0f,
+                   0.4f, 0.25f, 0.1f);
+        /* Nozzle */
+        VW_DrawBox(-0.25f, 0.0f, 6.0f,  0.25f, 0.4f, 10.0f,
+                   0.3f, 0.3f, 0.32f);
+        /* Handle */
+        VW_DrawBox(-0.3f, -2.0f, 2.0f,  0.3f, -0.5f, 5.0f,
+                   0.2f, 0.15f, 0.1f);
+        /* Pilot light tip */
+        VW_DrawBox(-0.1f, 0.1f, 10.0f,  0.1f, 0.3f, 10.5f,
+                   1.0f, 0.6f, 0.1f);
+        break;
+
+    case 11: /* WEAP_MPG (Microwave Pulse Gun) */
+        /* Sci-fi body */
+        VW_DrawBox(-0.5f, -0.3f, 0.0f,  0.5f, 0.6f, 9.0f,
+                   0.3f, 0.35f, 0.5f);
+        /* Emitter dish */
+        VW_DrawBox(-0.6f, -0.4f, 9.0f,  0.6f, 0.8f, 10.0f,
+                   0.4f, 0.45f, 0.6f);
+        /* Grip */
+        VW_DrawBox(-0.3f, -2.0f, 2.0f,  0.3f, -0.3f, 5.0f,
+                   0.25f, 0.25f, 0.3f);
+        break;
+
+    case 12: /* WEAP_MPISTOL (Machine Pistol) */
+        /* Compact body */
+        VW_DrawBox(-0.35f, 0.0f, 2.0f,  0.35f, 0.7f, 7.0f,
+                   0.3f, 0.3f, 0.32f);
+        /* Extended magazine */
+        VW_DrawBox(-0.2f, -2.5f, 3.0f,  0.2f, 0.0f, 4.5f,
+                   0.22f, 0.22f, 0.22f);
+        /* Grip */
+        VW_DrawBox(-0.35f, -2.0f, 4.5f,  0.35f, 0.0f, 6.0f,
+                   0.25f, 0.2f, 0.12f);
+        break;
+
+    case 13: /* WEAP_GRENADE */
+        /* Grenade body (oval-ish) */
+        VW_DrawBox(-0.6f, -0.8f, 2.0f,  0.6f, 0.8f, 5.0f,
+                   0.3f, 0.35f, 0.2f);
+        /* Spoon/lever */
+        VW_DrawBox(-0.1f, 0.8f, 2.5f,  0.1f, 1.3f, 4.5f,
+                   0.5f, 0.5f, 0.45f);
+        /* Pin ring */
+        VW_DrawBox(0.3f, 1.0f, 2.0f,  0.5f, 1.4f, 2.5f,
+                   0.6f, 0.6f, 0.55f);
+        break;
+
+    case 14: /* WEAP_C4 */
+        /* C4 brick */
+        VW_DrawBox(-0.8f, -0.4f, 2.0f,  0.8f, 0.4f, 5.0f,
+                   0.6f, 0.55f, 0.3f);
+        /* Detonator */
+        VW_DrawBox(-0.15f, 0.4f, 3.0f,  0.15f, 0.8f, 3.5f,
+                   0.4f, 0.4f, 0.4f);
+        /* Wire */
+        VW_DrawBox(-0.05f, 0.7f, 3.2f,  0.05f, 1.0f, 4.5f,
+                   0.8f, 0.1f, 0.1f);
+        break;
+
+    case 15: /* WEAP_MEDKIT */
+        /* Kit body */
+        VW_DrawBox(-0.8f, -0.5f, 2.0f,  0.8f, 0.5f, 5.0f,
+                   0.8f, 0.8f, 0.8f);
+        /* Red cross (horizontal bar) */
+        VW_DrawBox(-0.5f, -0.1f, 3.0f,  0.5f, 0.1f, 4.0f,
+                   0.9f, 0.1f, 0.1f);
+        /* Red cross (vertical bar) */
+        VW_DrawBox(-0.1f, -0.4f, 3.0f,  0.1f, 0.4f, 4.0f,
+                   0.9f, 0.1f, 0.1f);
+        break;
+
+    default: /* WEAP_NONE or unhandled — no weapon drawn */
+        break;
+    }
+
+    qglEnd();
+}
+
+/*
+ * R_DrawViewWeapon — Render first-person view weapon model
+ *
+ * Called after world rendering, before 2D overlay.
+ * Uses a separate depth range so the weapon never clips into walls.
+ */
+static void R_DrawViewWeapon(refdef_t *fd)
+{
+    float bob_x, bob_y, kick_pitch, kick_back;
+    float reload_angle;
+
+    if (vw_weapon_id <= 0)
+        return;     /* no weapon to draw */
+
+    /* Save current matrices */
+    qglMatrixMode(GL_PROJECTION);
+    qglPushMatrix();
+    qglMatrixMode(GL_MODELVIEW);
+    qglPushMatrix();
+
+    /* Set up view weapon projection (narrow FOV, near clip) */
+    {
+        float znear = 1.0f, zfar = 128.0f;
+        float fov_x = 65.0f;   /* narrower than world for better feel */
+        float aspect = (float)fd->width / (float)fd->height;
+        float fov_y = fov_x / aspect;
+        float ymax = znear * (float)tan(fov_y * 3.14159265 / 360.0);
+        float xmax = znear * (float)tan(fov_x * 3.14159265 / 360.0);
+
+        qglMatrixMode(GL_PROJECTION);
+        qglLoadIdentity();
+        qglFrustum(-xmax, xmax, -ymax, ymax, znear, zfar);
+    }
+
+    /* Clear depth so weapon always renders on top */
+    qglClear(GL_DEPTH_BUFFER_BIT);
+    qglEnable(GL_DEPTH_TEST);
+    qglDepthFunc(GL_LEQUAL);
+    qglDepthMask(GL_TRUE);
+
+    /* Set up modelview in view space */
+    qglMatrixMode(GL_MODELVIEW);
+    qglLoadIdentity();
+
+    /* Calculate bob offsets */
+    bob_x = (float)sin(vw_bob_phase * 2.0f) * vw_bob_amount * 0.4f;
+    bob_y = (float)sin(vw_bob_phase) * vw_bob_amount;
+
+    /* Calculate kick offsets */
+    kick_pitch = -vw_kick * 8.0f;   /* weapon tips up when firing */
+    kick_back = vw_kick * 1.5f;     /* weapon pushes back toward camera */
+
+    /* Reload tilt */
+    reload_angle = vw_reloading ? 25.0f : 0.0f;
+
+    /* Position weapon: right side, below center, forward */
+    qglTranslatef(3.5f + bob_x + vw_sway_yaw,
+                  -3.5f + bob_y + vw_sway_pitch,
+                  -10.0f + kick_back);
+
+    /* Apply weapon rotations */
+    qglRotatef(kick_pitch, 1, 0, 0);      /* recoil pitch */
+    qglRotatef(reload_angle, 0, 0, 1);    /* reload tilt */
+
+    /* Disable textures — weapon is solid colored geometry */
+    qglDisable(GL_TEXTURE_2D);
+    qglEnable(GL_BLEND);
+    qglBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    /* Draw the weapon geometry */
+    VW_DrawWeaponGeometry(vw_weapon_id);
+
+    /* Muzzle flash on kick */
+    if (vw_kick > 0.5f) {
+        float flash = vw_kick - 0.5f;  /* 0..0.5 range */
+        qglColor4f(1.0f, 0.8f, 0.3f, flash * 2.0f);
+        qglBegin(GL_TRIANGLES);
+        qglVertex3f(-0.3f, 0.3f, 14.0f);
+        qglVertex3f(0.3f, 0.3f, 14.0f);
+        qglVertex3f(0.0f, 0.5f, 16.0f);
+        qglVertex3f(-0.2f, 0.1f, 14.0f);
+        qglVertex3f(0.2f, 0.5f, 14.0f);
+        qglVertex3f(0.0f, 0.3f, 15.5f);
+        qglEnd();
+    }
+
+    /* Restore state */
+    qglDisable(GL_BLEND);
+    qglEnable(GL_TEXTURE_2D);
+    qglColor4f(1, 1, 1, 1);
+
+    /* Restore matrices */
+    qglMatrixMode(GL_PROJECTION);
+    qglPopMatrix();
+    qglMatrixMode(GL_MODELVIEW);
+    qglPopMatrix();
+}
+
 /*
  * R_RenderFrame - Render a 3D scene from a refdef_t
  *
@@ -683,6 +1084,9 @@ void R_RenderFrame(refdef_t *fd)
 
     /* Disable fog before 2D rendering */
     qglDisable(GL_FOG);
+
+    /* Draw first-person view weapon (after world, before 2D) */
+    R_DrawViewWeapon(fd);
 
     /* Full-screen blend (damage flash, underwater tint) */
     if (fd->blend[3] > 0) {

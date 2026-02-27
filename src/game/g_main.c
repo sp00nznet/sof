@@ -27,6 +27,7 @@ extern void R_AddDlight(vec3_t origin, float r, float g, float b,
 extern void SCR_AddDamageNumber(int damage, int screen_x, int screen_y);
 extern void SCR_AddPickupMessage(const char *text);
 extern void SCR_AddKillFeed(const char *attacker, const char *victim, const char *weapon);
+extern void SCR_AddScreenShake(float intensity, float duration);
 
 /* Sound constants now in g_local.h */
 
@@ -890,6 +891,7 @@ static float weapon_spread[WEAP_COUNT] = {
 };
 
 static float player_next_fire;  /* level.time when player can fire again */
+float player_last_fire_time;    /* level.time when player last fired (for view kick) */
 static qboolean player_alt_fire;  /* true if alt-fire mode active */
 
 /*
@@ -940,6 +942,7 @@ static qboolean G_UseUtilityWeapon(edict_t *ent)
                         gi.positioned_sound(c4->s.origin, NULL, CHAN_AUTO,
                                             snd_explode, 1.0f, ATTN_NORM, 0);
                     T_RadiusDamage(c4, ent, (float)c4->dmg, (float)c4->dmg_radius);
+                    SCR_AddScreenShake(1.0f, 0.5f);
                     c4->inuse = qfalse;
                     gi.unlinkentity(c4);
                     detonated = qtrue;
@@ -1169,6 +1172,9 @@ static void rocket_think(edict_t *self)
         VectorCopy(tr.endpos, self->s.origin);
         T_RadiusDamage(self, self->owner, (float)self->dmg, (float)self->dmg_radius);
 
+        /* Screen shake from explosion */
+        SCR_AddScreenShake(0.8f, 0.4f);
+
         /* Direct hit bonus */
         if (tr.ent && tr.ent->takedamage && tr.ent->health > 0) {
             tr.ent->health -= self->dmg;
@@ -1210,6 +1216,7 @@ static void grenade_explode(edict_t *self)
         gi.positioned_sound(self->s.origin, NULL, CHAN_AUTO, snd_explode, 1.0f, ATTN_NORM, 0);
 
     T_RadiusDamage(self, self->owner, (float)self->dmg, (float)self->dmg_radius);
+    SCR_AddScreenShake(0.6f, 0.3f);
 
     self->inuse = qfalse;
     gi.unlinkentity(self);
@@ -1646,6 +1653,7 @@ static void G_FireHitscan(edict_t *ent)
     /* Handle utility weapons (medkit, etc.) */
     if (G_UseUtilityWeapon(ent)) {
         player_next_fire = level.time + ((weap > 0 && weap < WEAP_COUNT) ? weapon_firerate[weap] : 0.5f);
+        player_last_fire_time = level.time;
         return;
     }
 
@@ -1681,6 +1689,7 @@ static void G_FireHitscan(edict_t *ent)
 
     damage = (weap > 0 && weap < WEAP_COUNT) ? weapon_damage[weap] : 15;
     player_next_fire = level.time + ((weap > 0 && weap < WEAP_COUNT) ? weapon_firerate[weap] : 0.2f);
+    player_last_fire_time = level.time;
 
     /* Fire from eye position */
     VectorCopy(ent->s.origin, start);

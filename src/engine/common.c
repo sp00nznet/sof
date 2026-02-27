@@ -51,6 +51,15 @@ extern void SV_GetLevelStats(int *killed_monsters, int *total_monsters,
                              int *found_secrets, int *total_secrets);
 extern int  SV_GetEntityCount(void);
 extern qboolean SV_GetPlayerZoom(float *fov);
+extern int  SV_GetPlayerWeaponIndex(void);
+extern qboolean SV_GetPlayerVelocity(vec3_t vel);
+extern float SV_GetPlayerFireTime(void);
+extern qboolean SV_IsPlayerReloading(void);
+
+/* Forward declarations — view weapon (renderer/r_main.c) */
+extern void R_SetViewWeaponState(int weapon_id, float kick, float bob_phase,
+                                 float bob_amount, float sway_yaw, float sway_pitch,
+                                 qboolean reloading);
 
 /* Forward declaration — freecam toggle (defined below in client section) */
 static void Cmd_Freecam_f(void);
@@ -469,6 +478,42 @@ static float        cl_time;            /* accumulated time */
 static vec3_t       cl_viewangles;      /* accumulated mouse look angles */
 static qboolean     cl_use_freecam;     /* toggle: freecam vs player movement */
 
+/* ==========================================================================
+   View Effects State — Head bob, weapon kick, sway, screen shake
+   ========================================================================== */
+
+/* Head bob */
+static float cl_bob_cycle;              /* bob phase accumulator */
+static float cl_bob_amount;             /* current bob amplitude */
+
+/* Weapon sway (view angle lag) */
+static float cl_sway_yaw;              /* current sway offset (yaw) */
+static float cl_sway_pitch;            /* current sway offset (pitch) */
+static float cl_prev_yaw;              /* previous frame yaw for delta */
+static float cl_prev_pitch;            /* previous frame pitch for delta */
+
+/* Weapon kick */
+static float cl_kick_amount;           /* current recoil (0..1, decays) */
+static float cl_last_fire_check;       /* last fire time we checked */
+
+/* Screen shake */
+static float cl_shake_intensity;       /* current shake strength */
+static float cl_shake_duration;        /* remaining shake time */
+static float cl_shake_time;            /* total shake duration for decay */
+
+void SCR_AddScreenShake(float intensity, float duration)
+{
+    /* Stack shakes — take the stronger one if already shaking */
+    if (intensity > cl_shake_intensity) {
+        cl_shake_intensity = intensity;
+        cl_shake_duration = duration;
+        cl_shake_time = duration;
+    } else if (cl_shake_duration > 0) {
+        /* Extend existing shake */
+        cl_shake_duration += duration * 0.5f;
+    }
+}
+
 /*
  * SCR_BeginIntermission — Called by changelevel to show stats before map change
  */
@@ -592,6 +637,97 @@ void CL_Frame(int msec)
             if (SV_GetPlayerState(org, ang, &vh)) {
                 org[2] += vh;  /* add viewheight for eye position */
 
+                /* ---- Head bob ---- */
+                {
+                    vec3_t vel;
+                    float speed = 0;
+
+                    if (SV_GetPlayerVelocity(vel)) {
+                        speed = (float)sqrt(vel[0] * vel[0] + vel[1] * vel[1]);
+                    }
+
+                    if (speed > 20.0f) {
+                        /* Running — cycle the bob */
+                        float bob_speed = speed * 0.006f;
+                        if (bob_speed > 1.5f) bob_speed = 1.5f;
+                        cl_bob_cycle += frametime * bob_speed * 12.0f;
+
+                        /* Bob amplitude based on speed */
+                        cl_bob_amount = speed * 0.0012f;
+                        if (cl_bob_amount > 0.8f) cl_bob_amount = 0.8f;
+
+                        /* Apply view bob to eye height */
+                        org[2] += (float)sin(cl_bob_cycle) * cl_bob_amount * 1.5f;
+                    } else {
+                        /* Standing still — decay bob */
+                        cl_bob_amount *= 0.9f;
+                        if (cl_bob_amount < 0.01f) cl_bob_amount = 0;
+                    }
+                }
+
+                /* ---- Weapon sway (angle lag) ---- */
+                {
+                    float yaw_delta = ang[1] - cl_prev_yaw;
+                    float pitch_delta = ang[0] - cl_prev_pitch;
+
+                    /* Normalize yaw delta */
+                    while (yaw_delta > 180) yaw_delta -= 360;
+                    while (yaw_delta < -180) yaw_delta += 360;
+
+                    /* Add delta to sway, then decay toward zero */
+                    cl_sway_yaw += yaw_delta * 0.15f;
+                    cl_sway_pitch += pitch_delta * 0.12f;
+                    cl_sway_yaw *= (1.0f - frametime * 8.0f);
+                    cl_sway_pitch *= (1.0f - frametime * 8.0f);
+
+                    /* Clamp sway range */
+                    if (cl_sway_yaw > 2.0f) cl_sway_yaw = 2.0f;
+                    if (cl_sway_yaw < -2.0f) cl_sway_yaw = -2.0f;
+                    if (cl_sway_pitch > 1.5f) cl_sway_pitch = 1.5f;
+                    if (cl_sway_pitch < -1.5f) cl_sway_pitch = -1.5f;
+
+                    cl_prev_yaw = ang[1];
+                    cl_prev_pitch = ang[0];
+                }
+
+                /* ---- Weapon kick (recoil) ---- */
+                {
+                    float fire_time = SV_GetPlayerFireTime();
+                    if (fire_time > cl_last_fire_check && fire_time > 0) {
+                        /* New shot detected — apply kick */
+                        cl_kick_amount = 1.0f;
+                        cl_last_fire_check = fire_time;
+                    }
+
+                    /* Decay kick */
+                    if (cl_kick_amount > 0) {
+                        cl_kick_amount -= frametime * 6.0f;
+                        if (cl_kick_amount < 0) cl_kick_amount = 0;
+                    }
+                }
+
+                /* ---- Screen shake ---- */
+                {
+                    if (cl_shake_duration > 0) {
+                        float decay = cl_shake_duration / cl_shake_time;
+                        float shake_x = ((float)(rand() % 200) - 100.0f) * 0.01f *
+                                        cl_shake_intensity * decay;
+                        float shake_y = ((float)(rand() % 200) - 100.0f) * 0.01f *
+                                        cl_shake_intensity * decay;
+
+                        ang[0] += shake_x;
+                        ang[1] += shake_y;
+                        org[2] += ((float)(rand() % 100) - 50.0f) * 0.01f *
+                                  cl_shake_intensity * decay;
+
+                        cl_shake_duration -= frametime;
+                        if (cl_shake_duration <= 0) {
+                            cl_shake_duration = 0;
+                            cl_shake_intensity = 0;
+                        }
+                    }
+                }
+
                 memset(&cl_refdef, 0, sizeof(cl_refdef));
                 cl_refdef.x = 0;
                 cl_refdef.y = 0;
@@ -634,6 +770,17 @@ void CL_Frame(int msec)
                         }
                     }
                 }
+
+                /* ---- Update view weapon state for renderer ---- */
+                R_SetViewWeaponState(
+                    SV_GetPlayerWeaponIndex(),
+                    cl_kick_amount,
+                    cl_bob_cycle,
+                    cl_bob_amount,
+                    cl_sway_yaw,
+                    cl_sway_pitch,
+                    SV_IsPlayerReloading()
+                );
             }
         }
     }
