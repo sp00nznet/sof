@@ -278,6 +278,12 @@ typedef enum {
     WEAP_COUNT
 } weapon_id_t;
 
+/* Weapon attachment flags */
+#define ATTACH_SILENCER     0x01    /* reduced sound range */
+#define ATTACH_SCOPE        0x02    /* adds zoom capability */
+#define ATTACH_EXTMAG       0x04    /* extended magazine capacity */
+#define ATTACH_LASER        0x08    /* laser sight (reduced spread) */
+
 /* Key/keycard bitmask flags */
 #define KEY_RED     1
 #define KEY_BLUE    2
@@ -439,6 +445,14 @@ struct gclient_s {
     /* Player rank/level */
     int             xp;                    /* experience points (persistent) */
     int             rank;                  /* current rank (0-9) */
+
+    /* Weapon attachments (bitmask per weapon) */
+    int             attachments[WEAP_COUNT]; /* ATTACH_* flags per weapon */
+
+    /* Dash/dodge */
+    float           dash_end;              /* level.time when dash ends */
+    vec3_t          dash_dir;              /* dash direction */
+    float           dash_cooldown;         /* level.time when dash available again */
 };
 
 /* ==========================================================================

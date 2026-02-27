@@ -790,6 +790,30 @@ static void ClientCommand(edict_t *ent)
         return;
     }
 
+    if (Q_stricmp(cmd, "attach") == 0 && gi.argc() >= 3) {
+        const char *att_name = gi.argv(2);
+        int weap = ent->client->pers_weapon;
+        int flag = 0;
+
+        if (Q_stricmp(att_name, "silencer") == 0)      flag = ATTACH_SILENCER;
+        else if (Q_stricmp(att_name, "scope") == 0)     flag = ATTACH_SCOPE;
+        else if (Q_stricmp(att_name, "extmag") == 0)    flag = ATTACH_EXTMAG;
+        else if (Q_stricmp(att_name, "laser") == 0)     flag = ATTACH_LASER;
+
+        if (flag && weap > 0 && weap < WEAP_COUNT) {
+            ent->client->attachments[weap] ^= flag;  /* toggle */
+            if (ent->client->attachments[weap] & flag) {
+                gi.cprintf(ent, PRINT_ALL, "Attached %s\n", att_name);
+                SCR_AddPickupMessage(att_name);
+            } else {
+                gi.cprintf(ent, PRINT_ALL, "Removed %s\n", att_name);
+            }
+        } else {
+            gi.cprintf(ent, PRINT_ALL, "Usage: attach <silencer|scope|extmag|laser>\n");
+        }
+        return;
+    }
+
     if (Q_stricmp(cmd, "speedrun") == 0) {
         if (level.speedrun_active) {
             float elapsed = level.time - level.speedrun_start;
@@ -2050,9 +2074,16 @@ static void G_FireHitscan(edict_t *ent)
         }
     }
 
-    /* Weapon fire sound */
-    if (weap > 0 && weap < WEAP_COUNT && snd_weapons[weap])
-        gi.sound(ent, CHAN_WEAPON, snd_weapons[weap], 1.0f, ATTN_NORM, 0);
+    /* Weapon fire sound — silencer reduces volume */
+    if (weap > 0 && weap < WEAP_COUNT && snd_weapons[weap]) {
+        float vol = 1.0f;
+        float attn = ATTN_NORM;
+        if (ent->client->attachments[weap] & ATTACH_SILENCER) {
+            vol = 0.3f;     /* much quieter */
+            attn = ATTN_IDLE;  /* shorter range */
+        }
+        gi.sound(ent, CHAN_WEAPON, snd_weapons[weap], vol, attn, 0);
+    }
 
     /* Weapon-specific trace parameters */
     {
@@ -2060,10 +2091,15 @@ static void G_FireHitscan(edict_t *ent)
         float trace_range = 8192;
         float spread = 0;
         int pellet;
+        int att = (weap > 0 && weap < WEAP_COUNT) ? ent->client->attachments[weap] : 0;
 
         /* Apply base weapon spread */
         if (weap > 0 && weap < WEAP_COUNT)
             spread = weapon_spread[weap];
+
+        /* Laser sight: 30% tighter spread */
+        if (att & ATTACH_LASER)
+            spread *= 0.7f;
 
         /* Recoil accumulation: sustained fire increases spread */
         {
@@ -2721,6 +2757,32 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
                 R_ParticleEffect(wj_tr.endpos, wj_tr.plane.normal, 13, 4);
                 break;
             }
+        }
+    }
+
+    /* Dash/dodge: double-tap movement direction for quick dodge */
+    if (client->dash_end > level.time) {
+        /* Dashing — apply dash velocity */
+        float dash_frac = (client->dash_end - level.time) / 0.2f;
+        float dash_speed = 500.0f * dash_frac;
+        ent->velocity[0] = client->dash_dir[0] * dash_speed;
+        ent->velocity[1] = client->dash_dir[1] * dash_speed;
+    } else if (ent->groundentity && client->dash_cooldown < level.time &&
+               client->stamina > 15.0f) {
+        /* Check for BUTTON_SPRINT + strafe = dash sideways */
+        if ((ucmd->buttons & BUTTON_SPRINT) && ucmd->forwardmove == 0 &&
+            (ucmd->sidemove > 100 || ucmd->sidemove < -100)) {
+            vec3_t dash_fwd, dash_rt, dash_up;
+            G_AngleVectors(client->viewangles, dash_fwd, dash_rt, dash_up);
+            if (ucmd->sidemove > 0) {
+                VectorCopy(dash_rt, client->dash_dir);
+            } else {
+                VectorScale(dash_rt, -1.0f, client->dash_dir);
+            }
+            client->dash_dir[2] = 0;
+            client->dash_end = level.time + 0.2f;
+            client->dash_cooldown = level.time + 0.8f;
+            client->stamina -= 15.0f;
         }
     }
 

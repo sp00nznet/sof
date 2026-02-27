@@ -227,6 +227,9 @@ static void SP_misc_throwable(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_misc_ambient_creature(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_misc_readable(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_misc_turret(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_misc_tripmine(edict_t *ent, epair_t *pairs, int num_pairs);
+static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
+                           int damage, vec3_t point);
 
 /*
  * Spawn function dispatch table
@@ -349,6 +352,8 @@ static spawn_func_t spawn_funcs[] = {
     { "misc_sign",                  SP_misc_readable },
     { "misc_turret",                SP_misc_turret },
     { "misc_mounted_gun",           SP_misc_turret },
+    { "misc_tripmine",              SP_misc_tripmine },
+    { "misc_trap",                  SP_misc_tripmine },
 
     /* Weapons (SoF) */
     { "weapon_knife",               SP_item_pickup },
@@ -1014,6 +1019,98 @@ static void SP_misc_turret(edict_t *ent, epair_t *pairs, int num_pairs)
     gi.linkentity(ent);
     gi.dprintf("  misc_turret at (%.0f %.0f %.0f) dmg=%d\n",
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2], ent->dmg);
+}
+
+/* ==========================================================================
+   Trip Mine — Proximity explosive that detonates when entities get close
+   ========================================================================== */
+
+static void tripmine_think(edict_t *self)
+{
+    edict_t *touch[16];
+    int num, i;
+    vec3_t prox_mins, prox_maxs;
+    float trigger_range = self->dmg_radius > 0 ? (float)self->dmg_radius * 0.5f : 64.0f;
+
+    if (!self->inuse) return;
+    self->nextthink = level.time + 0.2f;  /* check 5 times per second */
+
+    /* Arm delay: don't trigger for first 2 seconds */
+    if (self->teleport_time > level.time)
+        return;
+
+    VectorSet(prox_mins, self->s.origin[0] - trigger_range,
+                         self->s.origin[1] - trigger_range,
+                         self->s.origin[2] - trigger_range);
+    VectorSet(prox_maxs, self->s.origin[0] + trigger_range,
+                         self->s.origin[1] + trigger_range,
+                         self->s.origin[2] + trigger_range);
+
+    num = gi.BoxEdicts(prox_mins, prox_maxs, touch, 16, AREA_SOLID);
+    for (i = 0; i < num; i++) {
+        if (touch[i] && touch[i] != self && touch[i]->inuse &&
+            (touch[i]->client || (touch[i]->svflags & SVF_MONSTER))) {
+            /* Triggered! Explode */
+            {
+                vec3_t up = {0, 0, 1};
+                R_ParticleEffect(self->s.origin, up, 2, 24);
+                R_AddDlight(self->s.origin, 1.0f, 0.5f, 0.1f, 350.0f, 0.4f);
+                {
+                    int snd = gi.soundindex("weapons/explode.wav");
+                    if (snd)
+                        gi.positioned_sound(self->s.origin, NULL, CHAN_AUTO,
+                                            snd, 1.0f, ATTN_NORM, 0);
+                }
+            }
+            SCR_AddScreenShake(0.5f, 0.3f);
+
+            /* Damage nearby entities */
+            {
+                int j;
+                for (j = 0; j < num; j++) {
+                    edict_t *t = touch[j];
+                    if (t && t != self && t->inuse && t->takedamage) {
+                        t->health -= self->dmg;
+                        if (t->health <= 0 && t->die)
+                            t->die(t, self, self->owner ? self->owner : self,
+                                   self->dmg, self->s.origin);
+                    }
+                }
+            }
+
+            /* Remove self */
+            self->inuse = qfalse;
+            gi.unlinkentity(self);
+            return;
+        }
+    }
+}
+
+static void SP_misc_tripmine(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *dmg_str = ED_FindValue(pairs, num_pairs, "dmg");
+    const char *radius_str = ED_FindValue(pairs, num_pairs, "dmg_radius");
+    (void)pairs; (void)num_pairs;
+
+    ent->solid = SOLID_BBOX;
+    ent->movetype = MOVETYPE_NONE;
+    ent->takedamage = DAMAGE_YES;
+    ent->health = 1;  /* can be shot to detonate */
+    ent->max_health = 1;
+    ent->dmg = dmg_str ? atoi(dmg_str) : 75;
+    ent->dmg_radius = radius_str ? atoi(radius_str) : 128;
+    ent->think = tripmine_think;
+    ent->nextthink = level.time + 0.5f;
+    ent->teleport_time = level.time + 2.0f;  /* 2s arm delay */
+    ent->die = explosive_die;  /* can be shot */
+
+    VectorSet(ent->mins, -4, -4, -4);
+    VectorSet(ent->maxs, 4, 4, 4);
+
+    gi.linkentity(ent);
+    gi.dprintf("  misc_tripmine at (%.0f %.0f %.0f) dmg=%d radius=%d\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->dmg, ent->dmg_radius);
 }
 
 /* ==========================================================================
