@@ -245,6 +245,8 @@ static void SP_env_wind(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_door_locked(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_env_water_current(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_misc_spotlight(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_elevator(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_env_fire(edict_t *ent, epair_t *pairs, int num_pairs);
 static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
                            int damage, vec3_t point);
 
@@ -421,6 +423,14 @@ static spawn_func_t spawn_funcs[] = {
     /* Spotlight (visual) */
     { "misc_spotlight",             SP_misc_spotlight },
     { "light_spot",                 SP_misc_spotlight },
+
+    /* Elevator (vertical platform with call button) */
+    { "func_elevator",              SP_func_elevator },
+    { "func_lift",                  SP_func_elevator },
+
+    /* Fire hazard */
+    { "env_fire",                   SP_env_fire },
+    { "env_flame",                  SP_env_fire },
 
     /* Weapons (SoF) */
     { "weapon_knife",               SP_item_pickup },
@@ -4732,6 +4742,159 @@ static void SP_misc_spotlight(edict_t *ent, epair_t *pairs, int num_pairs)
 
     gi.linkentity(ent);
     gi.dprintf("  misc_spotlight at (%.0f %.0f %.0f)\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
+}
+
+/* ==========================================================================
+   func_elevator — Vertical platform that cycles between bottom and top
+   positions. Activated by use or touch, waits at each end.
+   ========================================================================== */
+
+static void elevator_go_top(edict_t *self);
+static void elevator_go_bottom(edict_t *self);
+
+static void elevator_wait_top(edict_t *self)
+{
+    self->think = elevator_go_bottom;
+    self->nextthink = level.time + (self->wait ? self->wait : 3.0f);
+}
+
+static void elevator_wait_bottom(edict_t *self)
+{
+    self->moveinfo.state = MSTATE_BOTTOM;
+    self->nextthink = 0;  /* wait for activation */
+}
+
+static void elevator_go_top(edict_t *self)
+{
+    self->moveinfo.state = MSTATE_UP;
+    Move_Calc(self, self->moveinfo.end_origin, elevator_wait_top);
+
+    {
+        int snd = gi.soundindex("plats/pt1_strt.wav");
+        if (snd)
+            gi.sound(self, CHAN_AUTO, snd, 1.0f, ATTN_NORM, 0);
+    }
+}
+
+static void elevator_go_bottom(edict_t *self)
+{
+    self->moveinfo.state = MSTATE_DOWN;
+    Move_Calc(self, self->moveinfo.start_origin, elevator_wait_bottom);
+
+    {
+        int snd = gi.soundindex("plats/pt1_strt.wav");
+        if (snd)
+            gi.sound(self, CHAN_AUTO, snd, 1.0f, ATTN_NORM, 0);
+    }
+}
+
+static void elevator_use(edict_t *self, edict_t *other, edict_t *activator)
+{
+    (void)other; (void)activator;
+
+    if (self->moveinfo.state == MSTATE_BOTTOM)
+        elevator_go_top(self);
+}
+
+static void elevator_touch(edict_t *self, edict_t *other, void *plane, csurface_t *surf)
+{
+    (void)plane; (void)surf;
+
+    if (!other || !other->client)
+        return;
+    if (self->moveinfo.state == MSTATE_BOTTOM)
+        elevator_go_top(self);
+}
+
+static void SP_func_elevator(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    float height;
+    const char *height_str;
+
+    (void)num_pairs;
+
+    ent->movetype = MOVETYPE_PUSH;
+    ent->solid = SOLID_BSP;
+
+    if (!ent->speed)
+        ent->speed = 100;
+
+    height_str = ED_FindValue(pairs, num_pairs, "height");
+    height = height_str ? (float)atof(height_str) : 128.0f;
+
+    VectorCopy(ent->s.origin, ent->moveinfo.start_origin);
+    VectorCopy(ent->s.origin, ent->moveinfo.end_origin);
+    ent->moveinfo.end_origin[2] += height;
+
+    ent->moveinfo.speed = ent->speed;
+    ent->moveinfo.state = MSTATE_BOTTOM;
+
+    ent->use = (void (*)(edict_t *, edict_t *, edict_t *))elevator_use;
+    ent->touch = elevator_touch;
+    ent->blocked = door_blocked;
+
+    gi.linkentity(ent);
+    gi.dprintf("  func_elevator at (%.0f %.0f %.0f) height=%.0f\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2], height);
+}
+
+/* ==========================================================================
+   env_fire — Persistent fire hazard that damages and ignites on contact
+   ========================================================================== */
+
+static void fire_think(edict_t *self)
+{
+    /* Emit flame particles periodically */
+    self->nextthink = level.time + 0.3f;
+    {
+        vec3_t up = {0, 0, 1};
+        R_ParticleEffect(self->s.origin, up, 4, 5);  /* fire color */
+    }
+}
+
+static void fire_touch(edict_t *self, edict_t *other, void *plane, csurface_t *surf)
+{
+    (void)self; (void)plane; (void)surf;
+
+    if (!other || !other->client || other->deadflag)
+        return;
+
+    /* Apply burn damage and set on fire */
+    other->health -= 2;
+    other->client->pers_health = other->health;
+    other->client->burn_end = level.time + 3.0f;
+    other->client->burn_next_tick = level.time + 0.5f;
+
+    /* Orange flash */
+    other->client->blend[0] = 1.0f;
+    other->client->blend[1] = 0.5f;
+    other->client->blend[2] = 0.0f;
+    other->client->blend[3] = 0.25f;
+
+    if (other->health <= 0) {
+        other->deadflag = 1;
+        other->client->ps.pm_type = PM_DEAD;
+        SCR_AddKillFeed("Player", "fire", "environment");
+        other->client->deaths++;
+    }
+}
+
+static void SP_env_fire(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+
+    ent->solid = SOLID_TRIGGER;
+    ent->movetype = MOVETYPE_NONE;
+    ent->touch = fire_touch;
+    ent->think = fire_think;
+    ent->nextthink = level.time + 1.0f;
+
+    VectorSet(ent->mins, -32, -32, 0);
+    VectorSet(ent->maxs, 32, 32, 64);
+
+    gi.linkentity(ent);
+    gi.dprintf("  env_fire at (%.0f %.0f %.0f)\n",
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
 }
 

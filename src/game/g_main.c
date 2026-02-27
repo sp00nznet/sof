@@ -3072,6 +3072,10 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
             else if (fall_speed > 500)
                 fall_dmg = (int)((fall_speed - 300) * 0.05f);
 
+            /* Crouch landing: reduce fall damage by 40% (roll technique) */
+            if (fall_dmg > 0 && client->viewheight < 20.0f)
+                fall_dmg = (int)(fall_dmg * 0.6f);
+
             if (fall_dmg > 0) {
                 /* Armor absorbs some fall damage */
                 if (client->armor > 0) {
