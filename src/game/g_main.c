@@ -1440,6 +1440,81 @@ static void ClientCommand(edict_t *ent)
         return;
     }
 
+    /* Bayonet melee — quick melee with bayonet attachment on assault/machinegun */
+    if (Q_stricmp(cmd, "bayonet") == 0 || Q_stricmp(cmd, "melee") == 0) {
+        int w = ent->client->pers_weapon;
+        if (w > 0 && w < WEAP_COUNT &&
+            (ent->client->attachments[w] & ATTACH_BAYONET)) {
+            vec3_t fwd_b, start_b, end_b;
+            trace_t tr_b;
+
+            G_AngleVectors(ent->client->viewangles, fwd_b, NULL, NULL);
+            VectorCopy(ent->s.origin, start_b);
+            start_b[2] += ent->client->viewheight;
+            VectorMA(start_b, 80.0f, fwd_b, end_b);
+
+            tr_b = gi.trace(start_b, NULL, NULL, end_b, ent, MASK_SHOT);
+            if (tr_b.fraction < 1.0f && tr_b.ent &&
+                tr_b.ent->takedamage && tr_b.ent->health > 0) {
+                int bay_dmg = 45;  /* bayonet does more than knife */
+                tr_b.ent->health -= bay_dmg;
+                R_ParticleEffect(tr_b.endpos, tr_b.plane.normal, 1, 10);
+                SCR_AddDamageNumber(bay_dmg, 0, 0);
+                SCR_TriggerHitMarker();
+                if (tr_b.ent->health <= 0 && tr_b.ent->die)
+                    tr_b.ent->die(tr_b.ent, ent, ent, bay_dmg, tr_b.endpos);
+            }
+            {
+                int snd = gi.soundindex("weapons/knife_hit.wav");
+                if (snd) gi.sound(ent, CHAN_WEAPON, snd, 1.0f, ATTN_NORM, 0);
+            }
+            ent->client->weapon_change_time = level.time + 0.5f; /* melee cooldown */
+        } else {
+            gi.cprintf(ent, PRINT_ALL, "No bayonet attached to this weapon.\n");
+        }
+        return;
+    }
+
+    /* Drop current weapon on the ground */
+    if (Q_stricmp(cmd, "drop") == 0 || Q_stricmp(cmd, "dropweapon") == 0) {
+        int w = ent->client->pers_weapon;
+        if (w > WEAP_KNIFE && w < WEAP_COUNT) {
+            extern edict_t *G_DropItem(vec3_t origin, const char *classname);
+            char drop_name[64];
+            snprintf(drop_name, sizeof(drop_name), "weapon_%s", weapon_names[w]);
+            G_DropItem(ent->s.origin, drop_name);
+            gi.cprintf(ent, PRINT_ALL, "Dropped %s\n", weapon_names[w]);
+            ent->client->ammo[w] = 0;
+            ent->client->magazine[w] = 0;
+            /* Switch to knife */
+            ent->client->pers_weapon = WEAP_KNIFE;
+            ent->weapon_index = WEAP_KNIFE;
+            ent->client->weapon_change_time = level.time + WEAPON_SWITCH_TIME;
+            if (snd_weapon_switch)
+                gi.sound(ent, CHAN_ITEM, snd_weapon_switch, 1.0f, ATTN_NORM, 0);
+        } else {
+            gi.cprintf(ent, PRINT_ALL, "Can't drop this weapon.\n");
+        }
+        return;
+    }
+
+    /* Lastweapon alias for weaplast */
+    if (Q_stricmp(cmd, "lastweapon") == 0) {
+        if (player_prev_weapon > 0 && player_prev_weapon < WEAP_COUNT &&
+            player_prev_weapon != ent->client->pers_weapon) {
+            int cur = ent->client->pers_weapon;
+            ent->client->pers_weapon = player_prev_weapon;
+            ent->weapon_index = player_prev_weapon;
+            player_prev_weapon = cur;
+            ent->client->weapon_change_time = level.time + WEAPON_SWITCH_TIME;
+            if (snd_weapon_switch)
+                gi.sound(ent, CHAN_ITEM, snd_weapon_switch, 1.0f, ATTN_NORM, 0);
+            gi.cprintf(ent, PRINT_ALL, "Weapon: %s\n",
+                       weapon_names[ent->client->pers_weapon]);
+        }
+        return;
+    }
+
     gi.cprintf(ent, PRINT_ALL, "Unknown command: %s\n", cmd);
 }
 

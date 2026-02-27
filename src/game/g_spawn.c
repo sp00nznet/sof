@@ -255,6 +255,7 @@ static void SP_item_shield(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_info_landmark(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_mirror(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_env_fog(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_valve(edict_t *ent, epair_t *pairs, int num_pairs);
 static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
                            int damage, vec3_t point);
 
@@ -470,6 +471,10 @@ static spawn_func_t spawn_funcs[] = {
     /* Fog volume */
     { "env_fog",                    SP_env_fog },
     { "env_fog_global",             SP_env_fog },
+
+    /* Valve/wheel interaction */
+    { "func_valve",                 SP_func_valve },
+    { "func_wheel",                 SP_func_valve },
 
     /* Weapons (SoF) */
     { "weapon_knife",               SP_item_pickup },
@@ -5330,6 +5335,59 @@ static void SP_env_fog(edict_t *ent, epair_t *pairs, int num_pairs)
 
     gi.dprintf("  env_fog at (%.0f %.0f %.0f) density=%.2f\n",
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2], ent->speed);
+}
+
+/* ==========================================================================
+   func_valve — Turnable valve/wheel that fires target on use
+   count = number of turns required (default 3)
+   Fires target when fully turned.
+   ========================================================================== */
+
+static void valve_use(edict_t *self, edict_t *other, edict_t *activator)
+{
+    (void)other;
+
+    self->count--;
+
+    /* Rotate the valve model 90 degrees per turn */
+    self->s.angles[2] += 90.0f;
+    if (self->s.angles[2] >= 360.0f)
+        self->s.angles[2] -= 360.0f;
+
+    /* Mechanical sound */
+    {
+        int snd = gi.soundindex("world/valve_turn.wav");
+        if (snd)
+            gi.positioned_sound(self->s.origin, self, CHAN_AUTO,
+                                snd, 1.0f, ATTN_NORM, 0);
+    }
+
+    if (self->count <= 0) {
+        /* Valve fully opened — fire target */
+        if (self->target)
+            G_UseTargets(activator, self->target);
+        gi.dprintf("  Valve opened at (%.0f %.0f %.0f)\n",
+                   self->s.origin[0], self->s.origin[1], self->s.origin[2]);
+        self->use = NULL;  /* can't use again */
+    } else {
+        gi.cprintf(activator, PRINT_ALL, "Valve: %d turns remaining\n", self->count);
+    }
+}
+
+static void SP_func_valve(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *turns_str = ED_FindValue(pairs, num_pairs, "count");
+
+    ent->movetype = MOVETYPE_PUSH;
+    ent->solid = SOLID_BSP;
+    ent->use = valve_use;
+    ent->count = turns_str ? atoi(turns_str) : 3;
+    if (ent->count < 1) ent->count = 1;
+
+    gi.linkentity(ent);
+
+    gi.dprintf("  func_valve at (%.0f %.0f %.0f) turns=%d\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2], ent->count);
 }
 
 /* ==========================================================================

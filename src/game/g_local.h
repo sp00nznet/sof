@@ -283,6 +283,7 @@ typedef enum {
 #define ATTACH_SCOPE        0x02    /* adds zoom capability */
 #define ATTACH_EXTMAG       0x04    /* extended magazine capacity */
 #define ATTACH_LASER        0x08    /* laser sight (reduced spread) */
+#define ATTACH_BAYONET      0x10    /* bayonet for quick melee */
 
 /* Key/keycard bitmask flags */
 #define KEY_RED     1
@@ -512,6 +513,7 @@ struct gclient_s {
     float           challenge_end;         /* level.time when challenge expires */
     int             challenge_kills;       /* kills during challenge */
     int             challenge_target;      /* required kills */
+
 };
 
 /* ==========================================================================

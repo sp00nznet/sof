@@ -841,6 +841,14 @@ static void ai_think_chase(edict_t *self)
         flank_pos[2] = self->s.origin[2];
 
         AI_MoveToward(self, flank_pos, AI_CHASE_SPEED);
+
+        /* Flanking callout — shout periodically when flanking */
+        if (level.time > self->move_angles[0] + 3.0f) {
+            int snd = gi.soundindex("npc/flank.wav");
+            if (snd)
+                gi.sound(self, CHAN_VOICE, snd, 0.8f, ATTN_NORM, 0);
+            self->move_angles[0] = level.time;
+        }
     } else {
         /* Direct chase toward enemy or last known position */
         AI_MoveToward(self, self->move_origin, AI_CHASE_SPEED);
