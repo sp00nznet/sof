@@ -917,6 +917,15 @@ void CL_Frame(int msec)
                     }
                 }
 
+                /* Sprint FOV — wider FOV while sprinting for speed feel */
+                {
+                    extern qboolean SV_IsPlayerSprinting(void);
+                    if (SV_IsPlayerSprinting()) {
+                        cl_refdef.fov_x = 100.0f;
+                        cl_refdef.fov_y = 82.0f;
+                    }
+                }
+
                 cl_refdef.time = cl_time;
                 VectorCopy(org, cl_refdef.vieworg);
                 VectorCopy(ang, cl_refdef.viewangles);

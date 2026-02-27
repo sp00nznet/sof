@@ -344,6 +344,17 @@ void G_SaveTransitionState(void)
     edict_t *player = &globals.edicts[1];
     if (!player->inuse || !player->client) return;
 
+    /* Autosave before level change */
+    {
+        char gamefile[64], levelfile[64];
+        snprintf(gamefile, sizeof(gamefile), "autosave.sav");
+        snprintf(levelfile, sizeof(levelfile), "autosave.sv2");
+        WriteGame(gamefile, qtrue);
+        WriteLevel(levelfile);
+        gi.dprintf("Autosave created\n");
+        SCR_AddPickupMessage("Autosave...");
+    }
+
     level_transition.valid = qtrue;
     level_transition.health = player->health;
     level_transition.max_health = player->max_health;
@@ -2426,6 +2437,16 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
                     client->deaths++;
                 }
             }
+
+            /* Landing camera dip — proportional to fall speed */
+            {
+                float dip = (fall_speed - 300) * 0.01f;
+                if (dip > 3.0f) dip = 3.0f;
+                client->kick_angles[0] += dip;  /* pitch down on landing */
+            }
+        } else if (pm.groundentity && !ent->groundentity && old_z_vel < -150) {
+            /* Soft landing from small falls — subtle camera dip */
+            client->kick_angles[0] += 0.5f;
         }
 
         ent->groundentity = pm.groundentity;
@@ -2495,6 +2516,23 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
         client->kick_angles[2] = sinf(client->bob_time * 0.7f) * 0.5f;
         /* Slight pitch drift */
         client->kick_angles[0] += sinf(client->bob_time * 1.3f) * 0.15f;
+
+        /* Underwater bubble particles — periodic stream upward */
+        if (client->old_waterlevel >= 3 && gi.irand(0, 10) == 0) {
+            vec3_t bubble_org, bubble_up;
+            VectorCopy(ent->s.origin, bubble_org);
+            bubble_org[2] += client->viewheight;
+            VectorSet(bubble_up, 0, 0, 1);
+            R_ParticleEffect(bubble_org, bubble_up, 6, 2);  /* water bubbles */
+        }
+
+        /* Blue underwater tint */
+        if (client->blend[3] < 0.15f) {
+            client->blend[0] = 0.0f;
+            client->blend[1] = 0.1f;
+            client->blend[2] = 0.4f;
+            client->blend[3] = 0.15f;
+        }
     } else if (ent->groundentity && !ent->deadflag) {
         float speed = (float)sqrt(ent->velocity[0] * ent->velocity[0] +
                                    ent->velocity[1] * ent->velocity[1]);
@@ -2503,6 +2541,14 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
             float bob_freq = (speed > 200.0f) ? 12.0f : 8.0f;
             client->bob_time += level.frametime * bob_freq;
             client->viewheight += (int)(sinf(client->bob_time) * bob_scale);
+
+            /* Strafe lean: subtle roll when strafing */
+            if (ucmd->sidemove > 100)
+                client->kick_angles[2] += (-1.2f - client->kick_angles[2]) * 0.1f;
+            else if (ucmd->sidemove < -100)
+                client->kick_angles[2] += (1.2f - client->kick_angles[2]) * 0.1f;
+            else
+                client->kick_angles[2] *= 0.9f;  /* decay back to center */
         } else {
             /* Idle sway — very subtle */
             client->bob_time += level.frametime * 2.0f;
