@@ -22,6 +22,8 @@ extern void R_AddDlight(vec3_t origin, float r, float g, float b,
                          float intensity, float duration);
 extern void R_AddTracer(vec3_t start, vec3_t end, float r, float g, float b);
 extern void SCR_AddDamageDirection(float angle);
+extern edict_t *G_AllocEdict(void);
+extern void grenade_explode(edict_t *self);
 
 /* Monster sound indices — precached in monster_start */
 static int snd_monster_pain1;
@@ -78,6 +80,8 @@ typedef enum {
 #define AI_STRAFE_INTERVAL  1.5f   /* change strafe direction */
 #define AI_COVER_HEALTH_PCT 0.5f   /* seek cover below 50% health */
 #define AI_ALERT_RADIUS     768.0f /* radius to alert nearby monsters */
+#define AI_GRENADE_RANGE    400.0f /* min range for grenade throw */
+#define AI_GRENADE_COOLDOWN 8.0f   /* seconds between grenade throws */
 
 /* ==========================================================================
    AI Utility Functions
@@ -203,6 +207,58 @@ static qboolean AI_FindTarget(edict_t *self)
 
 /* Forward declaration — defined after state handlers */
 void monster_think(edict_t *self);
+
+/*
+ * AI_ThrowGrenade - Monster throws a grenade toward a target position
+ * Uses a parabolic arc calculation to lob the grenade.
+ */
+static void AI_ThrowGrenade(edict_t *self, vec3_t target_pos)
+{
+    edict_t *gren;
+    vec3_t start, dir;
+    float dist, flight_time;
+
+    gren = G_AllocEdict();
+    if (!gren) return;
+
+    /* Throw from chest height */
+    VectorCopy(self->s.origin, start);
+    start[2] += 20;
+
+    VectorSubtract(target_pos, start, dir);
+    dist = VectorLength(dir);
+    VectorNormalize(dir);
+
+    /* Calculate arc: flight_time based on distance */
+    flight_time = dist / 400.0f;
+    if (flight_time < 0.5f) flight_time = 0.5f;
+    if (flight_time > 2.0f) flight_time = 2.0f;
+
+    gren->classname = "ai_grenade";
+    gren->owner = self;
+    gren->solid = SOLID_BBOX;
+    gren->movetype = MOVETYPE_BOUNCE;
+    gren->clipmask = MASK_SHOT;
+    VectorSet(gren->mins, -2, -2, -2);
+    VectorSet(gren->maxs, 2, 2, 2);
+    VectorCopy(start, gren->s.origin);
+
+    /* Horizontal velocity toward target */
+    gren->velocity[0] = dir[0] * 400.0f;
+    gren->velocity[1] = dir[1] * 400.0f;
+    /* Vertical: compensate for gravity during flight */
+    gren->velocity[2] = (target_pos[2] - start[2]) / flight_time + 400.0f * flight_time;
+
+    gren->dmg = 40;
+    gren->dmg_radius = 180;
+    gren->think = grenade_explode;
+    gren->nextthink = level.time + flight_time + 0.5f;  /* fuse */
+
+    gi.linkentity(gren);
+
+    /* Throw sound */
+    gi.sound(self, CHAN_WEAPON, gi.soundindex("weapons/grenade/throw.wav"), 1.0f, ATTN_NORM, 0);
+}
 
 /*
  * AI_AlertNearby - When a monster spots the player, alert nearby
@@ -465,11 +521,21 @@ static void ai_think_chase(edict_t *self)
     /* Chase toward enemy or last known position */
     AI_MoveToward(self, self->move_origin, AI_CHASE_SPEED);
 
-    /* If lost sight and reached last known position, go idle */
+    /* If lost sight, consider throwing grenade at last known position */
     if (self->ai_flags & AI_LOST_SIGHT) {
         vec3_t diff;
+        float last_dist;
         VectorSubtract(self->move_origin, self->s.origin, diff);
-        if (VectorLength(diff) < 32.0f) {
+        last_dist = VectorLength(diff);
+
+        /* Throw grenade at last known position if we're tough enough */
+        if (self->max_health >= 120 && last_dist > 128.0f &&
+            level.time > self->move_angles[1]) {
+            AI_ThrowGrenade(self, self->move_origin);
+            self->move_angles[1] = level.time + AI_GRENADE_COOLDOWN;
+        }
+
+        if (last_dist < 32.0f) {
             self->enemy = NULL;
             self->count = AI_STATE_IDLE;
             self->velocity[0] = self->velocity[1] = 0;
@@ -521,6 +587,15 @@ static void ai_think_attack(edict_t *self)
             self->ai_flags ^= 0x0100;
         }
         AI_Strafe(self, (self->ai_flags & 0x0100) ? 1 : -1);
+    }
+
+    /* Grenade throw — when at range and cooldown expired */
+    if (dist > AI_GRENADE_RANGE && level.time > self->move_angles[1]) {
+        /* Only SS soldiers and bosses throw grenades (tougher variants) */
+        if (self->max_health >= 120) {
+            AI_ThrowGrenade(self, self->enemy->s.origin);
+            self->move_angles[1] = level.time + AI_GRENADE_COOLDOWN;
+        }
     }
 
     /* Melee attack if within close range */

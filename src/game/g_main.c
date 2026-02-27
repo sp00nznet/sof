@@ -1284,7 +1284,7 @@ static void rocket_think(edict_t *self)
 /*
  * Grenade think — bounces, then detonates after timer
  */
-static void grenade_explode(edict_t *self)
+void grenade_explode(edict_t *self)
 {
     vec3_t up = {0, 0, 1};
 
