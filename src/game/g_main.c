@@ -53,6 +53,7 @@ static void G_SpawnGibs(edict_t *ent, int count);
 static void G_DamageDirectionToPlayer(edict_t *player, vec3_t source);
 static void G_ExplosionShakeNearby(vec3_t origin, float max_intensity,
                                     float duration, float max_range);
+static int weapon_damage[WEAP_COUNT];
 
 /* ==========================================================================
    Globals
@@ -1096,12 +1097,31 @@ static void ClientCommand(edict_t *ent)
 
     /* Weapon inspect animation */
     if (Q_stricmp(cmd, "inspect") == 0) {
+        int w = ent->client->pers_weapon;
         if (ent->client->inspect_end > level.time) {
             gi.cprintf(ent, PRINT_ALL, "Already inspecting.\n");
             return;
         }
         ent->client->inspect_end = level.time + 2.0f;
-        gi.cprintf(ent, PRINT_ALL, "Inspecting weapon...\n");
+
+        /* Show detailed weapon info */
+        if (w > 0 && w < WEAP_COUNT) {
+            int att = ent->client->attachments[w];
+            gi.cprintf(ent, PRINT_ALL,
+                "--- %s ---\n"
+                "Ammo: %d/%d  Mag: %d\n"
+                "Damage: %d  Heat: %.0f%%\n"
+                "Attachments:%s%s%s%s\n",
+                weapon_names[w],
+                ent->client->ammo[w], ent->client->ammo_max[w],
+                ent->client->magazine[w],
+                weapon_damage[w],
+                ent->client->weapon_heat * 100.0f,
+                (att & ATTACH_SILENCER) ? " Silencer" : "",
+                (att & ATTACH_SCOPE) ? " Scope" : "",
+                (att & ATTACH_EXTMAG) ? " ExtMag" : "",
+                (att & ATTACH_LASER) ? " Laser" : "");
+        }
         return;
     }
 

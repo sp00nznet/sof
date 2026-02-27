@@ -26,6 +26,9 @@ extern edict_t *G_AllocEdict(void);
 extern void grenade_explode(edict_t *self);
 extern edict_t *G_DropItem(vec3_t origin, const char *classname);
 
+/* Forward declarations */
+static void AI_FormationSpread(edict_t *self);
+
 /* Monster sound indices — precached in monster_start */
 static int snd_monster_pain1;
 static int snd_monster_pain2;
@@ -841,6 +844,9 @@ static void ai_think_chase(edict_t *self)
         /* Direct chase toward enemy or last known position */
         AI_MoveToward(self, self->move_origin, AI_CHASE_SPEED);
     }
+
+    /* Push apart from nearby allies to avoid clumping */
+    AI_FormationSpread(self);
 
     /* If lost sight, consider throwing grenade at last known position */
     if (self->ai_flags & AI_LOST_SIGHT) {
@@ -1667,6 +1673,51 @@ void SP_monster_boss(edict_t *ent, void *pairs, int num_pairs)
     ent->classname = "monster_boss";
     monster_start(ent, 500, 30, AI_CHASE_SPEED * 0.5f);
     ent->yaw_speed = 15.0f;
+}
+
+/* ==========================================================================
+   AI Formation — spread apart when multiple monsters chase same target
+   ========================================================================== */
+
+#define AI_FORMATION_DIST   96.0f   /* min distance between allied monsters */
+#define AI_FORMATION_PUSH   0.4f    /* push strength when too close */
+
+static void AI_FormationSpread(edict_t *self)
+{
+    extern game_export_t globals;
+    int i;
+    vec3_t push;
+
+    push[0] = push[1] = push[2] = 0;
+
+    for (i = 1; i < globals.num_edicts; i++) {
+        edict_t *other = &globals.edicts[i];
+        vec3_t diff;
+        float dist;
+
+        if (other == self || !other->inuse || other->health <= 0)
+            continue;
+        if (!(other->svflags & SVF_MONSTER))
+            continue;
+        /* Only spread from allies chasing same target */
+        if (other->enemy != self->enemy)
+            continue;
+
+        VectorSubtract(self->s.origin, other->s.origin, diff);
+        diff[2] = 0;
+        dist = VectorLength(diff);
+
+        if (dist < AI_FORMATION_DIST && dist > 1.0f) {
+            float scale = (AI_FORMATION_DIST - dist) / AI_FORMATION_DIST;
+            VectorNormalize(diff);
+            push[0] += diff[0] * scale * AI_CHASE_SPEED * AI_FORMATION_PUSH;
+            push[1] += diff[1] * scale * AI_CHASE_SPEED * AI_FORMATION_PUSH;
+        }
+    }
+
+    /* Apply push to velocity */
+    self->velocity[0] += push[0];
+    self->velocity[1] += push[1];
 }
 
 /* ==========================================================================
