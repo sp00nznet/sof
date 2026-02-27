@@ -867,6 +867,23 @@ void SV_GetPlayerBlend(float *blend)
 }
 
 /*
+ * SV_IsPlayerDead — Check if the player is dead (deadflag > 0)
+ */
+qboolean SV_IsPlayerDead(void)
+{
+    edict_t *player;
+
+    if (!ge || !ge->edicts)
+        return qfalse;
+
+    player = (edict_t *)((byte *)ge->edicts + ge->edict_size);
+    if (!player->inuse)
+        return qfalse;
+
+    return player->deadflag ? qtrue : qfalse;
+}
+
+/*
  * SV_IsPlayerUnderwater — Check if player's eyes are submerged
  */
 qboolean SV_IsPlayerUnderwater(void)

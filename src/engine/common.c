@@ -55,6 +55,7 @@ extern int  SV_GetPlayerWeaponIndex(void);
 extern qboolean SV_GetPlayerVelocity(vec3_t vel);
 extern float SV_GetPlayerFireTime(void);
 extern qboolean SV_IsPlayerReloading(void);
+extern qboolean SV_IsPlayerDead(void);
 
 /* Forward declarations — view weapon (renderer/r_main.c) */
 extern void R_SetViewWeaponState(int weapon_id, float kick, float bob_phase,
@@ -129,6 +130,7 @@ static void SCR_DrawDamageNumbers(void);
 static void SCR_DrawPickupMessages(void);
 static void SCR_DrawKillFeed(void);
 static void SCR_DrawMinimap(void);
+static void SCR_DrawDeathScreen(void);
 static void SCR_DrawIntermission(void);
 
 /* Intermission state */
@@ -429,6 +431,7 @@ void Qcommon_Frame(int msec)
             SCR_DrawDamageNumbers();
             SCR_DrawPickupMessages();
             SCR_DrawKillFeed();
+            SCR_DrawDeathScreen();
             SCR_DrawChat();
             SCR_DrawScoreboard();
         }
@@ -1528,6 +1531,48 @@ static void SCR_DrawCrosshair(void)
 
     /* Center dot */
     R_DrawFill(cx, cy, 1, 1, color);
+}
+
+/*
+ * SCR_DrawDeathScreen — "YOU DIED" overlay with red tint and respawn prompt
+ */
+static float death_fade = 0;   /* fade-in alpha (0..1) */
+
+static void SCR_DrawDeathScreen(void)
+{
+    int cx = g_display.width / 2;
+    int cy = g_display.height / 2;
+    float alpha;
+
+    if (!SV_IsPlayerDead()) {
+        death_fade = 0;
+        return;
+    }
+
+    /* Fade in the death overlay */
+    if (death_fade < 1.0f) {
+        death_fade += 0.02f;
+        if (death_fade > 1.0f) death_fade = 1.0f;
+    }
+
+    alpha = death_fade;
+
+    /* Red-tinted overlay */
+    R_DrawFadeScreenColor(0.3f, 0.0f, 0.0f, alpha * 0.5f);
+
+    /* "YOU DIED" text — large centered */
+    R_SetDrawColor(1.0f, 0.15f, 0.1f, alpha);
+    R_DrawString(cx - 32, cy - 20, "YOU DIED");
+
+    /* Respawn prompt */
+    if (death_fade >= 0.8f) {
+        float blink = (float)sin((float)Sys_Milliseconds() * 0.005f);
+        float prompt_alpha = (blink > 0) ? alpha : alpha * 0.3f;
+        R_SetDrawColor(0.8f, 0.8f, 0.8f, prompt_alpha);
+        R_DrawString(cx - 76, cy + 20, "Press FIRE or USE to respawn");
+    }
+
+    R_SetDrawColor(1.0f, 1.0f, 1.0f, 1.0f);
 }
 
 /*

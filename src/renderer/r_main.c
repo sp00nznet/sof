@@ -839,10 +839,31 @@ static float vw_sway_yaw;           /* weapon sway offset (yaw lag) */
 static float vw_sway_pitch;         /* weapon sway offset (pitch lag) */
 static qboolean vw_reloading;       /* currently reloading */
 
+/* Weapon switch animation state */
+static int   vw_prev_weapon;        /* previous weapon (for switch detect) */
+static float vw_switch_frac;        /* 0=normal, 1=fully lowered */
+static int   vw_switch_phase;       /* 0=idle, 1=lowering, 2=raising */
+static int   vw_switch_target;      /* weapon to switch to */
+
 void R_SetViewWeaponState(int weapon_id, float kick, float bob_phase,
                           float bob_amount, float sway_yaw, float sway_pitch,
                           qboolean reloading)
 {
+    /* Detect weapon switch */
+    if (weapon_id != vw_prev_weapon && vw_prev_weapon > 0 && weapon_id > 0) {
+        if (vw_switch_phase == 0) {
+            /* Start lowering the current weapon */
+            vw_switch_phase = 1;
+            vw_switch_frac = 0;
+            vw_switch_target = weapon_id;
+            /* Don't change weapon_id yet — keep showing old weapon while lowering */
+            weapon_id = vw_prev_weapon;
+        }
+    }
+
+    if (vw_switch_phase == 0)
+        vw_prev_weapon = weapon_id;
+
     vw_weapon_id = weapon_id;
     vw_kick = kick;
     vw_bob_phase = bob_phase;
@@ -1135,6 +1156,28 @@ static void R_DrawViewWeapon(refdef_t *fd)
 {
     float bob_x, bob_y, kick_pitch, kick_back;
     float reload_angle;
+    float switch_offset = 0;
+
+    /* Advance weapon switch animation */
+    if (vw_switch_phase == 1) {
+        /* Lowering old weapon */
+        vw_switch_frac += 0.06f;  /* ~17 frames to lower at 60fps */
+        if (vw_switch_frac >= 1.0f) {
+            vw_switch_frac = 1.0f;
+            vw_switch_phase = 2;
+            /* Now switch to the new weapon */
+            vw_weapon_id = vw_switch_target;
+            vw_prev_weapon = vw_switch_target;
+        }
+    } else if (vw_switch_phase == 2) {
+        /* Raising new weapon */
+        vw_switch_frac -= 0.05f;  /* slightly slower raise */
+        if (vw_switch_frac <= 0) {
+            vw_switch_frac = 0;
+            vw_switch_phase = 0;
+        }
+    }
+    switch_offset = vw_switch_frac * 12.0f;  /* drop weapon 12 units down */
 
     if (vw_weapon_id <= 0)
         return;     /* no weapon to draw */
@@ -1181,8 +1224,9 @@ static void R_DrawViewWeapon(refdef_t *fd)
     reload_angle = vw_reloading ? 25.0f : 0.0f;
 
     /* Position weapon: right side, below center, forward */
+    /* switch_offset lowers weapon during weapon switch animation */
     qglTranslatef(3.5f + bob_x + vw_sway_yaw,
-                  -3.5f + bob_y + vw_sway_pitch,
+                  -3.5f + bob_y + vw_sway_pitch - switch_offset,
                   -10.0f + kick_back);
 
     /* Apply weapon rotations */
