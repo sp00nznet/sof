@@ -2375,6 +2375,17 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
             else step_snd = snd_footstep4;
             if (step_snd)
                 gi.sound(ent, CHAN_BODY, step_snd, vol, ATTN_NORM, 0);
+
+            /* Footstep dust particles when running fast */
+            if (speed > 150.0f) {
+                vec3_t foot_pos, foot_dir;
+                VectorCopy(ent->s.origin, foot_pos);
+                foot_pos[2] -= 20;  /* at feet level */
+                VectorSet(foot_dir, 0, 0, 1);
+                R_ParticleEffect(foot_pos, foot_dir, 13,
+                                 speed > 250.0f ? 3 : 1);
+            }
+
             /* Faster footsteps at higher speed */
             client->next_footstep = level.time + (speed > 200.0f ? 0.3f : 0.5f);
         }

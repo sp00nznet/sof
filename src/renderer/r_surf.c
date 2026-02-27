@@ -676,6 +676,12 @@ static void Cmd_Map_f(void)
     if (r_worldloaded && r_worldmodel.entity_string) {
         SV_SpawnMapEntities(mapname, r_worldmodel.entity_string);
     }
+
+    /* Fade in from black after level load */
+    {
+        extern void SCR_FadeIn(float speed);
+        SCR_FadeIn(1.5f);
+    }
 }
 
 static void Cmd_Maplist_f(void)

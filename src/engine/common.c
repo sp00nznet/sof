@@ -136,6 +136,10 @@ static void SCR_DrawDeathScreen(void);
 static void SCR_DrawHitMarker(void);
 static void SCR_DrawDamageDirection(void);
 static void SCR_DrawBloodSplatters(void);
+static void SCR_UpdateFade(float frametime);
+static void SCR_DrawFade(void);
+void SCR_StartFade(float target, float speed, float hold);
+void SCR_FadeIn(float speed);
 static void SCR_DrawObjectives(void);
 static void SCR_DrawIntermission(void);
 
@@ -143,6 +147,13 @@ static void SCR_DrawIntermission(void);
 static qboolean     cl_intermission;
 static float        cl_intermission_time;
 static char         cl_nextmap[64];
+
+/* Screen fade state */
+static float    scr_fade_alpha;         /* current fade alpha (0=clear, 1=black) */
+static float    scr_fade_target;        /* target alpha */
+static float    scr_fade_speed;         /* alpha change per second */
+static float    scr_fade_hold;          /* seconds to hold at target */
+static float    scr_fade_hold_time;     /* when hold started */
 
 /* ANGLE2SHORT / SHORT2ANGLE for usercmd angle encoding */
 #define ANGLE2SHORT(x)  ((int)((x)*65536.0f/360.0f) & 65535)
@@ -428,6 +439,9 @@ void Qcommon_Frame(int msec)
             S_Update(snd_origin, snd_forward, snd_right, snd_up);
         }
 
+        /* Update screen fade */
+        SCR_UpdateFade(msec / 1000.0f);
+
         /* Render frame */
         R_BeginFrame(0.0f);
         if (cl_intermission) {
@@ -448,6 +462,7 @@ void Qcommon_Frame(int msec)
         SCR_DrawMenu();
         Con_DrawNotify();
         Con_DrawConsole(con.current_frac);
+        SCR_DrawFade();  /* fade overlay drawn last, on top of everything */
         R_EndFrame();
     }
 
@@ -608,6 +623,9 @@ void SCR_BeginIntermission(const char *nextmap)
     cl_intermission_time = cl_time;
     Q_strncpyz(cl_nextmap, nextmap, sizeof(cl_nextmap));
     Com_Printf("Intermission: next map %s\n", nextmap);
+
+    /* Fade to black for level transition */
+    SCR_StartFade(0.8f, 1.5f, 0);
 }
 
 void CL_Init(void)
@@ -1569,6 +1587,75 @@ static void SCR_DrawBloodSplatters(void)
         R_DrawFill(s->x + s->w / 4, s->y + s->h / 4,
                    s->w / 2, s->h / 2, color);
     }
+}
+
+/* ==========================================================================
+   Pickup Message Queue
+   ========================================================================== */
+
+/* ==========================================================================
+   Screen Fade System
+   ========================================================================== */
+
+/*
+ * SCR_StartFade — Begin a screen fade transition
+ * target: 0.0 = fully clear, 1.0 = fully black
+ * speed: alpha change per second (2.0 = half second fade)
+ * hold: seconds to hold at target before auto-releasing (0 = no hold)
+ */
+void SCR_StartFade(float target, float speed, float hold)
+{
+    scr_fade_target = target;
+    scr_fade_speed = speed;
+    scr_fade_hold = hold;
+    scr_fade_hold_time = 0;
+}
+
+/*
+ * SCR_FadeIn — Start fully black and fade to clear
+ */
+void SCR_FadeIn(float speed)
+{
+    scr_fade_alpha = 1.0f;
+    scr_fade_target = 0.0f;
+    scr_fade_speed = speed;
+    scr_fade_hold = 0;
+    scr_fade_hold_time = 0;
+}
+
+static void SCR_UpdateFade(float frametime)
+{
+    if (scr_fade_alpha < scr_fade_target) {
+        scr_fade_alpha += scr_fade_speed * frametime;
+        if (scr_fade_alpha >= scr_fade_target) {
+            scr_fade_alpha = scr_fade_target;
+            if (scr_fade_hold > 0)
+                scr_fade_hold_time = (float)Sys_Milliseconds() / 1000.0f;
+        }
+    } else if (scr_fade_alpha > scr_fade_target) {
+        scr_fade_alpha -= scr_fade_speed * frametime;
+        if (scr_fade_alpha <= scr_fade_target)
+            scr_fade_alpha = scr_fade_target;
+    }
+
+    /* Auto-release hold: fade back to clear after hold period */
+    if (scr_fade_hold > 0 && scr_fade_hold_time > 0) {
+        float now = (float)Sys_Milliseconds() / 1000.0f;
+        if (now - scr_fade_hold_time >= scr_fade_hold) {
+            scr_fade_target = 0.0f;
+            scr_fade_speed = 1.5f;
+            scr_fade_hold = 0;
+            scr_fade_hold_time = 0;
+        }
+    }
+}
+
+static void SCR_DrawFade(void)
+{
+    if (scr_fade_alpha < 0.01f)
+        return;
+
+    R_DrawFadeScreenColor(0.0f, 0.0f, 0.0f, scr_fade_alpha);
 }
 
 /* ==========================================================================
