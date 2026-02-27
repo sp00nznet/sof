@@ -31,6 +31,7 @@ extern void SCR_AddScreenShake(float intensity, float duration);
 extern void SCR_TriggerHitMarker(void);
 extern void SCR_AddDamageDirection(float angle);
 extern void SCR_AddBloodSplatter(int damage);
+extern void SCR_AddScorePopup(int score);
 extern void R_AddSprite(vec3_t origin, float size, float r, float g, float b,
                          float alpha, float lifetime, float rotation_speed);
 extern void R_AddTracer(vec3_t start, vec3_t end, float r, float g, float b);
@@ -2161,6 +2162,7 @@ static void G_FireHitscan(edict_t *ent)
                 if (ent->client) {
                     ent->client->kills++;
                     ent->client->score += 10;
+                    SCR_AddScorePopup(10);
 
                     /* Bullet time charge: +15 per kill, capped at 100 */
                     ent->client->bullet_time_charge += 15.0f;
@@ -2179,19 +2181,23 @@ static void G_FireHitscan(edict_t *ent)
                     case 2:
                         SCR_AddPickupMessage("DOUBLE KILL!");
                         ent->client->score += 5;
+                        SCR_AddScorePopup(5);
                         break;
                     case 3:
                         SCR_AddPickupMessage("TRIPLE KILL!");
                         ent->client->score += 10;
+                        SCR_AddScorePopup(10);
                         break;
                     case 4:
                         SCR_AddPickupMessage("MULTI KILL!");
                         ent->client->score += 20;
+                        SCR_AddScorePopup(20);
                         break;
                     default:
                         if (ent->client->streak_count >= 5) {
                             SCR_AddPickupMessage("RAMPAGE!");
                             ent->client->score += 30;
+                            SCR_AddScorePopup(30);
                         }
                         break;
                     }

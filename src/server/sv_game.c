@@ -1547,3 +1547,17 @@ float SV_GetPlayerRecoil(void)
     if (!player->inuse || !player->client) return 0;
     return player->client->recoil_accum;
 }
+
+/*
+ * SV_GetPlayerStance — 0=standing, 1=crouching, 2=prone
+ */
+int SV_GetPlayerStance(void)
+{
+    edict_t *player;
+    if (!ge || !ge->edicts) return 0;
+    player = (edict_t *)ge->edicts;
+    if (!player->inuse || !player->client) return 0;
+    if (player->client->viewheight <= 4) return 2;    /* prone */
+    if (player->client->viewheight <= 10) return 1;   /* crouching */
+    return 0;  /* standing */
+}

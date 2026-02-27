@@ -131,6 +131,7 @@ static void SCR_DrawMenu(void);
 static void SCR_DrawScoreboard(void);
 static void SCR_DrawChat(void);
 static void SCR_DrawDamageNumbers(void);
+static void SCR_DrawScorePopups(void);
 static void SCR_DrawPickupMessages(void);
 static void SCR_DrawKillFeed(void);
 static void SCR_DrawMinimap(void);
@@ -452,6 +453,7 @@ void Qcommon_Frame(int msec)
             SCR_DrawHUD(msec / 1000.0f);
             SCR_DrawBloodSplatters();
             SCR_DrawDamageNumbers();
+            SCR_DrawScorePopups();
             SCR_DrawHitMarker();
             SCR_DrawDamageDirection();
             SCR_DrawPickupMessages();
@@ -1527,6 +1529,63 @@ static void SCR_DrawDamageNumbers(void)
         R_DrawString(d->screen_x, y, buf);
     }
 
+    R_SetDrawColor(1.0f, 1.0f, 1.0f, 1.0f);
+}
+
+/* ==========================================================================
+   Score Popups — floating "+10" gold text on kills
+   ========================================================================== */
+
+#define MAX_SCORE_POPUPS  8
+
+typedef struct {
+    int     value;
+    int     screen_x, screen_y;
+    float   birth_time;
+    qboolean active;
+} score_popup_t;
+
+static score_popup_t score_popups[MAX_SCORE_POPUPS];
+static int score_popup_idx;
+
+void SCR_AddScorePopup(int score)
+{
+    score_popup_t *p = &score_popups[score_popup_idx % MAX_SCORE_POPUPS];
+    p->value = score;
+    p->screen_x = g_display.width / 2 + ((rand() % 60) - 30);
+    p->screen_y = g_display.height / 2 - 50;
+    p->birth_time = (float)Sys_Milliseconds() / 1000.0f;
+    p->active = qtrue;
+    score_popup_idx++;
+}
+
+static void SCR_DrawScorePopups(void)
+{
+    int i;
+    float now = (float)Sys_Milliseconds() / 1000.0f;
+
+    for (i = 0; i < MAX_SCORE_POPUPS; i++) {
+        score_popup_t *p = &score_popups[i];
+        float age;
+        int y;
+        char buf[16];
+
+        if (!p->active) continue;
+
+        age = now - p->birth_time;
+        if (age > 1.5f) {
+            p->active = qfalse;
+            continue;
+        }
+
+        y = p->screen_y - (int)(age * 30.0f);  /* float upward */
+        {
+            float a = 1.0f - age / 1.5f;
+            R_SetDrawColor(1.0f, 0.85f, 0.2f, a);  /* gold text */
+        }
+        Com_sprintf(buf, sizeof(buf), "+%d", p->value);
+        R_DrawString(p->screen_x, y, buf);
+    }
     R_SetDrawColor(1.0f, 1.0f, 1.0f, 1.0f);
 }
 

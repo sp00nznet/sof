@@ -1413,11 +1413,16 @@ static void R_DrawViewWeapon(refdef_t *fd)
     /* Reload tilt */
     reload_angle = vw_reloading ? 25.0f : 0.0f;
 
-    /* Weapon idle sway — gentle breathing motion when not firing */
+    /* Weapon idle sway — scaled by stance (standing=full, crouch=half, prone=minimal) */
     {
-        float idle_x = (float)sin(vw_idle_time * 0.7f) * 0.08f;
-        float idle_y = (float)sin(vw_idle_time * 1.1f) * 0.05f;
-        float idle_rot = (float)sin(vw_idle_time * 0.5f) * 0.3f;
+        extern int SV_GetPlayerStance(void);
+        int stance = SV_GetPlayerStance();
+        float sway_scale = (stance == 2) ? 0.2f :  /* prone: very stable */
+                           (stance == 1) ? 0.5f :  /* crouching: moderate */
+                           1.0f;                     /* standing: full sway */
+        float idle_x = (float)sin(vw_idle_time * 0.7f) * 0.08f * sway_scale;
+        float idle_y = (float)sin(vw_idle_time * 1.1f) * 0.05f * sway_scale;
+        float idle_rot = (float)sin(vw_idle_time * 0.5f) * 0.3f * sway_scale;
 
         /* Suppress idle sway during active fire/reload */
         if (vw_kick > 0.3f || vw_reloading) {

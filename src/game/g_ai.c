@@ -1043,6 +1043,18 @@ void monster_think(edict_t *self)
     if (!self->inuse || self->health <= 0)
         return;
 
+    /* Blood trail — wounded monsters drip blood periodically */
+    if (self->max_health > 0 && self->health < self->max_health / 2) {
+        /* Random chance each think frame */
+        if (rand() % 8 == 0) {
+            vec3_t blood_pos, blood_down;
+            VectorCopy(self->s.origin, blood_pos);
+            blood_pos[2] -= 10;
+            VectorSet(blood_down, 0, 0, -1);
+            R_ParticleEffect(blood_pos, blood_down, 1, 1);  /* blood drip */
+        }
+    }
+
     switch (self->count) {  /* count field used as AI state */
     case AI_STATE_IDLE:     ai_think_idle(self); break;
     case AI_STATE_ALERT:    ai_think_alert(self); break;
