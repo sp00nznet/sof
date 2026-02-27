@@ -498,12 +498,16 @@ static void ai_think_idle(edict_t *self)
 
     /* Patrol: if monster has a target, follow path_corner chain */
     if (self->target && !self->enemy) {
-        edict_t *goal = self->chain;  /* current patrol waypoint */
+        edict_t *goal = self->patrol_target;
+
+        /* Wait at waypoint before continuing */
+        if (self->patrol_wait > level.time)
+            goto patrol_done;
 
         if (!goal) {
             /* Find initial path_corner */
             goal = AI_FindByTargetname(self->target);
-            self->chain = goal;
+            self->patrol_target = goal;
         }
 
         if (goal) {
@@ -512,26 +516,34 @@ static void ai_think_idle(edict_t *self)
             diff[2] = 0;
 
             if (VectorLength(diff) < 32.0f) {
-                /* Reached waypoint, move to next */
+                /* Reached waypoint — pause if wait value set */
+                if (goal->wait > 0)
+                    self->patrol_wait = level.time + goal->wait;
+
+                /* Move to next path_corner */
                 if (goal->target) {
                     edict_t *next = AI_FindByTargetname(goal->target);
                     if (next) {
-                        self->chain = next;
+                        self->patrol_target = next;
                         goal = next;
                     } else {
-                        /* No next corner — loop back to first */
-                        self->chain = AI_FindByTargetname(self->target);
+                        self->patrol_target = AI_FindByTargetname(self->target);
                     }
                 } else {
-                    /* Last corner — loop back */
-                    self->chain = AI_FindByTargetname(self->target);
+                    /* Last corner — loop back to first */
+                    self->patrol_target = AI_FindByTargetname(self->target);
                 }
             }
 
-            /* Walk toward current waypoint */
+            /* Walk toward current waypoint — run animation */
             if (goal) {
-                float patrol_speed = self->speed * 0.4f;  /* slower patrol */
+                float patrol_speed = self->speed > 0 ? self->speed * 0.4f : AI_CHASE_SPEED * 0.4f;
                 AI_MoveToward(self, goal->s.origin, patrol_speed);
+
+                /* Use run frames instead of stand frames while patrolling */
+                self->s.frame++;
+                if (self->s.frame < FRAME_RUN_START || self->s.frame > FRAME_RUN_END)
+                    self->s.frame = FRAME_RUN_START;
 
                 /* Face movement direction */
                 {
@@ -541,6 +553,7 @@ static void ai_think_idle(edict_t *self)
             }
         }
     }
+patrol_done:
 
     self->nextthink = level.time + 0.5f;
 }

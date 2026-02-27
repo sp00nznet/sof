@@ -228,6 +228,8 @@ static void SP_misc_ambient_creature(edict_t *ent, epair_t *pairs, int num_pairs
 static void SP_misc_readable(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_misc_turret(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_misc_tripmine(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_env_lava(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_env_acid(edict_t *ent, epair_t *pairs, int num_pairs);
 static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
                            int damage, vec3_t point);
 
@@ -318,6 +320,12 @@ static spawn_func_t spawn_funcs[] = {
     { "env_sparks",                 SP_env_sparks },
     { "env_dust",                   SP_env_dust },
     { "misc_particles",             SP_env_dust },
+
+    /* Environmental hazard zones */
+    { "env_lava",                   SP_env_lava },
+    { "env_acid",                   SP_env_acid },
+    { "func_lava",                  SP_env_lava },
+    { "func_acid",                  SP_env_acid },
 
     /* Secret */
     { "trigger_secret",             SP_trigger_secret },
@@ -1849,6 +1857,94 @@ static void SP_trigger_hurt(edict_t *ent, epair_t *pairs, int num_pairs)
     ent->wait = wait_str ? (float)atof(wait_str) : 1.0f;
 
     gi.linkentity(ent);
+}
+
+/* ==========================================================================
+   env_lava / env_acid — Hazard zones with visual effects
+   ========================================================================== */
+
+static void lava_touch(edict_t *self, edict_t *other, void *plane, csurface_t *surf)
+{
+    int damage;
+    (void)plane; (void)surf;
+
+    if (!other || !other->inuse || other->health <= 0 || !other->takedamage)
+        return;
+    if (self->dmg_debounce_time > level.time)
+        return;
+    self->dmg_debounce_time = level.time + 0.5f;
+
+    damage = self->dmg ? self->dmg : 15;
+    other->health -= damage;
+
+    /* Orange-red damage flash and fire particles on victim */
+    if (other->client) {
+        other->client->blend[0] = 1.0f;
+        other->client->blend[1] = 0.3f;
+        other->client->blend[2] = 0.0f;
+        other->client->blend[3] = 0.4f;
+        other->client->pers_health = other->health;
+    }
+    R_ParticleEffect(other->s.origin, other->mins, 4, 6);  /* flame particles */
+
+    if (other->health <= 0 && other->die)
+        other->die(other, self, self, damage, other->s.origin);
+}
+
+static void SP_env_lava(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *dmg_str = ED_FindValue(pairs, num_pairs, "dmg");
+    (void)pairs; (void)num_pairs;
+
+    ent->solid = SOLID_TRIGGER;
+    ent->touch = lava_touch;
+    ent->dmg = dmg_str ? atoi(dmg_str) : 15;
+
+    gi.linkentity(ent);
+    gi.dprintf("  env_lava at (%.0f %.0f %.0f) dmg=%d\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2], ent->dmg);
+}
+
+static void acid_touch(edict_t *self, edict_t *other, void *plane, csurface_t *surf)
+{
+    int damage;
+    (void)plane; (void)surf;
+
+    if (!other || !other->inuse || other->health <= 0 || !other->takedamage)
+        return;
+    if (self->dmg_debounce_time > level.time)
+        return;
+    self->dmg_debounce_time = level.time + 0.8f;
+
+    damage = self->dmg ? self->dmg : 10;
+    other->health -= damage;
+
+    /* Green damage flash and steam particles on victim */
+    if (other->client) {
+        other->client->blend[0] = 0.2f;
+        other->client->blend[1] = 1.0f;
+        other->client->blend[2] = 0.0f;
+        other->client->blend[3] = 0.35f;
+        other->client->pers_health = other->health;
+    }
+    R_ParticleEffect(other->s.origin, other->mins, 7, 4);  /* steam/bubble particles */
+
+    if (other->health <= 0 && other->die)
+        other->die(other, self, self, damage, other->s.origin);
+}
+
+static void SP_env_acid(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *dmg_str = ED_FindValue(pairs, num_pairs, "dmg");
+    (void)pairs; (void)num_pairs;
+
+    ent->solid = SOLID_TRIGGER;
+    ent->touch = acid_touch;
+    ent->dmg = dmg_str ? atoi(dmg_str) : 10;
+
+    gi.linkentity(ent);
+    gi.dprintf("  env_acid at (%.0f %.0f %.0f) dmg=%d\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2], ent->dmg);
 }
 
 /* ==========================================================================

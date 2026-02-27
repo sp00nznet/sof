@@ -453,6 +453,9 @@ struct gclient_s {
     float           dash_end;              /* level.time when dash ends */
     vec3_t          dash_dir;              /* dash direction */
     float           dash_cooldown;         /* level.time when dash available again */
+
+    /* Vote tracking */
+    qboolean        has_voted;             /* already voted in current vote */
 };
 
 /* ==========================================================================
@@ -607,9 +610,11 @@ struct edict_s {
     float           yaw_speed;
     vec3_t          move_origin;
     vec3_t          move_angles;
+    edict_t         *patrol_target;         /* current path_corner for patrol */
+    float           patrol_wait;            /* level.time when patrol can resume */
 
     /* Pad to 1104 bytes (0x450) — exact size from binary analysis */
-    byte            _pad[64];
+    byte            _pad[56];
 };
 
 /* ==========================================================================
@@ -638,6 +643,15 @@ typedef struct {
     /* Speedrun timer */
     float       speedrun_start;     /* level.time when timer started (0=inactive) */
     qboolean    speedrun_active;    /* timer is running */
+
+    /* Vote system */
+    qboolean    vote_active;        /* a vote is in progress */
+    float       vote_end;           /* level.time when vote expires */
+    char        vote_command[128];  /* command to execute if vote passes */
+    char        vote_display[128];  /* display string for vote */
+    int         vote_yes;           /* yes votes */
+    int         vote_no;            /* no votes */
+    int         vote_caller;        /* entity index who called the vote */
 } level_t;
 
 extern level_t  level;

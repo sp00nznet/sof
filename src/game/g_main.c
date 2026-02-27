@@ -453,6 +453,22 @@ static void RunFrame(void)
 
     /* Update persistent decals */
     G_UpdateDecals();
+
+    /* Process active vote */
+    if (level.vote_active) {
+        if (level.time >= level.vote_end) {
+            /* Vote expired — check result */
+            if (level.vote_yes > level.vote_no) {
+                gi.bprintf(PRINT_ALL, "Vote PASSED: %s (%d yes, %d no)\n",
+                           level.vote_display, level.vote_yes, level.vote_no);
+                gi.AddCommandString(level.vote_command);
+            } else {
+                gi.bprintf(PRINT_ALL, "Vote FAILED: %s (%d yes, %d no)\n",
+                           level.vote_display, level.vote_yes, level.vote_no);
+            }
+            level.vote_active = qfalse;
+        }
+    }
 }
 
 /* ==========================================================================
@@ -951,6 +967,74 @@ static void ClientCommand(edict_t *ent)
             gi.cprintf(ent, PRINT_ALL, "Current team: %s\n",
                        ent->client->team == 1 ? "Red" :
                        ent->client->team == 2 ? "Blue" : "None");
+        }
+        return;
+    }
+
+    /* Vote system: callvote <map|restart|kick> <arg> */
+    if (Q_stricmp(cmd, "callvote") == 0) {
+        const char *vote_type = gi.argc() > 1 ? gi.argv(1) : "";
+        const char *vote_arg = gi.argc() > 2 ? gi.argv(2) : "";
+
+        if (level.vote_active) {
+            gi.cprintf(ent, PRINT_ALL, "A vote is already in progress.\n");
+            return;
+        }
+
+        if (Q_stricmp(vote_type, "map") == 0 && vote_arg[0]) {
+            snprintf(level.vote_command, sizeof(level.vote_command), "map %s", vote_arg);
+            snprintf(level.vote_display, sizeof(level.vote_display), "Change map to %s", vote_arg);
+        } else if (Q_stricmp(vote_type, "restart") == 0) {
+            snprintf(level.vote_command, sizeof(level.vote_command), "map_restart");
+            snprintf(level.vote_display, sizeof(level.vote_display), "Restart map");
+        } else if (Q_stricmp(vote_type, "kick") == 0 && vote_arg[0]) {
+            snprintf(level.vote_command, sizeof(level.vote_command), "kick %s", vote_arg);
+            snprintf(level.vote_display, sizeof(level.vote_display), "Kick player %s", vote_arg);
+        } else {
+            gi.cprintf(ent, PRINT_ALL, "Usage: callvote <map|restart|kick> [arg]\n");
+            return;
+        }
+
+        level.vote_active = qtrue;
+        level.vote_end = level.time + 30.0f;  /* 30 second vote */
+        level.vote_yes = 1;  /* caller votes yes */
+        level.vote_no = 0;
+        level.vote_caller = (int)(ent - globals.edicts);
+
+        /* Reset all vote flags */
+        {
+            int i;
+            for (i = 1; i <= game_maxclients; i++) {
+                if (globals.edicts[i].inuse && globals.edicts[i].client)
+                    globals.edicts[i].client->has_voted = qfalse;
+            }
+        }
+        ent->client->has_voted = qtrue;
+
+        gi.bprintf(PRINT_ALL, "Vote called: %s (30s to vote)\n", level.vote_display);
+        gi.bprintf(PRINT_ALL, "Type 'vote yes' or 'vote no'\n");
+        return;
+    }
+
+    if (Q_stricmp(cmd, "vote") == 0) {
+        const char *choice = gi.argc() > 1 ? gi.argv(1) : "";
+
+        if (!level.vote_active) {
+            gi.cprintf(ent, PRINT_ALL, "No vote in progress.\n");
+            return;
+        }
+        if (ent->client->has_voted) {
+            gi.cprintf(ent, PRINT_ALL, "You already voted.\n");
+            return;
+        }
+
+        ent->client->has_voted = qtrue;
+        if (Q_stricmp(choice, "yes") == 0 || Q_stricmp(choice, "1") == 0) {
+            level.vote_yes++;
+            gi.cprintf(ent, PRINT_ALL, "Vote: YES (%d/%d)\n", level.vote_yes, level.vote_yes + level.vote_no);
+        } else {
+            level.vote_no++;
+            gi.cprintf(ent, PRINT_ALL, "Vote: NO (%d/%d)\n", level.vote_no, level.vote_yes + level.vote_no);
         }
         return;
     }
@@ -2213,6 +2297,19 @@ static void G_FireHitscan(edict_t *ent)
                     SCR_AddPickupMessage("BACKSTAB!");
                     ent->client->score += 15;
                     SCR_AddScorePopup(15);
+                }
+            }
+
+            /* Execution finisher — instant kill on low-HP enemy with melee */
+            if (weap == WEAP_KNIFE && tr.ent->health > 0 &&
+                tr.ent->max_health > 0 &&
+                (float)tr.ent->health / (float)tr.ent->max_health < 0.25f) {
+                damage = tr.ent->health + 50;  /* overkill for gib */
+                SCR_AddPickupMessage("EXECUTION!");
+                if (ent->client) {
+                    ent->client->score += 25;
+                    ent->client->xp += 15;  /* bonus XP */
+                    SCR_AddScorePopup(25);
                 }
             }
 
