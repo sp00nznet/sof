@@ -2951,6 +2951,17 @@ static void G_FireHitscan(edict_t *ent)
                 SCR_AddDamageNumber(zone_dmg, 0, 0);  /* 0,0 = use screen center */
                 SCR_TriggerHitMarker();
 
+                /* Hit confirmation sound — different for headshot vs body */
+                if (zone == GORE_ZONE_HEAD || zone == GORE_ZONE_FACE) {
+                    int snd_hs = gi.soundindex("player/headshot_ping.wav");
+                    if (snd_hs)
+                        gi.sound(ent, CHAN_AUTO, snd_hs, 0.6f, ATTN_NONE, 0);
+                } else {
+                    int snd_hit = gi.soundindex("player/hit_ping.wav");
+                    if (snd_hit)
+                        gi.sound(ent, CHAN_AUTO, snd_hit, 0.3f, ATTN_NONE, 0);
+                }
+
                 /* Headshot notification */
                 if (zone == GORE_ZONE_HEAD || zone == GORE_ZONE_FACE) {
                     SCR_AddPickupMessage("HEADSHOT!");
@@ -3271,11 +3282,30 @@ static void G_FireHitscan(edict_t *ent)
         } /* end for pellet */
     } /* end weapon-specific block */
 
-    /* Apply weapon recoil kick */
+    /* Apply weapon-specific recoil pattern */
     if (weap > 0 && weap < WEAP_COUNT && weapon_recoil[weap] > 0) {
         float recoil = weapon_recoil[weap];
-        ent->client->kick_angles[0] -= recoil;  /* pitch up */
-        ent->client->kick_angles[1] += gi.flrand(-recoil * 0.3f, recoil * 0.3f);  /* slight yaw */
+        float h_recoil = 0;
+
+        /* Vertical recoil (pitch up) */
+        ent->client->kick_angles[0] -= recoil;
+
+        /* Weapon-specific horizontal patterns */
+        if (weap == WEAP_MACHINEGUN || weap == WEAP_MPISTOL) {
+            /* SMGs: alternating left-right pull */
+            h_recoil = (ent->client->shots_fired % 2 == 0) ?
+                        recoil * 0.4f : -recoil * 0.4f;
+        } else if (weap == WEAP_ASSAULT) {
+            /* Assault rifle: gradual rightward drift */
+            h_recoil = recoil * 0.25f + ent->client->recoil_accum * 0.3f;
+        } else if (weap == WEAP_SHOTGUN) {
+            /* Shotgun: big random horizontal kick */
+            h_recoil = gi.flrand(-recoil * 0.6f, recoil * 0.6f);
+        } else {
+            /* Default: slight random yaw */
+            h_recoil = gi.flrand(-recoil * 0.3f, recoil * 0.3f);
+        }
+        ent->client->kick_angles[1] += h_recoil;
     }
 }
 

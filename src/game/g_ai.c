@@ -934,6 +934,44 @@ static void ai_think_attack(edict_t *self)
         return;
     }
 
+    /* Blind fire from cover: fire around corners with very low accuracy */
+    if (self->max_health >= 60 && health_pct < 0.5f &&
+        self->move_angles[2] < level.time) {
+        vec3_t aim_dir, aim_end, offset_pos;
+        trace_t tr;
+        float side = (rand() % 2 == 0) ? 40.0f : -40.0f;
+        vec3_t right_dir;
+
+        VectorSubtract(self->enemy->s.origin, self->s.origin, aim_dir);
+        VectorNormalize(aim_dir);
+        /* Perpendicular offset to simulate leaning out */
+        right_dir[0] = -aim_dir[1];
+        right_dir[1] = aim_dir[0];
+        right_dir[2] = 0;
+        VectorMA(self->s.origin, side, right_dir, offset_pos);
+        offset_pos[2] += 20;
+        /* Very inaccurate blind fire */
+        aim_dir[0] += ((float)(rand() % 100) - 50.0f) * 0.004f;
+        aim_dir[1] += ((float)(rand() % 100) - 50.0f) * 0.004f;
+        VectorMA(offset_pos, 1024.0f, aim_dir, aim_end);
+        tr = gi.trace(offset_pos, NULL, NULL, aim_end, self, MASK_SHOT);
+        R_AddTracer(offset_pos, tr.endpos, 1.0f, 0.6f, 0.2f);
+        if (snd_monster_fire)
+            gi.sound(self, CHAN_WEAPON, snd_monster_fire, 0.8f, ATTN_NORM, 0);
+        /* Can hit player with lucky shot */
+        if (tr.ent && tr.ent->takedamage && tr.ent->health > 0) {
+            int blind_dmg = (self->dmg ? self->dmg : 10) / 3;
+            if (blind_dmg < 1) blind_dmg = 1;
+            tr.ent->health -= blind_dmg;
+            if (tr.ent->client) {
+                tr.ent->client->pers_health = tr.ent->health;
+                tr.ent->client->blend[0] = 1.0f;
+                tr.ent->client->blend[3] = 0.2f;
+            }
+        }
+        self->move_angles[2] = level.time + 0.8f; /* blind fire cooldown */
+    }
+
     /* Full retreat when critically wounded */
     if (AI_TryRetreat(self)) {
         self->count = AI_STATE_CHASE;

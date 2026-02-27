@@ -256,6 +256,7 @@ static void SP_info_landmark(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_mirror(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_env_fog(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_valve(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_security_door(edict_t *ent, epair_t *pairs, int num_pairs);
 static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
                            int damage, vec3_t point);
 
@@ -475,6 +476,10 @@ static spawn_func_t spawn_funcs[] = {
     /* Valve/wheel interaction */
     { "func_valve",                 SP_func_valve },
     { "func_wheel",                 SP_func_valve },
+
+    /* Security doors (keycard + delay) */
+    { "func_security_door",         SP_func_security_door },
+    { "func_blast_door",            SP_func_security_door },
 
     /* Weapons (SoF) */
     { "weapon_knife",               SP_item_pickup },
@@ -5388,6 +5393,85 @@ static void SP_func_valve(edict_t *ent, epair_t *pairs, int num_pairs)
 
     gi.dprintf("  func_valve at (%.0f %.0f %.0f) turns=%d\n",
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2], ent->count);
+}
+
+/* ==========================================================================
+   func_security_door — Heavy door requiring keycard + opening delay
+   key = required key bitmask (1,2,4,8), delay = opening time in seconds
+   Plays alarm sound, then slowly opens after delay.
+   ========================================================================== */
+
+static void security_door_open(edict_t *self)
+{
+    /* Move door upward to open position */
+    float height = self->absmax[2] - self->absmin[2];
+    self->s.origin[2] += height;
+    self->solid = SOLID_NOT;
+    gi.linkentity(self);
+
+    /* Open sound */
+    {
+        int snd = gi.soundindex("world/door_heavy_open.wav");
+        if (snd)
+            gi.positioned_sound(self->s.origin, self, CHAN_AUTO,
+                                snd, 1.0f, ATTN_NORM, 0);
+    }
+
+    /* Fire target chain */
+    if (self->target)
+        G_UseTargets(self, self->target);
+}
+
+static void security_door_use(edict_t *self, edict_t *other, edict_t *activator)
+{
+    (void)other;
+
+    if (!activator || !activator->client)
+        return;
+
+    /* Check keycard */
+    if (self->count > 0 && !(activator->client->keys & self->count)) {
+        gi.cprintf(activator, PRINT_ALL, "Security clearance required.\n");
+        {
+            int snd = gi.soundindex("world/door_locked.wav");
+            if (snd)
+                gi.positioned_sound(self->s.origin, self, CHAN_AUTO,
+                                    snd, 1.0f, ATTN_NORM, 0);
+        }
+        return;
+    }
+
+    /* Alarm/buzzer then delayed open */
+    gi.cprintf(activator, PRINT_ALL, "Security door: Opening...\n");
+    {
+        int snd = gi.soundindex("world/alarm_beep.wav");
+        if (snd)
+            gi.positioned_sound(self->s.origin, self, CHAN_AUTO,
+                                snd, 1.0f, ATTN_NORM, 0);
+    }
+
+    self->think = security_door_open;
+    self->nextthink = level.time + self->speed;
+    self->use = NULL;  /* can't use while opening */
+}
+
+static void SP_func_security_door(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *key_str = ED_FindValue(pairs, num_pairs, "key");
+    const char *delay_str = ED_FindValue(pairs, num_pairs, "delay");
+
+    ent->movetype = MOVETYPE_PUSH;
+    ent->solid = SOLID_BSP;
+    ent->use = security_door_use;
+    ent->count = key_str ? atoi(key_str) : 0;
+    ent->speed = delay_str ? (float)atof(delay_str) : 3.0f;
+    if (ent->speed < 0.5f) ent->speed = 0.5f;
+
+    gi.linkentity(ent);
+
+    gi.dprintf("  func_security_door at (%.0f %.0f %.0f) key=%d delay=%.1f\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->count, ent->speed);
 }
 
 /* ==========================================================================
