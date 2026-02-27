@@ -495,6 +495,14 @@ struct gclient_s {
 
     /* Weapon quick-slots (1-4 mapped to specific weapons) */
     int             quickslot[4];          /* weapon IDs bound to slots 1-4 */
+
+    /* Weapon jam */
+    qboolean        weapon_jammed;         /* weapon is jammed, needs unjam */
+    float           jam_clear_time;        /* level.time when jam clears */
+
+    /* Timed explosive */
+    float           c4_arm_time;           /* level.time when C4 was planted */
+    edict_t         *c4_entity;            /* reference to planted C4 entity */
 };
 
 /* ==========================================================================

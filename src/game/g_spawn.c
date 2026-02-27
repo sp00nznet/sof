@@ -250,6 +250,7 @@ static void SP_env_fire(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_env_electric(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_trigger_objective(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_misc_supply_crate(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_trigger_audio_zone(edict_t *ent, epair_t *pairs, int num_pairs);
 static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
                            int damage, vec3_t point);
 
@@ -446,6 +447,10 @@ static spawn_func_t spawn_funcs[] = {
     /* Supply crate */
     { "misc_supply_crate",          SP_misc_supply_crate },
     { "item_supply",                SP_misc_supply_crate },
+
+    /* Audio zones */
+    { "trigger_audio_zone",         SP_trigger_audio_zone },
+    { "env_audio",                  SP_trigger_audio_zone },
 
     /* Weapons (SoF) */
     { "weapon_knife",               SP_item_pickup },
@@ -5129,6 +5134,51 @@ static void SP_misc_supply_crate(edict_t *ent, epair_t *pairs, int num_pairs)
 
     gi.linkentity(ent);
     gi.dprintf("  misc_supply_crate at (%.0f %.0f %.0f)\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
+}
+
+/* ==========================================================================
+   trigger_audio_zone — Plays ambient sound when player enters.
+   Uses "noise" key for sound file, loops while player is inside.
+   ========================================================================== */
+
+static void audio_zone_touch(edict_t *self, edict_t *other, void *plane, csurface_t *surf)
+{
+    (void)plane; (void)surf;
+
+    if (!other || !other->client)
+        return;
+
+    /* Play ambient sound — only retrigger every 2 seconds */
+    if (level.time < self->wait)
+        return;
+
+    self->wait = level.time + 2.0f;
+
+    if (self->noise_index) {
+        gi.sound(other, CHAN_AUTO, self->noise_index, 0.7f, ATTN_NORM, 0);
+    }
+}
+
+static void SP_trigger_audio_zone(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *noise;
+
+    noise = ED_FindValue(pairs, num_pairs, "noise");
+    if (noise)
+        ent->noise_index = gi.soundindex(noise);
+    else
+        ent->noise_index = gi.soundindex("ambient/wind.wav");
+
+    ent->solid = SOLID_TRIGGER;
+    ent->touch = audio_zone_touch;
+    ent->wait = 0;
+
+    VectorSet(ent->mins, -128, -128, -64);
+    VectorSet(ent->maxs, 128, 128, 64);
+
+    gi.linkentity(ent);
+    gi.dprintf("  trigger_audio_zone at (%.0f %.0f %.0f)\n",
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
 }
 

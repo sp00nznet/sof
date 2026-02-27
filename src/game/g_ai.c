@@ -483,6 +483,44 @@ static qboolean AI_SeekCover(edict_t *self)
 }
 
 /*
+ * AI_CoverPeek - When in cover (not visible to enemy), briefly step out
+ * to one side to fire, then return to cover. Uses move_angles[2] as timer.
+ */
+static void AI_CoverPeek(edict_t *self)
+{
+    vec3_t peek_pos, to_enemy, perp;
+    trace_t tr;
+    float side;
+
+    if (!self->enemy || AI_Visible(self, self->enemy))
+        return;
+
+    /* Pick a side to peek from (alternates) */
+    side = (self->ai_flags & 0x0100) ? 1.0f : -1.0f;
+
+    VectorSubtract(self->enemy->s.origin, self->s.origin, to_enemy);
+    to_enemy[2] = 0;
+    VectorNormalize(to_enemy);
+
+    /* Perpendicular direction */
+    perp[0] = -to_enemy[1] * side;
+    perp[1] = to_enemy[0] * side;
+    perp[2] = 0;
+
+    peek_pos[0] = self->s.origin[0] + perp[0] * 64.0f;
+    peek_pos[1] = self->s.origin[1] + perp[1] * 64.0f;
+    peek_pos[2] = self->s.origin[2];
+
+    tr = gi.trace(self->s.origin, self->mins, self->maxs,
+                   peek_pos, self, MASK_MONSTERSOLID);
+    if (tr.fraction > 0.8f) {
+        VectorCopy(tr.endpos, self->move_origin);
+        self->velocity[0] = perp[0] * AI_CHASE_SPEED;
+        self->velocity[1] = perp[1] * AI_CHASE_SPEED;
+    }
+}
+
+/*
  * AI_TryRetreat - When critically wounded (<20% HP), run directly away
  * from the enemy. Returns qtrue if retreating.
  */
@@ -813,7 +851,16 @@ static void ai_think_attack(edict_t *self)
         self->s.frame = FRAME_ATTACK_START;
 
     /* If target moved out of range, chase */
-    if (dist > AI_ATTACK_RANGE * 1.2f || !AI_Visible(self, self->enemy)) {
+    if (dist > AI_ATTACK_RANGE * 1.2f) {
+        self->count = AI_STATE_CHASE;
+        VectorCopy(self->enemy->s.origin, self->move_origin);
+        self->nextthink = level.time + FRAMETIME;
+        return;
+    }
+
+    /* Lost LOS: try peeking from cover before giving up */
+    if (!AI_Visible(self, self->enemy)) {
+        AI_CoverPeek(self);
         self->count = AI_STATE_CHASE;
         VectorCopy(self->enemy->s.origin, self->move_origin);
         self->nextthink = level.time + FRAMETIME;

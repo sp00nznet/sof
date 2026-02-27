@@ -1319,6 +1319,73 @@ static void ClientCommand(edict_t *ent)
         return;
     }
 
+    if (Q_stricmp(cmd, "unjam") == 0 || Q_stricmp(cmd, "clearjam") == 0) {
+        if (ent->client->weapon_jammed) {
+            ent->client->weapon_jammed = qfalse;
+            ent->client->jam_clear_time = level.time + 1.5f;  /* 1.5s unjam animation */
+            gi.cprintf(ent, PRINT_ALL, "Clearing weapon jam...\n");
+            {
+                int snd = gi.soundindex("weapons/reload.wav");
+                if (snd)
+                    gi.sound(ent, CHAN_WEAPON, snd, 1.0f, ATTN_NORM, 0);
+            }
+        } else {
+            gi.cprintf(ent, PRINT_ALL, "Weapon is not jammed.\n");
+        }
+        return;
+    }
+
+    if (Q_stricmp(cmd, "plantc4") == 0 || Q_stricmp(cmd, "c4") == 0) {
+        if (ent->deadflag)
+            return;
+        if (ent->client->c4_entity) {
+            /* Detonate existing C4 */
+            edict_t *c4 = ent->client->c4_entity;
+            if (c4->inuse) {
+                vec3_t up = {0, 0, 1};
+                R_ParticleEffect(c4->s.origin, up, 2, 32);
+                R_ParticleEffect(c4->s.origin, up, 10, 16);
+                R_AddDlight(c4->s.origin, 1.0f, 0.6f, 0.1f, 500.0f, 0.5f);
+                {
+                    int snd = gi.soundindex("weapons/explode.wav");
+                    if (snd)
+                        gi.sound(c4, CHAN_AUTO, snd, 1.0f, ATTN_NONE, 0);
+                }
+                SCR_AddScreenShake(0.5f, 0.3f);
+                T_RadiusDamage(c4, ent, 150.0f, 300.0f);
+                c4->inuse = qfalse;
+                c4->solid = SOLID_NOT;
+                c4->svflags |= SVF_NOCLIENT;
+                gi.linkentity(c4);
+            }
+            ent->client->c4_entity = NULL;
+            SCR_AddPickupMessage("C4 DETONATED!");
+        } else {
+            /* Plant C4 at current position */
+            edict_t *c4 = G_AllocEdict();
+            if (c4) {
+                c4->classname = "planted_c4";
+                c4->solid = SOLID_NOT;
+                c4->movetype = MOVETYPE_NONE;
+                VectorCopy(ent->s.origin, c4->s.origin);
+                c4->s.origin[2] -= 20.0f;  /* place on ground */
+                c4->owner = ent;
+                gi.linkentity(c4);
+
+                ent->client->c4_entity = c4;
+                ent->client->c4_arm_time = level.time;
+
+                {
+                    int snd = gi.soundindex("weapons/c4_plant.wav");
+                    if (snd)
+                        gi.sound(ent, CHAN_ITEM, snd, 1.0f, ATTN_NORM, 0);
+                }
+                SCR_AddPickupMessage("C4 planted. Use 'c4' again to detonate.");
+            }
+        }
+        return;
+    }
+
     gi.cprintf(ent, PRINT_ALL, "Unknown command: %s\n", cmd);
 }
 
@@ -2339,6 +2406,16 @@ static void G_FireHitscan(edict_t *ent)
         }
     }
 
+    /* Weapon jam check — can't fire while jammed */
+    if (ent->client->weapon_jammed) {
+        if (level.time >= ent->client->jam_clear_time && ent->client->jam_clear_time > 0) {
+            ent->client->weapon_jammed = qfalse;
+            ent->client->jam_clear_time = 0;
+        } else {
+            return;
+        }
+    }
+
     /* Weapon switch delay — can't fire while switching */
     if (ent->client->weapon_change_time > level.time)
         return;
@@ -2487,6 +2564,21 @@ static void G_FireHitscan(edict_t *ent)
             ent->client->weapon_overheated = qtrue;
             ent->client->overheat_end = level.time + 2.0f;  /* 2s cooldown */
             SCR_AddPickupMessage("OVERHEATED!");
+        }
+
+        /* Weapon jam: small chance on high-heat sustained fire */
+        if (ent->client->weapon_heat > 0.7f && !ent->client->weapon_jammed) {
+            if (gi.irand(0, 100) < 3) {  /* 3% chance per shot when hot */
+                ent->client->weapon_jammed = qtrue;
+                gi.cprintf(ent, PRINT_ALL, "Weapon jammed! Use 'unjam' to clear.\n");
+                SCR_AddPickupMessage("JAMMED!");
+                {
+                    int snd = gi.soundindex("weapons/noammo.wav");
+                    if (snd)
+                        gi.sound(ent, CHAN_WEAPON, snd, 1.0f, ATTN_NORM, 0);
+                }
+                return;  /* shot fails */
+            }
         }
     }
 
