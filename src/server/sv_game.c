@@ -1561,3 +1561,41 @@ int SV_GetPlayerStance(void)
     if (player->client->viewheight <= 10) return 1;   /* crouching */
     return 0;  /* standing */
 }
+
+/*
+ * SV_GetPlayerSpeed — Get horizontal speed magnitude for motion blur
+ */
+float SV_GetPlayerSpeed(void)
+{
+    edict_t *player;
+    if (!ge || !ge->edicts) return 0;
+    player = (edict_t *)((byte *)ge->edicts + ge->edict_size);
+    if (!player->inuse || !player->client) return 0;
+    return (float)sqrt(player->velocity[0] * player->velocity[0] +
+                        player->velocity[1] * player->velocity[1]);
+}
+
+/*
+ * SV_IsAdrenalineActive — Check if adrenaline rush damage boost is active
+ */
+qboolean SV_IsAdrenalineActive(void)
+{
+    edict_t *player;
+    if (!ge || !ge->edicts) return qfalse;
+    player = (edict_t *)((byte *)ge->edicts + ge->edict_size);
+    if (!player->inuse || !player->client) return qfalse;
+    return (player->client->adrenaline_end > level.time) ? qtrue : qfalse;
+}
+
+/*
+ * SV_IsWeaponHolstered — Check if player's weapon is holstered
+ */
+qboolean SV_IsWeaponHolstered(void)
+{
+    edict_t *player;
+    if (!ge || !ge->edicts) return qfalse;
+    player = (edict_t *)((byte *)ge->edicts + ge->edict_size);
+    if (!player->inuse || !player->client) return qfalse;
+    return player->client->weapon_holstered;
+}
+

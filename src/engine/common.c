@@ -2829,6 +2829,43 @@ static void SCR_DrawHUD(float frametime)
         }
     }
 
+    /* Motion blur — subtle radial darkening at high speed */
+    {
+        extern float SV_GetPlayerSpeed(void);
+        float speed = SV_GetPlayerSpeed();
+        if (speed > 250.0f) {
+            float blur_alpha = (speed - 250.0f) / 500.0f;
+            if (blur_alpha > 0.2f) blur_alpha = 0.2f;
+            /* Edge vignette during high speed */
+            R_DrawFill(0, 0, g_display.width, 8, (int)(((int)(blur_alpha * 255) << 24)));
+            R_DrawFill(0, g_display.height - 56, g_display.width, 8,
+                       (int)(((int)(blur_alpha * 255) << 24)));
+            R_DrawFill(0, 0, 8, g_display.height, (int)(((int)(blur_alpha * 255) << 24)));
+            R_DrawFill(g_display.width - 8, 0, 8, g_display.height,
+                       (int)(((int)(blur_alpha * 255) << 24)));
+        }
+    }
+
+    /* Adrenaline rush indicator */
+    {
+        extern qboolean SV_IsAdrenalineActive(void);
+        if (SV_IsAdrenalineActive()) {
+            R_SetDrawColor(1.0f, 0.3f, 0.0f, 0.8f);
+            R_DrawString(g_display.width / 2 - 48, 40, "ADRENALINE");
+            R_SetDrawColor(1.0f, 1.0f, 1.0f, 1.0f);
+        }
+    }
+
+    /* Weapon holstered indicator */
+    {
+        extern qboolean SV_IsWeaponHolstered(void);
+        if (SV_IsWeaponHolstered()) {
+            R_SetDrawColor(0.6f, 0.6f, 0.6f, 0.7f);
+            R_DrawString(g_display.width - 120, g_display.height - 40, "[HOLSTERED]");
+            R_SetDrawColor(1.0f, 1.0f, 1.0f, 1.0f);
+        }
+    }
+
     /* Developer HUD — FPS, position, entity count */
     if (developer && developer->value) {
         static int  fps_frame_count;
