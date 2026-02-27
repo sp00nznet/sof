@@ -340,6 +340,11 @@ struct gclient_s {
     int             streak_count;           /* consecutive kills within time window */
     float           streak_last_kill;       /* level.time of last kill */
 
+    /* Weapon accuracy tracking */
+    int             shots_fired;            /* total shots fired this level */
+    int             shots_hit;              /* total shots that hit an entity */
+    int             headshots;              /* total headshot kills */
+
     /* Magazine/reload system */
     int             magazine[WEAP_COUNT];    /* current rounds in magazine */
     float           reload_finish_time;     /* level.time when reload completes */

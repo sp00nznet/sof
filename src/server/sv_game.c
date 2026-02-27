@@ -1013,6 +1013,27 @@ void SV_GetPlayerScore(int *kills, int *deaths, int *score)
 }
 
 /*
+ * SV_GetPlayerAccuracy — Get player accuracy stats for intermission
+ */
+void SV_GetPlayerAccuracy(int *shots_fired, int *shots_hit, int *headshots)
+{
+    edict_t *player;
+
+    *shots_fired = *shots_hit = *headshots = 0;
+
+    if (!ge || !ge->edicts)
+        return;
+
+    player = (edict_t *)((byte *)ge->edicts + ge->edict_size);
+    if (!player->inuse || !player->client)
+        return;
+
+    *shots_fired = player->client->shots_fired;
+    *shots_hit = player->client->shots_hit;
+    *headshots = player->client->headshots;
+}
+
+/*
  * SV_GetEntityCount — Get active entity count for debug HUD
  */
 int SV_GetEntityCount(void)

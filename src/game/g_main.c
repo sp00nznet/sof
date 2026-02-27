@@ -1850,6 +1850,10 @@ static void G_FireHitscan(edict_t *ent)
     player_next_fire = level.time + ((weap > 0 && weap < WEAP_COUNT) ? weapon_firerate[weap] : 0.2f);
     player_last_fire_time = level.time;
 
+    /* Track shots fired for accuracy stats */
+    if (ent->client)
+        ent->client->shots_fired++;
+
     /* Fire from eye position */
     VectorCopy(ent->s.origin, start);
     start[2] += ent->client->viewheight;
@@ -1962,6 +1966,10 @@ static void G_FireHitscan(edict_t *ent)
                 goto hitscan_impact_done;  /* no team damage */
             }
 
+            /* Track hit for accuracy stats */
+            if (ent->client)
+                ent->client->shots_hit++;
+
             /* Blood effect + flesh hit sound */
             R_ParticleEffect(tr.endpos, tr.plane.normal, 1, 8);
             if (snd_hit_flesh)
@@ -2001,8 +2009,10 @@ static void G_FireHitscan(edict_t *ent)
                 /* Headshot notification */
                 if (zone == GORE_ZONE_HEAD || zone == GORE_ZONE_FACE) {
                     SCR_AddPickupMessage("HEADSHOT!");
-                    if (ent->client)
+                    if (ent->client) {
                         ent->client->score += 5;  /* bonus for precision */
+                        ent->client->headshots++;
+                    }
                 }
 
                 gi.dprintf("Hit %s zone %d (x%.1f) for %d damage (health: %d)\n",

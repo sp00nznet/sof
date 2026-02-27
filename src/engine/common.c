@@ -47,6 +47,7 @@ extern qboolean SV_GetPlayerMagazine(int *magazine, int *mag_max, int *reserve);
 extern void SV_GetPlayerBlend(float *blend);
 extern qboolean SV_GetPlayerArmor(int *armor, int *armor_max);
 extern void SV_GetPlayerScore(int *kills, int *deaths, int *score);
+extern void SV_GetPlayerAccuracy(int *shots_fired, int *shots_hit, int *headshots);
 extern void SV_GetLevelStats(int *killed_monsters, int *total_monsters,
                              int *found_secrets, int *total_secrets);
 extern int  SV_GetEntityCount(void);
@@ -1927,6 +1928,7 @@ static void SCR_DrawIntermission(void)
     char buf[128];
     int killed_monsters, total_monsters, found_secrets, total_secrets;
     int kills, deaths, score;
+    int shots_fired, shots_hit, headshots;
     float elapsed;
 
     if (!cl_intermission)
@@ -1938,6 +1940,7 @@ static void SCR_DrawIntermission(void)
     SV_GetLevelStats(&killed_monsters, &total_monsters,
                      &found_secrets, &total_secrets);
     SV_GetPlayerScore(&kills, &deaths, &score);
+    SV_GetPlayerAccuracy(&shots_fired, &shots_hit, &headshots);
 
     /* Dark overlay */
     R_DrawFill(0, 0, w, h, (int)0xC0000000);
@@ -1946,8 +1949,8 @@ static void SCR_DrawIntermission(void)
     R_SetDrawColor(1.0f, 0.85f, 0.0f, 1.0f);
     R_DrawString(cx - 80, y, "MISSION COMPLETE");
 
-    /* Stats box */
-    R_DrawFill(cx - 160, y + 30, 320, 140, (int)0x80000000);
+    /* Stats box — taller for accuracy info */
+    R_DrawFill(cx - 160, y + 30, 320, 220, (int)0x80000000);
 
     y += 45;
     R_SetDrawColor(0.9f, 0.9f, 0.9f, 1.0f);
@@ -1970,7 +1973,36 @@ static void SCR_DrawIntermission(void)
 
     Com_sprintf(buf, sizeof(buf), "Score:     %d", score);
     R_DrawString(cx - 140, y, buf);
-    y += 30;
+    y += 25;
+
+    /* Accuracy section */
+    R_SetDrawColor(1.0f, 0.85f, 0.0f, 1.0f);
+    R_DrawString(cx - 140, y, "--- Accuracy ---");
+    y += 18;
+    R_SetDrawColor(0.9f, 0.9f, 0.9f, 1.0f);
+
+    Com_sprintf(buf, sizeof(buf), "Shots:     %d / %d", shots_hit, shots_fired);
+    R_DrawString(cx - 140, y, buf);
+    y += 20;
+
+    {
+        int pct = shots_fired > 0 ? (shots_hit * 100) / shots_fired : 0;
+        Com_sprintf(buf, sizeof(buf), "Accuracy:  %d%%", pct);
+        /* Color-code accuracy: green >50%, yellow 25-50%, red <25% */
+        if (pct >= 50)
+            R_SetDrawColor(0.2f, 1.0f, 0.2f, 1.0f);
+        else if (pct >= 25)
+            R_SetDrawColor(1.0f, 1.0f, 0.2f, 1.0f);
+        else
+            R_SetDrawColor(1.0f, 0.3f, 0.2f, 1.0f);
+        R_DrawString(cx - 140, y, buf);
+        R_SetDrawColor(0.9f, 0.9f, 0.9f, 1.0f);
+    }
+    y += 20;
+
+    Com_sprintf(buf, sizeof(buf), "Headshots: %d", headshots);
+    R_DrawString(cx - 140, y, buf);
+    y += 25;
 
     /* Time */
     {

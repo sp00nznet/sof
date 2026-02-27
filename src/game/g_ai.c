@@ -509,6 +509,7 @@ static void ai_think_alert(edict_t *self)
 static void ai_think_chase(edict_t *self)
 {
     float dist;
+    float health_pct;
 
     if (!self->enemy || !self->enemy->inuse || self->enemy->health <= 0) {
         self->enemy = NULL;
@@ -529,6 +530,60 @@ static void ai_think_chase(edict_t *self)
 
     AI_FaceEnemy(self);
     dist = AI_Range(self, self->enemy);
+    health_pct = (float)self->health / (float)(self->max_health > 0 ? self->max_health : 100);
+
+    /* Guards stand ground — don't chase, just attack from position */
+    if (self->ai_flags & AI_STAND_GROUND) {
+        if (dist < AI_ATTACK_RANGE * 1.5f && AI_Visible(self, self->enemy)) {
+            self->count = AI_STATE_ATTACK;
+            self->velocity[0] = self->velocity[1] = 0;
+            self->nextthink = level.time + FRAMETIME;
+            return;
+        }
+        /* Guard stays put, just face enemy */
+        self->velocity[0] = self->velocity[1] = 0;
+        self->nextthink = level.time + FRAMETIME;
+        return;
+    }
+
+    /* Light soldiers flee when badly hurt (<30% HP) */
+    if (self->classname && Q_stricmp(self->classname, "monster_soldier_light") == 0 &&
+        health_pct < 0.3f) {
+        vec3_t flee_dir;
+        VectorSubtract(self->s.origin, self->enemy->s.origin, flee_dir);
+        flee_dir[2] = 0;
+        VectorNormalize(flee_dir);
+        /* Run away faster than normal */
+        self->velocity[0] = flee_dir[0] * AI_CHASE_SPEED * 1.5f;
+        self->velocity[1] = flee_dir[1] * AI_CHASE_SPEED * 1.5f;
+        /* Run animation */
+        self->s.frame++;
+        if (self->s.frame < FRAME_RUN_START || self->s.frame > FRAME_RUN_END)
+            self->s.frame = FRAME_RUN_START;
+        /* If far enough away, disengage */
+        if (dist > AI_SIGHT_RANGE * 0.8f) {
+            self->enemy = NULL;
+            self->count = AI_STATE_IDLE;
+            self->velocity[0] = self->velocity[1] = 0;
+        }
+        self->nextthink = level.time + FRAMETIME;
+        return;
+    }
+
+    /* SS soldiers seek cover more aggressively when hurt (<60% HP) */
+    if (self->classname && Q_stricmp(self->classname, "monster_soldier_ss") == 0 &&
+        health_pct < 0.6f && self->dmg_debounce_time <= level.time) {
+        if (AI_SeekCover(self)) {
+            AI_MoveToward(self, self->move_origin, AI_CHASE_SPEED * 1.3f);
+            /* Run animation */
+            self->s.frame++;
+            if (self->s.frame < FRAME_RUN_START || self->s.frame > FRAME_RUN_END)
+                self->s.frame = FRAME_RUN_START;
+            self->dmg_debounce_time = level.time + 2.0f;  /* cover check cooldown */
+            self->nextthink = level.time + FRAMETIME;
+            return;
+        }
+    }
 
     /* If in attack range and have line of sight, attack */
     if (dist < AI_ATTACK_RANGE && AI_Visible(self, self->enemy)) {
@@ -674,14 +729,25 @@ static void ai_think_attack(edict_t *self)
         vec3_t start, end, dir;
         trace_t tr;
         int damage = self->dmg ? self->dmg : 10;
+        float inaccuracy = 0.5f;  /* default spread */
+
+        /* Per-type accuracy and fire rate adjustments */
+        if (self->classname) {
+            if (Q_stricmp(self->classname, "monster_soldier_light") == 0)
+                inaccuracy = 0.7f;     /* worse aim */
+            else if (Q_stricmp(self->classname, "monster_soldier_ss") == 0)
+                inaccuracy = 0.3f;     /* precise */
+            else if (Q_stricmp(self->classname, "monster_guard") == 0)
+                inaccuracy = 0.25f;    /* very precise, slow rate */
+        }
 
         VectorCopy(self->s.origin, start);
         start[2] += 20;    /* eye height */
 
         VectorSubtract(self->enemy->s.origin, start, dir);
-        /* Add some spread/inaccuracy */
-        dir[0] += ((float)(rand() % 100) - 50) * 0.01f;
-        dir[1] += ((float)(rand() % 100) - 50) * 0.01f;
+        /* Add spread/inaccuracy scaled by type */
+        dir[0] += ((float)(rand() % 100) - 50) * 0.01f * inaccuracy;
+        dir[1] += ((float)(rand() % 100) - 50) * 0.01f * inaccuracy;
         VectorNormalize(dir);
         VectorMA(start, 8192, dir, end);
 
@@ -735,7 +801,19 @@ static void ai_think_attack(edict_t *self)
             }
         }
 
-        self->dmg_debounce_time = level.time + AI_ATTACK_INTERVAL;
+        /* Per-type fire rate */
+        {
+            float fire_rate = AI_ATTACK_INTERVAL;
+            if (self->classname) {
+                if (Q_stricmp(self->classname, "monster_guard") == 0)
+                    fire_rate = 1.5f;   /* slow deliberate shots */
+                else if (Q_stricmp(self->classname, "monster_soldier_ss") == 0)
+                    fire_rate = 0.6f;   /* aggressive rate */
+                else if (Q_stricmp(self->classname, "monster_soldier_light") == 0)
+                    fire_rate = 1.2f;   /* hesitant */
+            }
+            self->dmg_debounce_time = level.time + fire_rate;
+        }
     }
 
     self->nextthink = level.time + FRAMETIME;
