@@ -33,6 +33,7 @@
 
 /* Particle/light effects from renderer (unified binary) */
 extern void R_ParticleEffect(vec3_t org, vec3_t dir, int type, int count);
+extern void SCR_AddScreenShake(float intensity, float duration);
 extern void R_AddDlight(vec3_t origin, float r, float g, float b,
                          float intensity, float duration);
 
@@ -1854,6 +1855,22 @@ static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
                 t->health -= explosion_dmg;
                 if (t->health <= 0 && t->die)
                     t->die(t, self, attacker, explosion_dmg, self->s.origin);
+            }
+        }
+    }
+
+    /* Distance-based screen shake for nearby barrel explosions */
+    {
+        extern game_export_t globals;
+        edict_t *player = &globals.edicts[1];
+        if (player && player->inuse && player->client) {
+            vec3_t diff;
+            float dist, scale;
+            VectorSubtract(player->s.origin, self->s.origin, diff);
+            dist = VectorLength(diff);
+            if (dist < 384.0f) {
+                scale = 1.0f - (dist / 384.0f);
+                SCR_AddScreenShake(0.7f * scale, 0.35f * scale);
             }
         }
     }

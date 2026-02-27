@@ -50,6 +50,8 @@ static void G_UpdateDecals(void);
 static void G_AddDecal(vec3_t origin, vec3_t normal, int type);
 static void G_SpawnGibs(edict_t *ent, int count);
 static void G_DamageDirectionToPlayer(edict_t *player, vec3_t source);
+static void G_ExplosionShakeNearby(vec3_t origin, float max_intensity,
+                                    float duration, float max_range);
 
 /* ==========================================================================
    Globals
@@ -1021,7 +1023,7 @@ static qboolean G_UseUtilityWeapon(edict_t *ent)
                         gi.positioned_sound(c4->s.origin, NULL, CHAN_AUTO,
                                             snd_explode, 1.0f, ATTN_NORM, 0);
                     T_RadiusDamage(c4, ent, (float)c4->dmg, (float)c4->dmg_radius);
-                    SCR_AddScreenShake(1.0f, 0.5f);
+                    G_ExplosionShakeNearby(c4->s.origin, 1.0f, 0.5f, 512.0f);
                     c4->inuse = qfalse;
                     gi.unlinkentity(c4);
                     detonated = qtrue;
@@ -1189,6 +1191,34 @@ static void G_DamageDirectionToPlayer(edict_t *player, vec3_t source)
 }
 
 /*
+ * G_ExplosionShakeNearby — Distance-based screen shake for explosions.
+ * Closer explosions produce stronger shakes; beyond max_range, no shake.
+ */
+static void G_ExplosionShakeNearby(vec3_t origin, float max_intensity,
+                                    float duration, float max_range)
+{
+    edict_t *player = &globals.edicts[1];
+    vec3_t diff;
+    float dist, scale;
+
+    if (!player || !player->inuse || !player->client)
+        return;
+
+    VectorSubtract(player->s.origin, origin, diff);
+    dist = VectorLength(diff);
+
+    if (dist >= max_range)
+        return;
+
+    /* Inverse-linear falloff: full shake at distance 0, none at max_range */
+    scale = 1.0f - (dist / max_range);
+    if (scale < 0.05f)
+        return;
+
+    SCR_AddScreenShake(max_intensity * scale, duration * scale);
+}
+
+/*
  * T_RadiusDamage — Deal damage to all entities within a radius
  */
 static void T_RadiusDamage(edict_t *inflictor, edict_t *attacker,
@@ -1285,8 +1315,8 @@ static void rocket_think(edict_t *self)
         VectorCopy(tr.endpos, self->s.origin);
         T_RadiusDamage(self, self->owner, (float)self->dmg, (float)self->dmg_radius);
 
-        /* Screen shake from explosion */
-        SCR_AddScreenShake(0.8f, 0.4f);
+        /* Distance-based screen shake */
+        G_ExplosionShakeNearby(tr.endpos, 0.8f, 0.4f, 512.0f);
 
         /* Direct hit bonus */
         if (tr.ent && tr.ent->takedamage && tr.ent->health > 0) {
@@ -1343,7 +1373,7 @@ void grenade_explode(edict_t *self)
         gi.positioned_sound(self->s.origin, NULL, CHAN_AUTO, snd_explode, 1.0f, ATTN_NORM, 0);
 
     T_RadiusDamage(self, self->owner, (float)self->dmg, (float)self->dmg_radius);
-    SCR_AddScreenShake(0.6f, 0.3f);
+    G_ExplosionShakeNearby(self->s.origin, 0.6f, 0.3f, 400.0f);
 
     self->inuse = qfalse;
     gi.unlinkentity(self);
@@ -2270,7 +2300,15 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
     }
 
     /* Head bob — subtle view oscillation while moving */
-    if (ent->groundentity && !ent->deadflag) {
+    if (client->old_waterlevel >= 2 && !ent->deadflag) {
+        /* Underwater floating bob — slow, gentle undulation */
+        client->bob_time += level.frametime * 3.0f;
+        client->viewheight += (int)(sinf(client->bob_time) * 1.5f);
+        /* Gentle roll sway for floating feel */
+        client->kick_angles[2] = sinf(client->bob_time * 0.7f) * 0.5f;
+        /* Slight pitch drift */
+        client->kick_angles[0] += sinf(client->bob_time * 1.3f) * 0.15f;
+    } else if (ent->groundentity && !ent->deadflag) {
         float speed = (float)sqrt(ent->velocity[0] * ent->velocity[0] +
                                    ent->velocity[1] * ent->velocity[1]);
         if (speed > 40.0f) {

@@ -84,6 +84,20 @@ typedef enum {
 #define AI_GRENADE_RANGE    400.0f /* min range for grenade throw */
 #define AI_GRENADE_COOLDOWN 8.0f   /* seconds between grenade throws */
 
+/* MD2 animation frame ranges (standard Quake 2 humanoid) */
+#define FRAME_STAND_START   0
+#define FRAME_STAND_END     39
+#define FRAME_RUN_START     40
+#define FRAME_RUN_END       45
+#define FRAME_ATTACK_START  46
+#define FRAME_ATTACK_END    53
+#define FRAME_PAIN1_START   54
+#define FRAME_PAIN1_END     57
+#define FRAME_PAIN2_START   58
+#define FRAME_PAIN2_END     61
+#define FRAME_DEATH1_START  178
+#define FRAME_DEATH1_END    183
+
 /* ==========================================================================
    AI Utility Functions
    ========================================================================== */
@@ -422,6 +436,11 @@ static void ai_think_idle(edict_t *self)
         return;
     }
 
+    /* Idle animation — cycle stand frames */
+    self->s.frame++;
+    if (self->s.frame < FRAME_STAND_START || self->s.frame > FRAME_STAND_END)
+        self->s.frame = FRAME_STAND_START;
+
     /* Patrol: if monster has a target, follow path_corner chain */
     if (self->target && !self->enemy) {
         edict_t *goal = self->chain;  /* current patrol waypoint */
@@ -519,6 +538,11 @@ static void ai_think_chase(edict_t *self)
         return;
     }
 
+    /* Run animation — cycle run frames */
+    self->s.frame++;
+    if (self->s.frame < FRAME_RUN_START || self->s.frame > FRAME_RUN_END)
+        self->s.frame = FRAME_RUN_START;
+
     /* Chase toward enemy or last known position */
     AI_MoveToward(self, self->move_origin, AI_CHASE_SPEED);
 
@@ -561,6 +585,11 @@ static void ai_think_attack(edict_t *self)
     AI_FaceEnemy(self);
     dist = AI_Range(self, self->enemy);
     health_pct = (float)self->health / (float)(self->max_health > 0 ? self->max_health : 100);
+
+    /* Attack animation — cycle attack frames */
+    self->s.frame++;
+    if (self->s.frame < FRAME_ATTACK_START || self->s.frame > FRAME_ATTACK_END)
+        self->s.frame = FRAME_ATTACK_START;
 
     /* If target moved out of range, chase */
     if (dist > AI_ATTACK_RANGE * 1.2f || !AI_Visible(self, self->enemy)) {
@@ -714,6 +743,13 @@ static void ai_think_attack(edict_t *self)
 
 static void ai_think_pain(edict_t *self)
 {
+    /* Advance pain animation frame */
+    self->s.frame++;
+    if (self->s.frame > FRAME_PAIN1_END && self->s.frame < FRAME_PAIN2_START)
+        self->s.frame = FRAME_PAIN1_END;  /* hold last pain frame */
+    if (self->s.frame > FRAME_PAIN2_END)
+        self->s.frame = FRAME_PAIN2_END;
+
     /* Pain stun is over, return to chase */
     if (self->enemy && self->enemy->inuse && self->enemy->health > 0) {
         self->count = AI_STATE_CHASE;
@@ -764,6 +800,12 @@ void monster_pain(edict_t *self, edict_t *other, float kick, int damage)
     self->count = AI_STATE_PAIN;
     self->velocity[0] = self->velocity[1] = 0;
     self->nextthink = level.time + (damage > 30 ? AI_PAIN_TIME * 2.0f : AI_PAIN_TIME);
+
+    /* Pain animation — pick a random pain sequence */
+    if (rand() & 1)
+        self->s.frame = FRAME_PAIN1_START;
+    else
+        self->s.frame = FRAME_PAIN2_START;
 
     /* Knockback on heavy damage */
     if (damage > 30 && other) {
@@ -816,6 +858,7 @@ void monster_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
     self->velocity[0] = self->velocity[1] = self->velocity[2] = 0;
     self->deadflag = 1;
     self->count = AI_STATE_DEAD;
+    self->s.frame = FRAME_DEATH1_START;  /* death animation first frame */
     self->svflags |= SVF_DEADMONSTER;
 
     /* Schedule corpse removal after 10 seconds */
