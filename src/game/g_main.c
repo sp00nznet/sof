@@ -2485,6 +2485,37 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
         }
     }
 
+    /* Slide mechanic: sprint + crouch = forward slide */
+    if (client->slide_end > level.time) {
+        /* Currently sliding — apply slide velocity and crouch */
+        float slide_frac = (client->slide_end - level.time) / 0.6f;
+        float slide_speed = 350.0f * slide_frac;  /* decelerating slide */
+        ent->velocity[0] = client->slide_dir[0] * slide_speed;
+        ent->velocity[1] = client->slide_dir[1] * slide_speed;
+        client->viewheight = 10;  /* crouched during slide */
+        ent->maxs[2] = 16;
+        /* Slight camera tilt during slide */
+        client->kick_angles[0] += slide_frac * 2.0f;
+    } else if (client->sprinting && (ucmd->buttons & BUTTON_CROUCH) &&
+               ucmd->forwardmove > 0 && ent->groundentity &&
+               client->stamina > 20.0f) {
+        /* Initiate slide */
+        vec3_t slide_fwd, slide_rt, slide_up;
+        G_AngleVectors(client->viewangles, slide_fwd, slide_rt, slide_up);
+        client->slide_dir[0] = slide_fwd[0];
+        client->slide_dir[1] = slide_fwd[1];
+        client->slide_dir[2] = 0;
+        client->slide_end = level.time + 0.6f;  /* 0.6 second slide */
+        client->stamina -= 20.0f;  /* costs stamina */
+        client->sprinting = qfalse;
+
+        /* Dust trail particles */
+        {
+            vec3_t dust_down = {0, 0, -1};
+            R_ParticleEffect(ent->s.origin, dust_down, 13, 6);
+        }
+    }
+
     /* Prone handling — lowest stance, nearly flat */
     if (ucmd->buttons & BUTTON_PRONE) {
         if (client->viewheight > 4) {
@@ -2801,6 +2832,44 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
             edict_t *other = pm.touchents[i];
             if (other && other->touch)
                 other->touch(other, ent, NULL, NULL);
+        }
+    }
+
+    /* Proximity warning — subtle alert when enemy is very close behind */
+    if (!ent->deadflag && level.time >= client->next_ambient + 2.0f) {
+        edict_t *touch[16];
+        int num, i;
+        vec3_t prox_mins, prox_maxs;
+        float prox_range = 200.0f;
+
+        VectorSet(prox_mins, ent->s.origin[0] - prox_range,
+                             ent->s.origin[1] - prox_range,
+                             ent->s.origin[2] - prox_range);
+        VectorSet(prox_maxs, ent->s.origin[0] + prox_range,
+                             ent->s.origin[1] + prox_range,
+                             ent->s.origin[2] + prox_range);
+
+        num = gi.BoxEdicts(prox_mins, prox_maxs, touch, 16, AREA_SOLID);
+        for (i = 0; i < num; i++) {
+            if (touch[i] && (touch[i]->svflags & SVF_MONSTER) &&
+                touch[i]->health > 0 && !touch[i]->deadflag) {
+                /* Check if enemy is behind the player */
+                vec3_t to_enemy, fwd, rt, up;
+                float dot;
+                VectorSubtract(touch[i]->s.origin, ent->s.origin, to_enemy);
+                G_AngleVectors(client->viewangles, fwd, rt, up);
+                dot = DotProduct(to_enemy, fwd);
+
+                if (dot < -50.0f) {
+                    /* Enemy behind player — warning flash */
+                    client->blend[0] = 1.0f;
+                    client->blend[1] = 0.8f;
+                    client->blend[2] = 0.0f;
+                    client->blend[3] = 0.05f;  /* very subtle yellow flash */
+                    client->next_ambient = level.time;
+                    break;
+                }
+            }
         }
     }
 

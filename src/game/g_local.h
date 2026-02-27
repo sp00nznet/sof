@@ -411,6 +411,10 @@ struct gclient_s {
     /* Dual wielding */
     qboolean        dual_wield;            /* true if dual wielding pistols */
     qboolean        dual_fire_left;        /* alternate left/right fire */
+
+    /* Slide mechanic */
+    float           slide_end;             /* level.time when slide ends */
+    vec3_t          slide_dir;             /* direction of slide */
 };
 
 /* ==========================================================================
