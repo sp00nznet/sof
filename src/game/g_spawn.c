@@ -251,6 +251,8 @@ static void SP_env_electric(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_trigger_objective(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_misc_supply_crate(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_trigger_audio_zone(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_item_shield(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_info_landmark(edict_t *ent, epair_t *pairs, int num_pairs);
 static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
                            int damage, vec3_t point);
 
@@ -451,6 +453,14 @@ static spawn_func_t spawn_funcs[] = {
     /* Audio zones */
     { "trigger_audio_zone",         SP_trigger_audio_zone },
     { "env_audio",                  SP_trigger_audio_zone },
+
+    /* Power-ups */
+    { "item_shield",                SP_item_shield },
+    { "item_invuln",                SP_item_shield },
+    { "item_powerup",               SP_item_shield },
+
+    /* Map transition landmarks */
+    { "info_landmark",              SP_info_landmark },
 
     /* Weapons (SoF) */
     { "weapon_knife",               SP_item_pickup },
@@ -5179,6 +5189,65 @@ static void SP_trigger_audio_zone(edict_t *ent, epair_t *pairs, int num_pairs)
 
     gi.linkentity(ent);
     gi.dprintf("  trigger_audio_zone at (%.0f %.0f %.0f)\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
+}
+
+/* ==========================================================================
+   item_shield — Temporary damage resistance power-up (50% reduction, 15s)
+   ========================================================================== */
+
+static void shield_touch(edict_t *self, edict_t *other, void *plane, csurface_t *surf)
+{
+    (void)plane; (void)surf;
+
+    if (!other || !other->client || other->deadflag)
+        return;
+
+    other->client->shield_end = level.time + 15.0f;
+    other->client->shield_mult = 0.5f;
+
+    {
+        int snd = gi.soundindex("items/powerup.wav");
+        if (snd)
+            gi.sound(other, CHAN_ITEM, snd, 1.0f, ATTN_NORM, 0);
+    }
+
+    SCR_AddPickupMessage("Shield Active (50% damage reduction, 15s)");
+
+    /* Consume — don't respawn */
+    self->solid = SOLID_NOT;
+    self->svflags |= SVF_NOCLIENT;
+    self->nextthink = 0;
+    gi.linkentity(self);
+}
+
+static void SP_item_shield(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+
+    ent->solid = SOLID_TRIGGER;
+    ent->touch = shield_touch;
+
+    VectorSet(ent->mins, -16, -16, 0);
+    VectorSet(ent->maxs, 16, 16, 24);
+
+    gi.linkentity(ent);
+    gi.dprintf("  item_shield at (%.0f %.0f %.0f)\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
+}
+
+/* ==========================================================================
+   info_landmark — Map transition reference point used for level-to-level
+   position preservation (pairs with trigger_changelevel landmark field)
+   ========================================================================== */
+
+static void SP_info_landmark(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+    /* Just a point entity — no solid, no think, just targetname + origin */
+    ent->solid = SOLID_NOT;
+    gi.dprintf("  info_landmark '%s' at (%.0f %.0f %.0f)\n",
+               ent->targetname ? ent->targetname : "(unnamed)",
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
 }
 

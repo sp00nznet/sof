@@ -503,6 +503,15 @@ struct gclient_s {
     /* Timed explosive */
     float           c4_arm_time;           /* level.time when C4 was planted */
     edict_t         *c4_entity;            /* reference to planted C4 entity */
+
+    /* Damage resistance power-up */
+    float           shield_end;            /* level.time when shield expires */
+    float           shield_mult;           /* damage reduction (0.5 = half damage) */
+
+    /* Challenge mode */
+    float           challenge_end;         /* level.time when challenge expires */
+    int             challenge_kills;       /* kills during challenge */
+    int             challenge_target;      /* required kills */
 };
 
 /* ==========================================================================

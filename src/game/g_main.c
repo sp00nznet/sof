@@ -1386,6 +1386,22 @@ static void ClientCommand(edict_t *ent)
         return;
     }
 
+    if (Q_stricmp(cmd, "challenge") == 0) {
+        if (ent->client->challenge_end > level.time) {
+            gi.cprintf(ent, PRINT_ALL, "Challenge active: %d/%d kills, %.0fs remaining\n",
+                       ent->client->challenge_kills, ent->client->challenge_target,
+                       ent->client->challenge_end - level.time);
+        } else {
+            /* Start a new challenge: 10 kills in 60 seconds */
+            ent->client->challenge_end = level.time + 60.0f;
+            ent->client->challenge_kills = 0;
+            ent->client->challenge_target = 10;
+            gi.cprintf(ent, PRINT_ALL, "CHALLENGE: Get 10 kills in 60 seconds!\n");
+            SCR_AddPickupMessage("CHALLENGE STARTED: 10 kills in 60s!");
+        }
+        return;
+    }
+
     gi.cprintf(ent, PRINT_ALL, "Unknown command: %s\n", cmd);
 }
 
@@ -2757,6 +2773,10 @@ static void G_FireHitscan(edict_t *ent)
                 zone_dmg = (int)(damage * zone_mult);
                 if (ent->client) ent->client->last_damage_zone = zone;
 
+                /* Shield power-up damage reduction */
+                if (tr.ent->client && tr.ent->client->shield_end > level.time)
+                    zone_dmg = (int)(zone_dmg * tr.ent->client->shield_mult);
+
                 /* Armor absorbs 66% of damage — unless AP rounds bypass it */
                 if (tr.ent->client && tr.ent->client->armor > 0 &&
                     !(ent->client && ent->client->ap_rounds)) {
@@ -2854,6 +2874,18 @@ static void G_FireHitscan(edict_t *ent)
                     ent->client->kills++;
                     ent->client->score += score_award;
                     SCR_AddScorePopup(score_award);
+
+                    /* Challenge mode tracking */
+                    if (ent->client->challenge_end > level.time) {
+                        ent->client->challenge_kills++;
+                        if (ent->client->challenge_kills >= ent->client->challenge_target) {
+                            SCR_AddPickupMessage("CHALLENGE COMPLETE! +200 XP!");
+                            ent->client->xp += 200;
+                            ent->client->score += 100;
+                            SCR_AddScorePopup(100);
+                            ent->client->challenge_end = 0;
+                        }
+                    }
 
                     /* XP and rank progression */
                     old_rank = ent->client->rank;
@@ -4232,6 +4264,25 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
         if (client->bullet_time_end <= level.time)
             level.time_scale = 1.0f;
         client->headshot_cam_end = 0;
+    }
+
+    /* Challenge mode timeout */
+    if (client->challenge_end > 0 && level.time >= client->challenge_end) {
+        if (client->challenge_kills < client->challenge_target) {
+            SCR_AddPickupMessage("CHALLENGE FAILED!");
+            gi.cprintf(ent, PRINT_ALL, "Challenge failed: %d/%d kills\n",
+                       client->challenge_kills, client->challenge_target);
+        }
+        client->challenge_end = 0;
+    }
+
+    /* Shield power-up visual feedback */
+    if (!ent->deadflag && client->shield_end > level.time) {
+        /* Blue glow tint */
+        client->blend[0] = 0.2f;
+        client->blend[1] = 0.3f;
+        client->blend[2] = 0.8f;
+        client->blend[3] = 0.1f;
     }
 
     /* Last stand: survive one lethal hit per life (must be above 50 HP) */
