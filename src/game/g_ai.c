@@ -220,10 +220,34 @@ static qboolean AI_FindTarget(edict_t *self)
     if (player->health <= 0)
         return qfalse;
 
-    /* Check range */
-    dist = AI_Range(self, player);
-    if (dist > AI_SIGHT_RANGE)
-        return qfalse;
+    /* Stealth system: crouching + slow movement reduces detection range */
+    {
+        float sight_range = AI_SIGHT_RANGE;
+        float speed;
+        vec3_t hvel;
+
+        VectorCopy(player->velocity, hvel);
+        hvel[2] = 0;
+        speed = VectorLength(hvel);
+
+        /* Crouching halves detection range */
+        if (player->client->ps.pm_flags & PMF_DUCKED)
+            sight_range *= 0.5f;
+
+        /* Moving slowly (<80 units/s) further reduces range */
+        if (speed < 80.0f)
+            sight_range *= 0.6f;
+        else if (speed < 150.0f)
+            sight_range *= 0.8f;
+
+        /* Sprinting increases detection range */
+        if (player->client->sprinting)
+            sight_range *= 1.3f;
+
+        dist = AI_Range(self, player);
+        if (dist > sight_range)
+            return qfalse;
+    }
 
     /* Check line of sight */
     if (!AI_Visible(self, player))
@@ -666,8 +690,34 @@ static void ai_think_chase(edict_t *self)
     if (self->s.frame < FRAME_RUN_START || self->s.frame > FRAME_RUN_END)
         self->s.frame = FRAME_RUN_START;
 
-    /* Chase toward enemy or last known position */
-    AI_MoveToward(self, self->move_origin, AI_CHASE_SPEED);
+    /* Flanking: offset approach angle based on entity index to spread out */
+    if (self->max_health >= 80 && dist > 128.0f) {
+        extern game_export_t globals;
+        vec3_t to_enemy, flank_pos;
+        float angle_offset;
+        float rad;
+        int idx = (int)(self - &globals.edicts[0]);
+
+        VectorSubtract(self->enemy->s.origin, self->s.origin, to_enemy);
+        to_enemy[2] = 0;
+        VectorNormalize(to_enemy);
+
+        /* Offset angle based on entity index: +/- 30-60 degrees */
+        angle_offset = (idx % 2 == 0) ? 0.5f : -0.5f;  /* ~30 degrees */
+        if (idx % 4 >= 2) angle_offset *= 2.0f;         /* ~60 degrees */
+
+        rad = angle_offset;
+        flank_pos[0] = self->enemy->s.origin[0] +
+                       (to_enemy[0] * cosf(rad) - to_enemy[1] * sinf(rad)) * -64.0f;
+        flank_pos[1] = self->enemy->s.origin[1] +
+                       (to_enemy[0] * sinf(rad) + to_enemy[1] * cosf(rad)) * -64.0f;
+        flank_pos[2] = self->s.origin[2];
+
+        AI_MoveToward(self, flank_pos, AI_CHASE_SPEED);
+    } else {
+        /* Direct chase toward enemy or last known position */
+        AI_MoveToward(self, self->move_origin, AI_CHASE_SPEED);
+    }
 
     /* If lost sight, consider throwing grenade at last known position */
     if (self->ai_flags & AI_LOST_SIGHT) {

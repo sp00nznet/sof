@@ -230,6 +230,7 @@ static void SP_misc_turret(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_misc_tripmine(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_env_lava(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_env_acid(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_debris(edict_t *ent, epair_t *pairs, int num_pairs);
 static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
                            int damage, vec3_t point);
 
@@ -310,6 +311,7 @@ static spawn_func_t spawn_funcs[] = {
     { "func_object",                SP_func_pushable },
     { "misc_explobox",              SP_func_explosive },
     { "misc_explobox_big",          SP_misc_explobox_big },
+    { "func_debris",                SP_func_debris },
 
     /* Splash effects */
     { "target_splash",              SP_target_splash },
@@ -2364,6 +2366,99 @@ static void SP_func_breakable(edict_t *ent, epair_t *pairs, int num_pairs)
     ent->die = breakable_die;
 
     gi.linkentity(ent);
+}
+
+/* ==========================================================================
+   func_debris — Breakable that spawns flying physics chunks on destruction
+   ========================================================================== */
+
+static void debris_chunk_think(edict_t *self)
+{
+    /* Remove chunk after its lifetime expires */
+    if (level.time > self->teleport_time) {
+        self->inuse = qfalse;
+        gi.unlinkentity(self);
+        return;
+    }
+    self->nextthink = level.time + 0.5f;
+}
+
+static void debris_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
+                        int damage, vec3_t point)
+{
+    vec3_t up = {0, 0, 1};
+    int chunk_count, i;
+
+    (void)inflictor; (void)damage; (void)point;
+
+    /* Debris particle effects */
+    R_ParticleEffect(self->s.origin, up, 11, 24);  /* debris chunks */
+    R_ParticleEffect(self->s.origin, up, 13, 12);  /* ground dust */
+    R_AddDlight(self->s.origin, 0.8f, 0.6f, 0.3f, 200.0f, 0.3f);
+
+    /* Spawn physical chunk entities that fly outward */
+    chunk_count = self->count > 0 ? self->count : 5;
+    if (chunk_count > 12) chunk_count = 12;
+
+    for (i = 0; i < chunk_count; i++) {
+        edict_t *chunk = G_AllocEdict();
+        if (!chunk) break;
+
+        chunk->classname = "debris_chunk";
+        chunk->solid = SOLID_NOT;
+        chunk->movetype = MOVETYPE_TOSS;
+        chunk->gravity = 1.0f;
+        VectorCopy(self->s.origin, chunk->s.origin);
+        chunk->s.origin[2] += 8.0f;
+
+        /* Random outward velocity */
+        chunk->velocity[0] = (float)((rand() % 400) - 200);
+        chunk->velocity[1] = (float)((rand() % 400) - 200);
+        chunk->velocity[2] = (float)(100 + (rand() % 200));
+
+        VectorSet(chunk->mins, -4, -4, -4);
+        VectorSet(chunk->maxs, 4, 4, 4);
+
+        chunk->think = debris_chunk_think;
+        chunk->nextthink = level.time + 0.5f;
+        chunk->teleport_time = level.time + 3.0f;  /* 3s lifetime */
+
+        gi.linkentity(chunk);
+    }
+
+    /* Fire targets on destruction */
+    if (self->target)
+        G_UseTargets(attacker, self->target);
+
+    /* Screen shake */
+    SCR_AddScreenShake(0.3f, 0.2f);
+
+    /* Remove the entity */
+    self->takedamage = DAMAGE_NO;
+    self->solid = SOLID_NOT;
+    self->inuse = qfalse;
+    gi.unlinkentity(self);
+}
+
+static void SP_func_debris(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *health_str = ED_FindValue(pairs, num_pairs, "health");
+    const char *count_str = ED_FindValue(pairs, num_pairs, "count");
+
+    (void)pairs; (void)num_pairs;
+
+    ent->solid = SOLID_BSP;
+    ent->movetype = MOVETYPE_PUSH;
+    ent->takedamage = DAMAGE_YES;
+    ent->health = health_str ? atoi(health_str) : 30;
+    ent->max_health = ent->health;
+    ent->count = count_str ? atoi(count_str) : 5;
+    ent->die = debris_die;
+
+    gi.linkentity(ent);
+    gi.dprintf("  func_debris at (%.0f %.0f %.0f) hp=%d chunks=%d\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->health, ent->count);
 }
 
 static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,

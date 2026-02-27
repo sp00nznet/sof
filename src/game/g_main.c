@@ -2492,6 +2492,15 @@ static void G_FireHitscan(edict_t *ent)
                     }
                 }
 
+                /* Drop victim's weapon as a pickup */
+                if (tr.ent->weapon_index > 0 && tr.ent->weapon_index < WEAP_COUNT) {
+                    extern edict_t *G_DropItem(vec3_t origin, const char *classname);
+                    char drop_class[64];
+                    snprintf(drop_class, sizeof(drop_class), "weapon_%s",
+                             weapon_names[tr.ent->weapon_index]);
+                    G_DropItem(tr.ent->s.origin, drop_class);
+                }
+
                 /* Track monster kills for level stats */
                 if (tr.ent->svflags & SVF_MONSTER)
                     level.killed_monsters++;
