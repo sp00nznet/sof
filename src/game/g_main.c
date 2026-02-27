@@ -1998,6 +1998,13 @@ static void G_FireHitscan(edict_t *ent)
                 SCR_AddDamageNumber(zone_dmg, 0, 0);  /* 0,0 = use screen center */
                 SCR_TriggerHitMarker();
 
+                /* Headshot notification */
+                if (zone == GORE_ZONE_HEAD || zone == GORE_ZONE_FACE) {
+                    SCR_AddPickupMessage("HEADSHOT!");
+                    if (ent->client)
+                        ent->client->score += 5;  /* bonus for precision */
+                }
+
                 gi.dprintf("Hit %s zone %d (x%.1f) for %d damage (health: %d)\n",
                            tr.ent->classname ? tr.ent->classname : "entity",
                            zone, zone_mult, zone_dmg, tr.ent->health);

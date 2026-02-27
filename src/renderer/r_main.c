@@ -791,11 +791,39 @@ static void R_DrawBrushEntities(void)
         if (!ent->inuse)
             continue;
 
+        /* Skip entities flagged as viewer model (not drawn through own eyes) */
+        if (ent->s.renderfx & RF_VIEWERMODEL)
+            continue;
+
         /* Get interpolated position if available, otherwise use current */
         if (!R_GetInterpOrigin(i, render_origin, ent->s.origin,
                                render_angles, ent->s.angles)) {
             VectorCopy(ent->s.origin, render_origin);
             VectorCopy(ent->s.angles, render_angles);
+        }
+
+        /* EF_ROTATE — spin on pedestal (items, pickups) */
+        if (ent->s.effects & EF_ROTATE) {
+            float t = (float)Sys_Milliseconds() * 0.1f;
+            render_angles[1] = (float)((int)t % 360);
+        }
+
+        /* EF_ROCKET — rocket trail dynamic light */
+        if (ent->s.effects & EF_ROCKET) {
+            R_AddDlight(render_origin, 1.0f, 0.5f, 0.1f, 200.0f, 0.05f);
+        }
+
+        /* EF_GIB — blood trail */
+        if (ent->s.effects & EF_GIB) {
+            vec3_t trail_up = {0, 0, 1};
+            R_ParticleEffect(render_origin, trail_up, 1, 1);
+        }
+
+        /* RF_GLOW — pulsing light effect */
+        if (ent->s.renderfx & RF_GLOW) {
+            float t = (float)Sys_Milliseconds() * 0.004f;
+            float pulse = 0.5f + 0.5f * (float)sin(t);
+            R_AddDlight(render_origin, pulse, pulse, pulse, 100.0f, 0.05f);
         }
 
         /* Entities with models */
