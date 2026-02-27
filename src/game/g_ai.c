@@ -20,6 +20,7 @@
 extern void R_ParticleEffect(vec3_t org, vec3_t dir, int type, int count);
 extern void R_AddDlight(vec3_t origin, float r, float g, float b,
                          float intensity, float duration);
+extern void R_AddTracer(vec3_t start, vec3_t end, float r, float g, float b);
 
 /* Monster sound indices — precached in monster_start */
 static int snd_monster_pain1;
@@ -406,6 +407,13 @@ static void ai_think_attack(edict_t *self)
         tr = gi.trace(start, NULL, NULL, end, self, MASK_SHOT);
 
         if (tr.fraction < 1.0f) {
+            /* Bullet tracer */
+            {
+                vec3_t tracer_start;
+                VectorMA(start, 16, dir, tracer_start);
+                R_AddTracer(tracer_start, tr.endpos, 1.0f, 0.7f, 0.3f);
+            }
+
             /* Muzzle flash particles, light, and sound */
             {
                 vec3_t muzzle;

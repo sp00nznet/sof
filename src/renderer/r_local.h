@@ -364,4 +364,7 @@ void        R_UpdateEntityInterp(void);
 void        R_AddSprite(vec3_t origin, float size, float r, float g, float b,
                          float alpha, float lifetime, float rotation_speed);
 
+/* Bullet tracer system (r_main.c) */
+void        R_AddTracer(vec3_t start, vec3_t end, float r, float g, float b);
+
 #endif /* R_LOCAL_H */

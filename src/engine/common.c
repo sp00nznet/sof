@@ -131,6 +131,7 @@ static void SCR_DrawPickupMessages(void);
 static void SCR_DrawKillFeed(void);
 static void SCR_DrawMinimap(void);
 static void SCR_DrawDeathScreen(void);
+static void SCR_DrawHitMarker(void);
 static void SCR_DrawIntermission(void);
 
 /* Intermission state */
@@ -429,6 +430,7 @@ void Qcommon_Frame(int msec)
         } else {
             SCR_DrawHUD(msec / 1000.0f);
             SCR_DrawDamageNumbers();
+            SCR_DrawHitMarker();
             SCR_DrawPickupMessages();
             SCR_DrawKillFeed();
             SCR_DrawDeathScreen();
@@ -1198,6 +1200,59 @@ static void SCR_DrawDamageNumbers(void)
         Com_sprintf(buf, sizeof(buf), "%d", d->value);
         R_DrawString(d->screen_x, y, buf);
     }
+
+    R_SetDrawColor(1.0f, 1.0f, 1.0f, 1.0f);
+}
+
+/* ==========================================================================
+   Hit Marker
+   ========================================================================== */
+
+#define HITMARKER_DURATION  0.2f
+
+static float hitmarker_time;    /* timestamp when last hit registered */
+
+void SCR_TriggerHitMarker(void)
+{
+    hitmarker_time = (float)Sys_Milliseconds() / 1000.0f;
+}
+
+static void SCR_DrawHitMarker(void)
+{
+    float now = (float)Sys_Milliseconds() / 1000.0f;
+    float age = now - hitmarker_time;
+    float alpha;
+    int cx, cy;
+    int size = 8;
+    int gap = 4;
+
+    if (hitmarker_time == 0 || age > HITMARKER_DURATION)
+        return;
+
+    alpha = 1.0f - (age / HITMARKER_DURATION);
+    if (alpha < 0) alpha = 0;
+
+    cx = g_display.width / 2;
+    cy = g_display.height / 2;
+
+    /* Draw X shape — four diagonal lines as small fills */
+    R_SetDrawColor(1.0f, 1.0f, 1.0f, alpha);
+
+    /* Top-left to center */
+    R_DrawFill(cx - gap - size, cy - gap - size, size, 2, (int)0xFFFFFFFF);
+    R_DrawFill(cx - gap - size, cy - gap - size, 2, size, (int)0xFFFFFFFF);
+
+    /* Top-right to center */
+    R_DrawFill(cx + gap + 1, cy - gap - size, size, 2, (int)0xFFFFFFFF);
+    R_DrawFill(cx + gap + size - 1, cy - gap - size, 2, size, (int)0xFFFFFFFF);
+
+    /* Bottom-left to center */
+    R_DrawFill(cx - gap - size, cy + gap + 1, size, 2, (int)0xFFFFFFFF);
+    R_DrawFill(cx - gap - size, cy + gap + 1, 2, size, (int)0xFFFFFFFF);
+
+    /* Bottom-right to center */
+    R_DrawFill(cx + gap + 1, cy + gap + 1, size, 2, (int)0xFFFFFFFF);
+    R_DrawFill(cx + gap + size - 1, cy + gap + 1, 2, size, (int)0xFFFFFFFF);
 
     R_SetDrawColor(1.0f, 1.0f, 1.0f, 1.0f);
 }

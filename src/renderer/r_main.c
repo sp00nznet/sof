@@ -333,6 +333,8 @@ static void R_DrawDecals(void);
 static void R_UpdateDlights(void);
 static void R_UpdateSprites(float frametime);
 static void R_DrawSprites(void);
+static void R_UpdateTracers(float frametime);
+static void R_DrawTracers(void);
 static model_t *R_FindModel(const char *name);
 
 /* ==========================================================================
@@ -357,9 +359,10 @@ void R_BeginFrame(float camera_separation)
     if (frametime < 0.001f) frametime = 0.001f;
     last_frame_time = now;
 
-    /* Update particles, sprites, and dynamic lights */
+    /* Update particles, sprites, tracers, and dynamic lights */
     R_UpdateParticles(frametime);
     R_UpdateSprites(frametime);
+    R_UpdateTracers(frametime);
     R_UpdateDlights();
 
     /* Clear screen */
@@ -1335,9 +1338,10 @@ void R_RenderFrame(refdef_t *fd)
     /* Draw decals on world surfaces */
     R_DrawDecals();
 
-    /* Draw particles and sprites */
+    /* Draw particles, sprites, and tracers */
     R_DrawParticles();
     R_DrawSprites();
+    R_DrawTracers();
 
     /* Draw dynamic lights */
     R_DrawDlights();
@@ -1635,6 +1639,84 @@ static void R_DrawParticles(void)
     qglEnd();
 
     if (qglPointSize) qglPointSize(1.0f);
+    qglDepthMask(GL_TRUE);
+    qglDisable(GL_BLEND);
+    qglEnable(GL_TEXTURE_2D);
+    qglColor4f(1, 1, 1, 1);
+}
+
+/* ==========================================================================
+   Bullet Tracers — Brief visible lines from muzzle to impact
+   ========================================================================== */
+
+#define MAX_TRACERS     32
+#define TRACER_LIFETIME 0.15f    /* seconds visible */
+
+typedef struct {
+    vec3_t  start;
+    vec3_t  end;
+    float   color[3];
+    float   time;       /* remaining lifetime */
+} r_tracer_t;
+
+static r_tracer_t  r_tracers[MAX_TRACERS];
+static int         r_num_tracers;
+
+void R_AddTracer(vec3_t start, vec3_t end, float r, float g, float b)
+{
+    r_tracer_t *t;
+
+    if (r_num_tracers >= MAX_TRACERS)
+        return;
+
+    t = &r_tracers[r_num_tracers++];
+    VectorCopy(start, t->start);
+    VectorCopy(end, t->end);
+    t->color[0] = r; t->color[1] = g; t->color[2] = b;
+    t->time = TRACER_LIFETIME;
+}
+
+static void R_UpdateTracers(float frametime)
+{
+    int i;
+
+    for (i = 0; i < r_num_tracers; ) {
+        r_tracers[i].time -= frametime;
+        if (r_tracers[i].time <= 0) {
+            r_tracers[i] = r_tracers[--r_num_tracers];
+        } else {
+            i++;
+        }
+    }
+}
+
+static void R_DrawTracers(void)
+{
+    int i;
+
+    if (r_num_tracers == 0)
+        return;
+
+    qglDisable(GL_TEXTURE_2D);
+    qglEnable(GL_BLEND);
+    qglBlendFunc(GL_SRC_ALPHA, GL_ONE);  /* additive */
+    qglDepthMask(GL_FALSE);
+
+    qglBegin(GL_LINES);
+
+    for (i = 0; i < r_num_tracers; i++) {
+        r_tracer_t *t = &r_tracers[i];
+        float alpha = t->time / TRACER_LIFETIME;
+
+        /* Bright start, dimmer end */
+        qglColor4f(t->color[0], t->color[1], t->color[2], alpha);
+        qglVertex3f(t->start[0], t->start[1], t->start[2]);
+        qglColor4f(t->color[0] * 0.5f, t->color[1] * 0.5f, t->color[2] * 0.5f, alpha * 0.3f);
+        qglVertex3f(t->end[0], t->end[1], t->end[2]);
+    }
+
+    qglEnd();
+
     qglDepthMask(GL_TRUE);
     qglDisable(GL_BLEND);
     qglEnable(GL_TEXTURE_2D);

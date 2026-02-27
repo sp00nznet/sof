@@ -28,8 +28,10 @@ extern void SCR_AddDamageNumber(int damage, int screen_x, int screen_y);
 extern void SCR_AddPickupMessage(const char *text);
 extern void SCR_AddKillFeed(const char *attacker, const char *victim, const char *weapon);
 extern void SCR_AddScreenShake(float intensity, float duration);
+extern void SCR_TriggerHitMarker(void);
 extern void R_AddSprite(vec3_t origin, float size, float r, float g, float b,
                          float alpha, float lifetime, float rotation_speed);
+extern void R_AddTracer(vec3_t start, vec3_t end, float r, float g, float b);
 
 /* Sound constants now in g_local.h */
 
@@ -1796,6 +1798,14 @@ static void G_FireHitscan(edict_t *ent)
             VectorMA(start, trace_range, pellet_dir, end);
             tr = gi.trace(start, NULL, NULL, end, ent, MASK_SHOT);
 
+            /* Bullet tracer from muzzle to impact */
+            if (tr.fraction < 1.0f && weap != WEAP_KNIFE) {
+                vec3_t tracer_start;
+                VectorMA(start, 16, forward, tracer_start);
+                VectorMA(tracer_start, 6, right, tracer_start);
+                R_AddTracer(tracer_start, tr.endpos, 1.0f, 0.9f, 0.5f);
+            }
+
     if (tr.fraction < 1.0f) {
         /* Spawn impact particles at hit point */
         if (tr.ent && tr.ent->takedamage && tr.ent->health > 0) {
@@ -1845,6 +1855,7 @@ static void G_FireHitscan(edict_t *ent)
 
                 /* Floating damage number at crosshair area */
                 SCR_AddDamageNumber(zone_dmg, 0, 0);  /* 0,0 = use screen center */
+                SCR_TriggerHitMarker();
 
                 gi.dprintf("Hit %s zone %d (x%.1f) for %d damage (health: %d)\n",
                            tr.ent->classname ? tr.ent->classname : "entity",
