@@ -1346,6 +1346,67 @@ const char *SV_GetNearbyItemName(void)
 }
 
 /*
+ * SV_GetUsePrompt — Trace forward from player's view to find usable entities
+ * Returns a string like "USE door" or NULL if nothing usable is in front.
+ */
+const char *SV_GetUsePrompt(void)
+{
+    static char prompt[64];
+    edict_t *player;
+    vec3_t start, end, forward, right, up;
+    trace_t tr;
+
+    if (!ge || !ge->edicts)
+        return NULL;
+
+    player = (edict_t *)((byte *)ge->edicts + ge->edict_size);
+    if (!player->inuse || !player->client || player->deadflag)
+        return NULL;
+
+    VectorCopy(player->s.origin, start);
+    start[2] += player->client->viewheight;
+
+    {
+        float yaw = player->client->viewangles[1] * 3.14159265f / 180.0f;
+        float pitch = player->client->viewangles[0] * 3.14159265f / 180.0f;
+        float cp = cosf(pitch);
+        forward[0] = cp * cosf(yaw);
+        forward[1] = cp * sinf(yaw);
+        forward[2] = -sinf(pitch);
+    }
+
+    end[0] = start[0] + forward[0] * 96.0f;
+    end[1] = start[1] + forward[1] * 96.0f;
+    end[2] = start[2] + forward[2] * 96.0f;
+
+    tr = GI_trace(start, NULL, NULL, end, player, MASK_SHOT);
+    if (tr.fraction < 1.0f && tr.ent) {
+        edict_t *target = tr.ent;
+        if (target->use && target->classname) {
+            const char *name = target->classname;
+
+            /* Friendly display names */
+            if (target->message && target->message[0])
+                snprintf(prompt, sizeof(prompt), "[E] %s", target->message);
+            else if (strncmp(name, "func_door", 9) == 0)
+                snprintf(prompt, sizeof(prompt), "[E] Open");
+            else if (strcmp(name, "func_button") == 0)
+                snprintf(prompt, sizeof(prompt), "[E] Press");
+            else if (strncmp(name, "info_npc", 8) == 0)
+                snprintf(prompt, sizeof(prompt), "[E] Talk");
+            else if (strncmp(name, "func_ladder", 11) == 0)
+                snprintf(prompt, sizeof(prompt), "[E] Climb");
+            else
+                snprintf(prompt, sizeof(prompt), "[E] Use");
+
+            return prompt;
+        }
+    }
+
+    return NULL;
+}
+
+/*
  * SV_GetPlayerKeys — Get player's collected key bitmask for HUD display
  */
 int SV_GetPlayerKeys(void)

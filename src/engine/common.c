@@ -1975,6 +1975,19 @@ static void SCR_DrawHUD(float frametime)
         }
     }
 
+    /* Use prompt — centered below crosshair */
+    {
+        extern const char *SV_GetUsePrompt(void);
+        const char *prompt = SV_GetUsePrompt();
+        if (prompt) {
+            int plen = (int)strlen(prompt);
+            int px = g_display.width / 2 - plen * 4;
+            int py = g_display.height / 2 + 30;
+            R_SetDrawColor(1.0f, 1.0f, 1.0f, 0.9f);
+            R_DrawString(px, py, prompt);
+        }
+    }
+
     /* HUD background bar — bottom of screen (semi-transparent dark) */
     R_DrawFill(0, g_display.height - 48, g_display.width, 48, (int)(0x80000000));
 
