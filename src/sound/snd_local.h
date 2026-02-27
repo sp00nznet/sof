@@ -50,6 +50,7 @@
 #define CHAN_VOICE           2
 #define CHAN_ITEM            3
 #define CHAN_BODY            4
+#define CHAN_LOOP            0x100   /* flag: force looping playback */
 
 /* ==========================================================================
    WAV File Format
@@ -96,6 +97,7 @@ typedef struct {
     int         pos;            /* current sample position */
     int         end;            /* end sample position */
     qboolean    autosound;      /* ambient looping */
+    qboolean    looping;        /* force loop from start (ambient/music) */
     qboolean    fixed_origin;   /* use origin instead of entity origin */
 } channel_t;
 
@@ -163,6 +165,8 @@ void        S_FreeSound(sfx_t *sfx);
 void        S_StartSound(vec3_t origin, int entnum, int entchannel,
                           sfx_t *sfx, float vol, float attenuation,
                           float timeofs);
+void        S_StartLoopingSound(vec3_t origin, int entnum, int entchannel,
+                                 sfx_t *sfx, float vol, float attenuation);
 void        S_StartLocalSound(const char *name);
 void        S_StopAllSounds(void);
 

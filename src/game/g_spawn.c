@@ -2667,12 +2667,11 @@ static void SP_target_speaker(edict_t *ent, epair_t *pairs, int num_pairs)
 
     ent->use = target_speaker_use;
 
-    /* Spawnflag 1 = looping: auto-play with repeat interval */
+    /* Spawnflag 1 = looping: use CHAN_LOOP for true continuous playback */
     if (ent->style & 1) {
-        if (!ent->wait || ent->wait < 0.1f)
-            ent->wait = 5.0f;  /* default loop every 5 seconds */
-        ent->think = target_speaker_loop_think;
-        ent->nextthink = level.time + 1.0f;  /* first play after 1s */
+        if (ent->noise_index)
+            gi.sound(ent, CHAN_AUTO | 0x100, ent->noise_index,
+                     ent->volume, ent->attenuation, 0);
     }
 }
 

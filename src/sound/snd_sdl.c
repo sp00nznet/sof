@@ -314,7 +314,10 @@ static void S_AudioCallback(void *userdata, Uint8 *stream, int len)
 
             if (sample_idx >= ch->sfx->length) {
                 /* Check for loop */
-                if (ch->sfx->loopstart >= 0) {
+                if (ch->looping) {
+                    ch->pos = 0;
+                    sample_idx = 0;
+                } else if (ch->sfx->loopstart >= 0) {
                     ch->pos = ch->sfx->loopstart;
                     sample_idx = ch->pos;
                 } else {
@@ -566,6 +569,43 @@ void S_StartSound(vec3_t origin, int entnum, int entchannel,
         ch->master_vol = vol;
         ch->dist_mult = attenuation / 1000.0f;
         ch->pos = 0;
+
+        if (origin) {
+            VectorCopy(origin, ch->origin);
+            ch->fixed_origin = qtrue;
+        } else {
+            ch->fixed_origin = qfalse;
+        }
+    }
+
+    SDL_UnlockAudioDevice(snd.device);
+}
+
+void S_StartLoopingSound(vec3_t origin, int entnum, int entchannel,
+                          sfx_t *sfx, float vol, float attenuation)
+{
+    channel_t   *ch;
+
+    if (!snd.initialized || !snd.active || !sfx)
+        return;
+
+    if (!sfx->loaded)
+        S_LoadSound(sfx);
+    if (!sfx->loaded || !sfx->data)
+        return;
+
+    SDL_LockAudioDevice(snd.device);
+
+    ch = S_PickChannel(entnum, entchannel);
+    if (ch) {
+        ch->sfx = sfx;
+        ch->entnum = entnum;
+        ch->entchannel = entchannel;
+        ch->master_vol = vol;
+        ch->dist_mult = attenuation / 1000.0f;
+        ch->pos = 0;
+        ch->looping = qtrue;
+        ch->autosound = qtrue;
 
         if (origin) {
             VectorCopy(origin, ch->origin);

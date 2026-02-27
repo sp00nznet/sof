@@ -257,6 +257,7 @@ GLuint      R_LoadSkyTexture(const char *path);
 /* Lightmap system (r_light.c) */
 void        R_BuildLightmaps(bsp_world_t *world);
 void        R_FreeLightmaps(void);
+void        R_LightPoint(vec3_t p, vec3_t color);
 qboolean    R_GetFaceLightmapTC(int face_idx, float *vertex,
                                  bsp_texinfo_t *ti,
                                  float *out_s, float *out_t,

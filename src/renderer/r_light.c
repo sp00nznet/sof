@@ -47,6 +47,7 @@ static int              lm_allocated[LM_BLOCK_WIDTH]; /* row allocation per colu
 
 static face_lightmap_t  *lm_faces;
 static int              lm_num_faces;
+static bsp_world_t     *lm_world;  /* pointer to current world for R_LightPoint */
 
 /* ==========================================================================
    Lightmap Atlas Packing
@@ -202,6 +203,8 @@ void R_BuildLightmaps(bsp_world_t *world)
 {
     int     i;
     int     built = 0;
+
+    lm_world = world;
 
     /* Free previous */
     R_FreeLightmaps();
@@ -375,6 +378,106 @@ GLuint R_GetFaceLightmapTexture(int face_idx)
     if (lm_faces[face_idx].atlas_index < 0)
         return 0;
     return lm_textures[lm_faces[face_idx].atlas_index];
+}
+
+/* ==========================================================================
+   R_LightPoint - Sample world light at a position
+
+   Searches nearby floor faces to find the lightmap color at the given
+   world position. Returns an RGB light value (0-1 range).
+   ========================================================================== */
+
+void R_LightPoint(vec3_t p, vec3_t color)
+{
+    int i;
+    float best_dist = 999999.0f;
+    int best_face = -1;
+
+    color[0] = color[1] = color[2] = 1.0f;  /* default: full bright */
+
+    if (!lm_world || !lm_world->lightdata || !lm_faces)
+        return;
+
+    /* Find the closest upward-facing face below this point */
+    for (i = 0; i < lm_world->num_faces; i++) {
+        bsp_face_t *face = &lm_world->faces[i];
+        bsp_plane_t *plane = &lm_world->planes[face->planenum];
+        float dot, dist;
+
+        if (face->lightofs < 0)
+            continue;
+
+        /* Only consider mostly-horizontal surfaces (floors/ceilings) */
+        dot = plane->normal[2];
+        if (face->side) dot = -dot;
+        if (dot < 0.7f)
+            continue;  /* not floor-like */
+
+        /* Distance from point to plane */
+        dist = p[0] * plane->normal[0] + p[1] * plane->normal[1] +
+               p[2] * plane->normal[2] - plane->dist;
+        if (face->side)
+            dist = -dist;
+
+        /* Only faces below us (positive dist means point is above plane) */
+        if (dist < -16.0f || dist > 256.0f)
+            continue;
+
+        if (dist < best_dist) {
+            /* Check if point is within face's XY bounding box (rough) */
+            bsp_texinfo_t *ti = &lm_world->texinfo[face->texinfo];
+            float s = p[0] * ti->vecs[0][0] + p[1] * ti->vecs[0][1] +
+                      p[2] * ti->vecs[0][2] + ti->vecs[0][3];
+            float t = p[0] * ti->vecs[1][0] + p[1] * ti->vecs[1][1] +
+                      p[2] * ti->vecs[1][2] + ti->vecs[1][3];
+            face_lightmap_t *flm = &lm_faces[i];
+
+            /* Check if s/t coordinates are within this face's lightmap range */
+            if (flm->width > 0 && flm->height > 0) {
+                /* Use this face's texinfo to compute lightmap position */
+                best_dist = dist;
+                best_face = i;
+            }
+        }
+    }
+
+    /* Sample the lightmap from the best face */
+    if (best_face >= 0) {
+        bsp_face_t *face = &lm_world->faces[best_face];
+        bsp_texinfo_t *ti = &lm_world->texinfo[face->texinfo];
+        face_lightmap_t *flm = &lm_faces[best_face];
+        float s, t;
+        int ls, lt;
+
+        s = p[0] * ti->vecs[0][0] + p[1] * ti->vecs[0][1] +
+            p[2] * ti->vecs[0][2] + ti->vecs[0][3];
+        t = p[0] * ti->vecs[1][0] + p[1] * ti->vecs[1][1] +
+            p[2] * ti->vecs[1][2] + ti->vecs[1][3];
+
+        /* Convert to luxel coordinates */
+        ls = (int)((s - flm->s_offset) / 16.0f);
+        lt = (int)((t - flm->t_offset) / 16.0f);
+
+        if (ls < 0) ls = 0;
+        if (lt < 0) lt = 0;
+        if (ls >= flm->width) ls = flm->width - 1;
+        if (lt >= flm->height) lt = flm->height - 1;
+
+        /* Read lightmap data — assume RGB (3 bytes per luxel) */
+        if (face->lightofs >= 0 &&
+            face->lightofs + (lt * flm->width + ls) * 3 + 2 < lm_world->lightdata_size) {
+            byte *sample = lm_world->lightdata + face->lightofs +
+                           (lt * flm->width + ls) * 3;
+            color[0] = sample[0] / 255.0f;
+            color[1] = sample[1] / 255.0f;
+            color[2] = sample[2] / 255.0f;
+
+            /* Boost (Q2-style overbright x2, clamped) */
+            color[0] = color[0] * 2.0f > 1.0f ? 1.0f : color[0] * 2.0f;
+            color[1] = color[1] * 2.0f > 1.0f ? 1.0f : color[1] * 2.0f;
+            color[2] = color[2] * 2.0f > 1.0f ? 1.0f : color[2] * 2.0f;
+        }
+    }
 }
 
 /* ==========================================================================

@@ -110,9 +110,16 @@ static void GI_sound(edict_t *ent, int channel, int soundindex,
     sfx_t *sfx;
     vec3_t origin;
     int entnum = 0;
+    qboolean loop = qfalse;
 
     if (soundindex <= 0 || soundindex >= MAX_SOUNDS)
         return;
+
+    /* Check for looping flag */
+    if (channel & CHAN_LOOP) {
+        loop = qtrue;
+        channel &= ~CHAN_LOOP;
+    }
 
     name = sv_configstrings[CS_SOUNDS + soundindex];
     if (!name[0])
@@ -129,7 +136,10 @@ static void GI_sound(edict_t *ent, int channel, int soundindex,
         VectorClear(origin);
     }
 
-    S_StartSound(origin, entnum, channel, sfx, volume, attenuation, timeofs);
+    if (loop)
+        S_StartLoopingSound(origin, entnum, channel, sfx, volume, attenuation);
+    else
+        S_StartSound(origin, entnum, channel, sfx, volume, attenuation, timeofs);
 }
 
 static void GI_positioned_sound(vec3_t origin, edict_t *ent, int channel,

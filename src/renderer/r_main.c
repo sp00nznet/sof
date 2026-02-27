@@ -547,6 +547,13 @@ static void R_DrawHumanoid(vec3_t origin, float yaw, float r, float g, float b,
                             int deadflag, int health)
 {
     vec3_t bmin, bmax;
+    vec3_t lightcolor;
+
+    /* Sample world lightmap at entity position */
+    R_LightPoint(origin, lightcolor);
+    r *= lightcolor[0];
+    g *= lightcolor[1];
+    b *= lightcolor[2];
 
     qglDisable(GL_TEXTURE_2D);
     qglEnable(GL_BLEND);

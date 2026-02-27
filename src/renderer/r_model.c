@@ -432,6 +432,15 @@ void R_DrawAliasModel(model_t *mod, vec3_t origin, vec3_t angles,
     old_verts = mesh->frames + oldframe * mesh->num_verts * 3;
     frontlerp = 1.0f - backlerp;
 
+    /* Sample world light at model position */
+    {
+        vec3_t lightcolor;
+        R_LightPoint(origin, lightcolor);
+        r *= lightcolor[0];
+        g *= lightcolor[1];
+        b *= lightcolor[2];
+    }
+
     /* Set up model transform */
     qglPushMatrix();
 

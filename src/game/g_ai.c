@@ -74,6 +74,10 @@ typedef enum {
 #define AI_CHASE_SPEED      200.0f
 #define AI_PAIN_TIME        0.5f
 #define AI_ATTACK_INTERVAL  1.0f
+#define AI_STRAFE_SPEED     120.0f
+#define AI_STRAFE_INTERVAL  1.5f   /* change strafe direction */
+#define AI_COVER_HEALTH_PCT 0.5f   /* seek cover below 50% health */
+#define AI_ALERT_RADIUS     768.0f /* radius to alert nearby monsters */
 
 /* ==========================================================================
    AI Utility Functions
@@ -197,6 +201,137 @@ static qboolean AI_FindTarget(edict_t *self)
     return qtrue;
 }
 
+/* Forward declaration — defined after state handlers */
+void monster_think(edict_t *self);
+
+/*
+ * AI_AlertNearby - When a monster spots the player, alert nearby
+ * monsters within AI_ALERT_RADIUS so they also enter combat.
+ */
+static void AI_AlertNearby(edict_t *self, edict_t *target)
+{
+    extern game_export_t globals;
+    int i;
+    for (i = 1; i < globals.num_edicts; i++) {
+        edict_t *e = &globals.edicts[i];
+        float dist;
+        vec3_t diff;
+
+        if (e == self || !e->inuse || e->health <= 0)
+            continue;
+        if (!e->think || e->think != monster_think)
+            continue;
+        if (e->enemy)       /* already in combat */
+            continue;
+
+        VectorSubtract(e->s.origin, self->s.origin, diff);
+        dist = VectorLength(diff);
+        if (dist > AI_ALERT_RADIUS)
+            continue;
+
+        /* Alert this monster */
+        e->enemy = target;
+        e->count = AI_STATE_ALERT;
+        e->nextthink = level.time + 0.2f + ((float)(rand() % 50)) * 0.01f;
+    }
+}
+
+/*
+ * AI_TryStrafe - Compute lateral strafe velocity perpendicular to enemy
+ */
+static void AI_Strafe(edict_t *self, int strafe_dir)
+{
+    vec3_t forward, right;
+    float yaw_rad;
+
+    if (!self->enemy) return;
+
+    yaw_rad = self->s.angles[1] * 3.14159265f / 180.0f;
+    forward[0] = cosf(yaw_rad);
+    forward[1] = sinf(yaw_rad);
+    forward[2] = 0;
+    right[0] = forward[1];
+    right[1] = -forward[0];
+    right[2] = 0;
+
+    if (strafe_dir < 0) {
+        right[0] = -right[0];
+        right[1] = -right[1];
+    }
+
+    /* Check if strafe direction is walkable */
+    {
+        vec3_t dest;
+        trace_t tr;
+        VectorMA(self->s.origin, 48.0f, right, dest);
+        tr = gi.trace(self->s.origin, self->mins, self->maxs, dest,
+                      self, MASK_MONSTERSOLID);
+        if (tr.fraction < 0.5f)
+            return;  /* blocked, don't strafe */
+    }
+
+    self->velocity[0] = right[0] * AI_STRAFE_SPEED;
+    self->velocity[1] = right[1] * AI_STRAFE_SPEED;
+}
+
+/*
+ * AI_SeekCover - Try to move behind nearby geometry to break LOS
+ * Tests 8 compass directions, picks one that blocks LOS to enemy.
+ */
+static qboolean AI_SeekCover(edict_t *self)
+{
+    int i;
+    vec3_t test_pos, enemy_eye;
+    float best_dist = 999999.0f;
+    vec3_t best_pos;
+    qboolean found = qfalse;
+
+    if (!self->enemy) return qfalse;
+
+    VectorCopy(self->enemy->s.origin, enemy_eye);
+    enemy_eye[2] += 20;
+
+    for (i = 0; i < 8; i++) {
+        trace_t tr_move, tr_vis;
+        float angle = (float)i * 45.0f * 3.14159265f / 180.0f;
+        float dx = cosf(angle) * 128.0f;
+        float dy = sinf(angle) * 128.0f;
+        float dist;
+        vec3_t diff;
+
+        VectorCopy(self->s.origin, test_pos);
+        test_pos[0] += dx;
+        test_pos[1] += dy;
+
+        /* Can we walk there? */
+        tr_move = gi.trace(self->s.origin, self->mins, self->maxs,
+                           test_pos, self, MASK_MONSTERSOLID);
+        if (tr_move.fraction < 0.8f)
+            continue;
+
+        /* Would we be hidden from enemy there? */
+        tr_vis = gi.trace(tr_move.endpos, NULL, NULL, enemy_eye,
+                          self, MASK_OPAQUE);
+        if (tr_vis.fraction >= 1.0f)
+            continue;  /* still visible, not cover */
+
+        /* Pick the closest cover spot */
+        VectorSubtract(tr_move.endpos, self->s.origin, diff);
+        dist = VectorLength(diff);
+        if (dist < best_dist) {
+            best_dist = dist;
+            VectorCopy(tr_move.endpos, best_pos);
+            found = qtrue;
+        }
+    }
+
+    if (found) {
+        VectorCopy(best_pos, self->move_origin);
+        return qtrue;
+    }
+    return qfalse;
+}
+
 /* ==========================================================================
    AI State Handlers
    ========================================================================== */
@@ -222,6 +357,8 @@ static void ai_think_idle(edict_t *self)
         /* Sight sound */
         if (snd_monster_sight)
             gi.sound(self, CHAN_VOICE, snd_monster_sight, 1.0f, ATTN_NORM, 0);
+        /* Alert nearby squad mates */
+        AI_AlertNearby(self, self->enemy);
         /* Transition to alert */
         self->count = AI_STATE_ALERT;
         self->nextthink = level.time + 0.5f;   /* brief alert pause */
@@ -345,6 +482,7 @@ static void ai_think_chase(edict_t *self)
 static void ai_think_attack(edict_t *self)
 {
     float dist;
+    float health_pct;
 
     if (!self->enemy || !self->enemy->inuse || self->enemy->health <= 0) {
         self->enemy = NULL;
@@ -355,6 +493,7 @@ static void ai_think_attack(edict_t *self)
 
     AI_FaceEnemy(self);
     dist = AI_Range(self, self->enemy);
+    health_pct = (float)self->health / (float)(self->max_health > 0 ? self->max_health : 100);
 
     /* If target moved out of range, chase */
     if (dist > AI_ATTACK_RANGE * 1.2f || !AI_Visible(self, self->enemy)) {
@@ -362,6 +501,26 @@ static void ai_think_attack(edict_t *self)
         VectorCopy(self->enemy->s.origin, self->move_origin);
         self->nextthink = level.time + FRAMETIME;
         return;
+    }
+
+    /* Seek cover when badly hurt */
+    if (health_pct < AI_COVER_HEALTH_PCT && self->dmg_debounce_time <= level.time) {
+        if (AI_SeekCover(self)) {
+            self->count = AI_STATE_CHASE;  /* move to cover position */
+            self->nextthink = level.time + FRAMETIME;
+            return;
+        }
+    }
+
+    /* Strafe while attacking (change direction periodically) */
+    if (dist > AI_MELEE_RANGE) {
+        /* Use move_angles[2] as strafe timer */
+        if (level.time > self->move_angles[2]) {
+            self->move_angles[2] = level.time + AI_STRAFE_INTERVAL;
+            /* Flip strafe direction, stored in ai_flags bit 0x0100 */
+            self->ai_flags ^= 0x0100;
+        }
+        AI_Strafe(self, (self->ai_flags & 0x0100) ? 1 : -1);
     }
 
     /* Melee attack if within close range */
