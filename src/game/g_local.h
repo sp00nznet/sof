@@ -425,6 +425,16 @@ struct gclient_s {
     /* Weapon holster */
     qboolean        weapon_holstered;      /* weapon put away for faster movement */
     int             holster_weapon;         /* weapon to restore on unholster */
+
+    /* Adrenaline rush */
+    float           adrenaline_end;        /* level.time when damage boost ends */
+    float           adrenaline_mult;       /* damage multiplier (1.5x) */
+
+    /* Last stand */
+    qboolean        last_stand_used;       /* already used this life */
+
+    /* Headshot camera slow-mo */
+    float           headshot_cam_end;      /* level.time when headshot slow-mo ends */
 };
 
 /* ==========================================================================

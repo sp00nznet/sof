@@ -1367,6 +1367,17 @@ static void T_RadiusDamage(edict_t *inflictor, edict_t *attacker,
                 t->client->burn_end = level.time + 3.0f;
                 t->client->burn_next_tick = level.time + 0.5f;
             }
+
+            /* Flashbang effect: very close explosions cause white flash */
+            if (dist < radius * 0.3f && t->health > 0) {
+                t->client->blend[0] = 1.0f;
+                t->client->blend[1] = 1.0f;
+                t->client->blend[2] = 1.0f;
+                t->client->blend[3] = 0.8f;  /* intense white flash */
+                /* View punch from concussion */
+                t->client->kick_angles[0] += gi.flrand(-5.0f, 5.0f);
+                t->client->kick_angles[1] += gi.flrand(-5.0f, 5.0f);
+            }
         }
 
         if (t->health <= 0 && t->die) {
@@ -1959,6 +1970,11 @@ static void G_FireHitscan(edict_t *ent)
     }
 
     damage = (weap > 0 && weap < WEAP_COUNT) ? weapon_damage[weap] : 15;
+
+    /* Adrenaline rush damage boost */
+    if (ent->client->adrenaline_end > level.time && ent->client->adrenaline_mult > 1.0f)
+        damage = (int)(damage * ent->client->adrenaline_mult);
+
     {
         float firerate = (weap > 0 && weap < WEAP_COUNT) ? weapon_firerate[weap] : 0.2f;
         /* Dual wield: faster fire rate but less accurate */
@@ -2142,6 +2158,7 @@ static void G_FireHitscan(edict_t *ent)
                 zone = G_HitToGoreZone(tr.ent, tr.endpos, hit_dir);
                 zone_mult = gore_zone_dmg_mult[zone];
                 zone_dmg = (int)(damage * zone_mult);
+                if (ent->client) ent->client->last_damage_zone = zone;
 
                 /* Armor absorbs 66% of damage for players */
                 if (tr.ent->client && tr.ent->client->armor > 0) {
@@ -2219,6 +2236,13 @@ static void G_FireHitscan(edict_t *ent)
                     ent->client->score += 10;
                     SCR_AddScorePopup(10);
 
+                    /* Headshot kill camera: brief slow-mo */
+                    if (ent->client->last_damage_zone == GORE_ZONE_HEAD ||
+                        ent->client->last_damage_zone == GORE_ZONE_FACE) {
+                        ent->client->headshot_cam_end = level.time + 0.5f;
+                        level.time_scale = 0.4f;
+                    }
+
                     /* Bullet time charge: +15 per kill, capped at 100 */
                     ent->client->bullet_time_charge += 15.0f;
                     if (ent->client->bullet_time_charge > 100.0f)
@@ -2255,6 +2279,12 @@ static void G_FireHitscan(edict_t *ent)
                             SCR_AddScorePopup(30);
                         }
                         break;
+                    }
+
+                    /* Adrenaline rush: 1.5x damage for 5s on triple+ kill */
+                    if (ent->client->streak_count >= 3) {
+                        ent->client->adrenaline_end = level.time + 5.0f;
+                        ent->client->adrenaline_mult = 1.5f;
                     }
 
                     /* Kill feed notification */
@@ -2321,6 +2351,54 @@ static void G_FireHitscan(edict_t *ent)
                     if (ric_snd)
                         gi.positioned_sound(tr.endpos, NULL, CHAN_AUTO,
                                             ric_snd, 0.7f, ATTN_NORM, 0);
+                }
+
+                /* Ricochet bullet — metal surfaces bounce a weaker projectile */
+                if (is_metal && weap != WEAP_SHOTGUN && weap != WEAP_KNIFE) {
+                    vec3_t reflect, ric_end;
+                    trace_t ric_tr;
+                    float dot_n;
+
+                    /* Reflect: R = D - 2(D.N)N */
+                    dot_n = DotProduct(pellet_dir, tr.plane.normal);
+                    reflect[0] = pellet_dir[0] - 2.0f * dot_n * tr.plane.normal[0];
+                    reflect[1] = pellet_dir[1] - 2.0f * dot_n * tr.plane.normal[1];
+                    reflect[2] = pellet_dir[2] - 2.0f * dot_n * tr.plane.normal[2];
+
+                    /* Add some randomness to reflect */
+                    reflect[0] += gi.flrand(-0.05f, 0.05f);
+                    reflect[1] += gi.flrand(-0.05f, 0.05f);
+                    reflect[2] += gi.flrand(-0.05f, 0.05f);
+
+                    VectorMA(tr.endpos, 2048, reflect, ric_end);
+                    ric_tr = gi.trace(tr.endpos, NULL, NULL, ric_end, ent, MASK_SHOT);
+
+                    /* Tracer for ricochet */
+                    if (ric_tr.fraction < 1.0f) {
+                        R_AddTracer(tr.endpos, ric_tr.endpos, 1.0f, 0.7f, 0.3f);
+                        R_ParticleEffect(ric_tr.endpos, ric_tr.plane.normal, 12, 3);
+
+                        /* Ricochet can hit entities for half damage */
+                        if (ric_tr.ent && ric_tr.ent->takedamage && ric_tr.ent->health > 0) {
+                            int ric_dmg = damage / 2;
+                            if (ric_dmg < 1) ric_dmg = 1;
+                            ric_tr.ent->health -= ric_dmg;
+                            R_ParticleEffect(ric_tr.endpos, ric_tr.plane.normal, 1, 4);
+                            SCR_AddDamageNumber(ric_dmg, 0, 0);
+
+                            if (ric_tr.ent->health <= 0 && ric_tr.ent->die) {
+                                ric_tr.ent->die(ric_tr.ent, ent, ent, ric_dmg, ric_tr.endpos);
+                                if (ent->client) {
+                                    ent->client->kills++;
+                                    ent->client->score += 10;
+                                    SCR_AddScorePopup(10);
+                                    SCR_AddPickupMessage("RICOCHET KILL!");
+                                    ent->client->score += 10;  /* bonus */
+                                    SCR_AddScorePopup(10);
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -3321,8 +3399,43 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
                 client->blend[3] = 0.1f;
             }
         } else {
-            if (level.time_scale < 1.0f)
+            /* Don't reset time_scale if headshot cam is still active */
+            if (level.time_scale < 1.0f && client->headshot_cam_end <= level.time)
                 level.time_scale = 1.0f;
+        }
+    }
+
+    /* Headshot camera slow-mo: end after 0.5s */
+    if (client->headshot_cam_end > 0 && client->headshot_cam_end <= level.time) {
+        if (client->bullet_time_end <= level.time)
+            level.time_scale = 1.0f;
+        client->headshot_cam_end = 0;
+    }
+
+    /* Last stand: survive one lethal hit per life (must be above 50 HP) */
+    if (!ent->deadflag && ent->health <= 0 && !client->last_stand_used) {
+        ent->health = 1;
+        client->pers_health = 1;
+        client->last_stand_used = qtrue;
+        SCR_AddPickupMessage("LAST STAND!");
+        /* Red flash */
+        client->blend[0] = 1.0f;
+        client->blend[1] = 0.0f;
+        client->blend[2] = 0.0f;
+        client->blend[3] = 0.5f;
+    }
+
+    /* Reset last stand on respawn */
+    if (ent->health >= 50)
+        client->last_stand_used = qfalse;
+
+    /* Adrenaline rush screen effect — subtle red edge tint */
+    if (client->adrenaline_end > level.time) {
+        if (client->blend[3] < 0.08f) {
+            client->blend[0] = 1.0f;
+            client->blend[1] = 0.3f;
+            client->blend[2] = 0.0f;
+            client->blend[3] = 0.08f;
         }
     }
 
