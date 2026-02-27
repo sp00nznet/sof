@@ -261,6 +261,7 @@ static void SP_func_security_door(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_alarm(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_cover(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_trigger_cutscene(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_trigger_music(edict_t *ent, epair_t *pairs, int num_pairs);
 static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
                            int damage, vec3_t point);
 
@@ -497,6 +498,10 @@ static spawn_func_t spawn_funcs[] = {
     /* Cutscene triggers */
     { "trigger_cutscene",           SP_trigger_cutscene },
     { "trigger_cinematic",          SP_trigger_cutscene },
+
+    /* Music triggers */
+    { "trigger_music",              SP_trigger_music },
+    { "target_music",               SP_trigger_music },
 
     /* Weapons (SoF) */
     { "weapon_knife",               SP_item_pickup },
@@ -5684,6 +5689,49 @@ static void SP_trigger_cutscene(edict_t *ent, epair_t *pairs, int num_pairs)
 
     gi.dprintf("  trigger_cutscene at (%.0f %.0f %.0f) duration=%.1f\n",
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2], ent->speed);
+}
+
+/* ==========================================================================
+   trigger_music — Changes background music track when triggered
+   noise = sound file to play as music, count = CD track number
+   ========================================================================== */
+
+static void music_use(edict_t *self, edict_t *other, edict_t *activator)
+{
+    (void)other; (void)activator;
+
+    if (self->noise_index) {
+        /* Play as a positioned sound at full volume, no attenuation */
+        gi.positioned_sound(self->s.origin, self, CHAN_AUTO,
+                            self->noise_index, 1.0f, ATTN_NONE, 0);
+    }
+
+    /* Also set configstring for CD track */
+    if (self->count > 0) {
+        char trackstr[16];
+        snprintf(trackstr, sizeof(trackstr), "%d", self->count);
+        gi.configstring(32, trackstr);  /* CS_CDTRACK */
+    }
+
+    gi.dprintf("  Music trigger fired: track %d\n", self->count);
+}
+
+static void SP_trigger_music(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *noise_str = ED_FindValue(pairs, num_pairs, "noise");
+    const char *track_str = ED_FindValue(pairs, num_pairs, "count");
+
+    ent->movetype = MOVETYPE_NONE;
+    ent->solid = SOLID_NOT;
+    ent->svflags |= SVF_NOCLIENT;
+    ent->use = music_use;
+    ent->count = track_str ? atoi(track_str) : 0;
+    ent->noise_index = noise_str ? gi.soundindex(noise_str) : 0;
+
+    gi.linkentity(ent);
+
+    gi.dprintf("  trigger_music at (%.0f %.0f %.0f) track=%d\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2], ent->count);
 }
 
 /* ==========================================================================

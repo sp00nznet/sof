@@ -935,6 +935,25 @@ static void ai_think_attack(edict_t *self)
         return;
     }
 
+    /* Surrender: critically wounded light soldiers give up */
+    if (health_pct < 0.1f && self->max_health < 100) {
+        /* Stop fighting, stand still */
+        self->velocity[0] = self->velocity[1] = 0;
+        self->enemy = NULL;
+        self->takedamage = DAMAGE_YES;  /* still killable */
+        self->count = AI_STATE_IDLE;
+        self->ai_flags &= ~(AI_LOST_SIGHT | AI_PURSUE_TEMP);
+        /* "Hands up" — use pain frame as surrender pose */
+        self->s.frame = FRAME_PAIN1_START;
+        {
+            int snd = gi.soundindex("npc/surrender.wav");
+            if (snd)
+                gi.sound(self, CHAN_VOICE, snd, 1.0f, ATTN_NORM, 0);
+        }
+        self->nextthink = level.time + 999.0f;  /* stay surrendered */
+        return;
+    }
+
     /* Blind fire from cover: fire around corners with very low accuracy */
     if (self->max_health >= 60 && health_pct < 0.5f &&
         self->move_angles[2] < level.time) {

@@ -4507,6 +4507,22 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
         client->rdflags |= 0x04;  /* RDF_IRGOGGLES */
     }
 
+    /* Low health heartbeat — pulsing sound and red vignette */
+    if (!ent->deadflag && ent->health > 0 && ent->health <= 25) {
+        float pulse = sinf(level.time * 6.0f);  /* heartbeat rhythm */
+        if (pulse > 0.8f && client->next_ambient <= level.time) {
+            int snd_hb = gi.soundindex("player/heartbeat.wav");
+            if (snd_hb)
+                gi.sound(ent, CHAN_AUTO, snd_hb, 0.5f, ATTN_NONE, 0);
+            client->next_ambient = level.time + 0.8f;
+        }
+        /* Red vignette pulse */
+        client->blend[0] = 0.8f;
+        client->blend[1] = 0.0f;
+        client->blend[2] = 0.0f;
+        client->blend[3] = (pulse > 0) ? pulse * 0.15f : 0;
+    }
+
     /* Lean system — smoothly interpolate lean offset */
     if (!ent->deadflag) {
         float target = (client->lean_state != 0) ? 1.0f : 0;
