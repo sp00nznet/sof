@@ -1050,6 +1050,12 @@ static void ai_think_attack(edict_t *self)
             else if (sk >= 3) inaccuracy *= 0.4f;
         }
 
+        /* Panic fire: critically wounded monsters shoot faster but wildly */
+        if (health_pct < 0.2f) {
+            inaccuracy *= 2.5f;  /* terrible aim */
+            self->dmg_debounce_time = level.time + 0.2f; /* rapid fire */
+        }
+
         VectorCopy(self->s.origin, start);
         start[2] += 20;    /* eye height */
 

@@ -514,6 +514,9 @@ struct gclient_s {
     int             challenge_kills;       /* kills during challenge */
     int             challenge_target;      /* required kills */
 
+    /* Prone stance */
+    qboolean        prone;                 /* player is in prone position */
+    float           prone_transition;      /* 0=standing, 1=fully prone (lerp) */
 };
 
 /* ==========================================================================

@@ -1515,6 +1515,26 @@ static void ClientCommand(edict_t *ent)
         return;
     }
 
+    /* Prone stance toggle */
+    if (Q_stricmp(cmd, "prone") == 0 || Q_stricmp(cmd, "goprone") == 0) {
+        if (ent->deadflag)
+            return;
+        if (ent->client->prone) {
+            ent->client->prone = qfalse;
+            gi.cprintf(ent, PRINT_ALL, "Standing up\n");
+        } else {
+            /* Must be on ground to go prone */
+            if (!ent->groundentity) {
+                gi.cprintf(ent, PRINT_ALL, "Must be on ground to go prone.\n");
+                return;
+            }
+            ent->client->prone = qtrue;
+            ent->client->sprinting = qfalse; /* cancel sprint */
+            gi.cprintf(ent, PRINT_ALL, "Going prone\n");
+        }
+        return;
+    }
+
     gi.cprintf(ent, PRINT_ALL, "Unknown command: %s\n", cmd);
 }
 
@@ -2757,6 +2777,10 @@ static void G_FireHitscan(edict_t *ent)
         if (ent->client->viewheight < 20.0f)
             spread *= 0.6f;
 
+        /* Prone: maximum stability */
+        if (ent->client->prone)
+            spread *= 0.4f;
+
         /* Moving increases spread (check velocity magnitude) */
         {
             float speed_sq = ent->velocity[0] * ent->velocity[0] +
@@ -3565,11 +3589,20 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
     }
 
     /* Prone handling — lowest stance, nearly flat */
-    if (ucmd->buttons & BUTTON_PRONE) {
+    if ((ucmd->buttons & BUTTON_PRONE) || client->prone) {
         if (client->viewheight > 4) {
             client->viewheight = 4;    /* prone eye height */
             ent->maxs[2] = 8;         /* very low bbox */
         }
+        /* Smooth transition */
+        if (client->prone_transition < 1.0f) {
+            client->prone_transition += level.frametime * 4.0f;
+            if (client->prone_transition > 1.0f)
+                client->prone_transition = 1.0f;
+        }
+        /* Movement severely limited while prone */
+        ent->velocity[0] *= 0.3f;
+        ent->velocity[1] *= 0.3f;
         /* Can't sprint while prone */
         client->sprinting = qfalse;
     }
@@ -3583,6 +3616,12 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
         if (client->viewheight < 22) {
             client->viewheight = 22;  /* standing eye height */
             ent->maxs[2] = 32;  /* full bbox height */
+        }
+        /* Decay prone transition */
+        if (client->prone_transition > 0) {
+            client->prone_transition -= level.frametime * 4.0f;
+            if (client->prone_transition < 0)
+                client->prone_transition = 0;
         }
     }
 
