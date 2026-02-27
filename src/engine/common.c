@@ -1010,7 +1010,7 @@ static int  menu_cursor = 0;
 static int  map_cursor = 0;
 static int  opt_cursor = 0;
 
-#define OPT_ITEMS 5  /* sensitivity, volume, resolution, fullscreen, gore */
+#define OPT_ITEMS 6  /* sensitivity, volume, resolution, fullscreen, gore, difficulty */
 
 /* Exposed to key handler */
 int  M_IsActive(void) { return menu_active; }
@@ -1082,6 +1082,13 @@ void M_Keydown(int key)
                 if (dir > 0) { if (g < 2) g += 1; }
                 else { if (g > 0) g -= 1; }
                 Cvar_SetValue("gore_detail", g);
+                break;
+            }
+            case 5: { /* Difficulty */
+                float sk = Cvar_VariableValue("skill");
+                if (dir > 0) { if (sk < 3) sk += 1; }
+                else { if (sk > 0) sk -= 1; }
+                Cvar_SetValue("skill", sk);
                 break;
             }
             }
@@ -1184,7 +1191,7 @@ static void SCR_DrawMenu(void)
         /* Interactive options sub-menu */
         char val[64];
         static const char *opt_labels[OPT_ITEMS] = {
-            "Sensitivity", "Volume", "Resolution", "Fullscreen", "Gore"
+            "Sensitivity", "Volume", "Resolution", "Fullscreen", "Gore", "Difficulty"
         };
         static const char *res_names[] = {
             "320x240", "400x300", "512x384", "640x480", "800x600",
@@ -1229,6 +1236,13 @@ static void SCR_DrawMenu(void)
                 int gd = (int)Cvar_VariableValue("gore_detail");
                 Com_sprintf(val, sizeof(val), "%-12s < %s >", opt_labels[i],
                             gd >= 2 ? "Full" : (gd >= 1 ? "Reduced" : "Off"));
+                break;
+            }
+            case 5: {
+                int sk = (int)Cvar_VariableValue("skill");
+                static const char *diff_names[] = { "Easy", "Normal", "Hard", "Nightmare" };
+                if (sk < 0) sk = 0; if (sk > 3) sk = 3;
+                Com_sprintf(val, sizeof(val), "%-12s < %s >", opt_labels[i], diff_names[sk]);
                 break;
             }
             }

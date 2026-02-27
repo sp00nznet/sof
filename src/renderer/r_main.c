@@ -969,6 +969,10 @@ static float vw_switch_frac;        /* 0=normal, 1=fully lowered */
 static int   vw_switch_phase;       /* 0=idle, 1=lowering, 2=raising */
 static int   vw_switch_target;      /* weapon to switch to */
 
+/* Weapon fire animation state */
+static float vw_fire_anim;          /* 0=idle, >0=animating (counts down) */
+static float vw_fire_anim_max;      /* max value for animation duration */
+
 void R_SetViewWeaponState(int weapon_id, float kick, float bob_phase,
                           float bob_amount, float sway_yaw, float sway_pitch,
                           qboolean reloading)
@@ -995,6 +999,25 @@ void R_SetViewWeaponState(int weapon_id, float kick, float bob_phase,
     vw_sway_yaw = sway_yaw;
     vw_sway_pitch = sway_pitch;
     vw_reloading = reloading;
+
+    /* Trigger fire animation on fresh kick (shot fired) */
+    if (kick > 0.8f && vw_fire_anim <= 0) {
+        /* Animation duration varies by weapon type */
+        switch (weapon_id) {
+        case 4:  /* WEAP_SHOTGUN — pump action */
+            vw_fire_anim = 1.0f;
+            vw_fire_anim_max = 1.0f;
+            break;
+        case 7:  /* WEAP_SNIPER — bolt action */
+            vw_fire_anim = 1.0f;
+            vw_fire_anim_max = 1.0f;
+            break;
+        default: /* Semi-auto slide */
+            vw_fire_anim = 0.5f;
+            vw_fire_anim_max = 0.5f;
+            break;
+        }
+    }
 }
 
 /*
@@ -1282,6 +1305,12 @@ static void R_DrawViewWeapon(refdef_t *fd)
     float reload_angle;
     float switch_offset = 0;
 
+    /* Advance weapon fire animation */
+    if (vw_fire_anim > 0) {
+        vw_fire_anim -= 0.04f;  /* ~25 frames at 60fps */
+        if (vw_fire_anim < 0) vw_fire_anim = 0;
+    }
+
     /* Advance weapon switch animation */
     if (vw_switch_phase == 1) {
         /* Lowering old weapon */
@@ -1343,6 +1372,18 @@ static void R_DrawViewWeapon(refdef_t *fd)
     /* Calculate kick offsets */
     kick_pitch = -vw_kick * 8.0f;   /* weapon tips up when firing */
     kick_back = vw_kick * 1.5f;     /* weapon pushes back toward camera */
+
+    /* Fire animation: slide/pump action effect */
+    {
+        float fire_slide = 0;
+        if (vw_fire_anim > 0 && vw_fire_anim_max > 0) {
+            /* Normalized 0..1 where 1=just fired, 0=done */
+            float t = vw_fire_anim / vw_fire_anim_max;
+            /* Sinusoidal: back then forward (pump/slide action) */
+            fire_slide = (float)sin(t * 3.14159265f) * 0.8f;
+        }
+        kick_back += fire_slide;
+    }
 
     /* Reload tilt */
     reload_angle = vw_reloading ? 25.0f : 0.0f;

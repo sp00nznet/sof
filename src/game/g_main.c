@@ -100,7 +100,7 @@ static cvar_t   *maxspectators;
 static cvar_t   *maxentities;
 static cvar_t   *deathmatch;
 static cvar_t   *coop;
-static cvar_t   *skill;
+cvar_t   *skill;  /* non-static: accessed by g_ai.c for difficulty scaling */
 static cvar_t   *fraglimit;
 static cvar_t   *timelimit;
 static cvar_t   *dmflags;

@@ -834,6 +834,27 @@ static qboolean door_check_key(edict_t *door, edict_t *other)
     return qfalse;
 }
 
+/* Door blocked — crush damage when entity caught in closing door */
+static void door_blocked(edict_t *self, edict_t *other)
+{
+    if (!other) return;
+
+    if (other->takedamage && other->health > 0) {
+        int crush_dmg = self->dmg ? self->dmg : 5;
+        other->health -= crush_dmg;
+        if (other->client)
+            other->client->pers_health = other->health;
+        if (other->health <= 0 && other->die)
+            other->die(other, self, self, crush_dmg, other->s.origin);
+    }
+
+    /* Reverse the door to avoid trapping */
+    if (self->moveinfo.state == MSTATE_DOWN)
+        door_go_up(self);
+    else if (self->moveinfo.state == MSTATE_UP)
+        door_go_down(self);
+}
+
 /* Touch callback for doors without targetname (auto-open) */
 static void door_touch(edict_t *self, edict_t *other, void *plane, csurface_t *surf)
 {
@@ -908,6 +929,7 @@ static void SP_func_door(edict_t *ent, epair_t *pairs, int num_pairs)
         ent->touch = door_touch;
     }
     ent->use = door_use;
+    ent->blocked = door_blocked;
 
     gi.linkentity(ent);
     gi.dprintf("  func_door '%s'%s\n", ent->targetname ? ent->targetname : "(auto)",

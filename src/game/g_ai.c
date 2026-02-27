@@ -741,6 +741,15 @@ static void ai_think_attack(edict_t *self)
                 inaccuracy = 0.25f;    /* very precise, slow rate */
         }
 
+        /* Difficulty scales accuracy: easy=worse, hard/nightmare=better */
+        {
+            extern cvar_t *skill;
+            int sk = skill ? (int)skill->value : 1;
+            if (sk <= 0) inaccuracy *= 1.5f;
+            else if (sk == 2) inaccuracy *= 0.7f;
+            else if (sk >= 3) inaccuracy *= 0.4f;
+        }
+
         VectorCopy(self->s.origin, start);
         start[2] += 20;    /* eye height */
 
@@ -804,6 +813,9 @@ static void ai_think_attack(edict_t *self)
         /* Per-type fire rate */
         {
             float fire_rate = AI_ATTACK_INTERVAL;
+            extern cvar_t *skill;
+            int sk = skill ? (int)skill->value : 1;
+
             if (self->classname) {
                 if (Q_stricmp(self->classname, "monster_guard") == 0)
                     fire_rate = 1.5f;   /* slow deliberate shots */
@@ -812,6 +824,12 @@ static void ai_think_attack(edict_t *self)
                 else if (Q_stricmp(self->classname, "monster_soldier_light") == 0)
                     fire_rate = 1.2f;   /* hesitant */
             }
+
+            /* Difficulty scales fire rate: easy=slower, hard/nightmare=faster */
+            if (sk <= 0) fire_rate *= 1.4f;
+            else if (sk == 2) fire_rate *= 0.8f;
+            else if (sk >= 3) fire_rate *= 0.6f;
+
             self->dmg_debounce_time = level.time + fire_rate;
         }
     }
@@ -1173,10 +1191,19 @@ void monster_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
 
 /*
  * monster_start - Common initialization for all monster types
+ *
+ * Difficulty scaling (skill cvar 0-3):
+ *   0 (Easy):   HP x0.75, damage x0.5, slower
+ *   1 (Normal): no change
+ *   2 (Hard):   HP x1.25, damage x1.5, faster, better aim
+ *   3 (Nightmare): HP x1.5, damage x2.0, fast, accurate, aggressive
  */
 static void monster_start(edict_t *ent, int health, int damage,
                            float speed)
 {
+    extern cvar_t *skill;
+    int sk = skill ? (int)skill->value : 1;
+
     /* Precache monster sounds once */
     if (!monster_sounds_cached) {
         snd_monster_pain1 = gi.soundindex("npc/pain1.wav");
@@ -1186,6 +1213,22 @@ static void monster_start(edict_t *ent, int health, int damage,
         snd_monster_fire = gi.soundindex("weapons/mp5/fire.wav");
         monster_sounds_cached = qtrue;
     }
+
+    /* Scale stats by difficulty */
+    if (sk <= 0) {
+        health = (int)(health * 0.75f);
+        damage = (int)(damage * 0.5f);
+        speed *= 0.85f;
+    } else if (sk == 2) {
+        health = (int)(health * 1.25f);
+        damage = (int)(damage * 1.5f);
+        speed *= 1.1f;
+    } else if (sk >= 3) {
+        health = (int)(health * 1.5f);
+        damage = (int)(damage * 2.0f);
+        speed *= 1.25f;
+    }
+    if (damage < 1) damage = 1;
 
     ent->solid = SOLID_BBOX;
     ent->movetype = MOVETYPE_STEP;
