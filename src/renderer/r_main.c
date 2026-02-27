@@ -331,6 +331,8 @@ static void R_DrawParticles(void);
 static void R_DrawDlights(void);
 static void R_DrawDecals(void);
 static void R_UpdateDlights(void);
+static void R_UpdateSprites(float frametime);
+static void R_DrawSprites(void);
 static model_t *R_FindModel(const char *name);
 
 /* ==========================================================================
@@ -355,8 +357,9 @@ void R_BeginFrame(float camera_separation)
     if (frametime < 0.001f) frametime = 0.001f;
     last_frame_time = now;
 
-    /* Update particles and dynamic lights */
+    /* Update particles, sprites, and dynamic lights */
     R_UpdateParticles(frametime);
+    R_UpdateSprites(frametime);
     R_UpdateDlights();
 
     /* Clear screen */
@@ -1173,8 +1176,9 @@ void R_RenderFrame(refdef_t *fd)
     /* Draw decals on world surfaces */
     R_DrawDecals();
 
-    /* Draw particles */
+    /* Draw particles and sprites */
     R_DrawParticles();
+    R_DrawSprites();
 
     /* Draw dynamic lights */
     R_DrawDlights();
@@ -1358,6 +1362,61 @@ void R_ParticleEffect(vec3_t org, vec3_t dir, int type, int count)
                           0.5f, 1.5f);
         }
         break;
+
+    case 6: /* water drip — blue drop falling down */
+        for (i = 0; i < count; i++) {
+            vec3_t drip_org;
+            VectorCopy(org, drip_org);
+            drip_org[0] += ((float)(rand()%20) - 10) * 0.5f;
+            drip_org[1] += ((float)(rand()%20) - 10) * 0.5f;
+            VectorSet(vel, 0, 0, -120.0f - (float)(rand()%40));
+            VectorSet(accel, 0, 0, -300);
+            R_AddParticle(drip_org, vel, accel,
+                          0.3f, 0.4f, 0.8f, 0.8f,
+                          1.2f, 0.8f);
+        }
+        break;
+
+    case 7: /* steam — white/grey, rises and spreads */
+        for (i = 0; i < count; i++) {
+            vel[0] = dir[0] * 30.0f + ((float)(rand()%40) - 20);
+            vel[1] = dir[1] * 30.0f + ((float)(rand()%40) - 20);
+            vel[2] = 40.0f + (float)(rand()%30);
+            VectorSet(accel, 0, 0, 20);  /* slight rise */
+            R_AddParticle(org, vel, accel,
+                          0.7f, 0.7f, 0.7f, 0.4f,
+                          0.6f, 2.0f);
+        }
+        break;
+
+    case 8: /* ambient spark shower — bright sparks falling/arcing */
+        for (i = 0; i < count; i++) {
+            vel[0] = ((float)(rand()%80) - 40);
+            vel[1] = ((float)(rand()%80) - 40);
+            vel[2] = -20.0f + (float)(rand()%60);
+            VectorSet(accel, 0, 0, -500);
+            R_AddParticle(org, vel, accel,
+                          1.0f, 0.9f, 0.5f, 1.0f,
+                          4.0f, 0.4f);
+        }
+        break;
+
+    case 9: /* dust motes — slow floating particles */
+        for (i = 0; i < count; i++) {
+            vec3_t dust_org;
+            VectorCopy(org, dust_org);
+            dust_org[0] += ((float)(rand()%100) - 50);
+            dust_org[1] += ((float)(rand()%100) - 50);
+            dust_org[2] += ((float)(rand()%60) - 30);
+            vel[0] = ((float)(rand()%20) - 10) * 0.5f;
+            vel[1] = ((float)(rand()%20) - 10) * 0.5f;
+            vel[2] = ((float)(rand()%10) - 5) * 0.3f;
+            VectorSet(accel, 0, 0, 0);
+            R_AddParticle(dust_org, vel, accel,
+                          0.6f, 0.55f, 0.45f, 0.15f,
+                          0.1f, 5.0f);
+        }
+        break;
     }
 }
 
@@ -1468,6 +1527,165 @@ static void R_UpdateDlights(void)
         }
         i++;
     }
+}
+
+/* ==========================================================================
+   Billboard Sprite System
+
+   Camera-facing textured quads for explosions, smoke, energy effects.
+   Sprites always face the viewer regardless of world orientation.
+   ========================================================================== */
+
+#define MAX_SPRITES     128
+
+typedef struct {
+    vec3_t  origin;
+    float   size;           /* half-size in world units */
+    float   color[4];       /* RGBA */
+    float   time;           /* remaining lifetime */
+    float   total_time;     /* initial lifetime */
+    float   rotation;       /* rotation angle (degrees) */
+    float   rot_speed;      /* degrees per second */
+    int     anim_frames;    /* total frames (1 = static) */
+    int     current_frame;  /* for animated sprites */
+    float   frame_time;     /* time per frame */
+    float   frame_accum;    /* accumulator */
+} r_sprite_t;
+
+static r_sprite_t   r_sprites[MAX_SPRITES];
+static int           r_num_sprites;
+
+/*
+ * R_AddSprite — Add a billboard sprite effect
+ */
+void R_AddSprite(vec3_t origin, float size, float r, float g, float b,
+                 float alpha, float lifetime, float rotation_speed)
+{
+    r_sprite_t *s;
+
+    if (r_num_sprites >= MAX_SPRITES)
+        return;
+
+    s = &r_sprites[r_num_sprites++];
+    VectorCopy(origin, s->origin);
+    s->size = size;
+    s->color[0] = r;
+    s->color[1] = g;
+    s->color[2] = b;
+    s->color[3] = alpha;
+    s->time = lifetime;
+    s->total_time = lifetime;
+    s->rotation = (float)(rand() % 360);
+    s->rot_speed = rotation_speed;
+    s->anim_frames = 1;
+    s->current_frame = 0;
+    s->frame_time = 0;
+    s->frame_accum = 0;
+}
+
+/*
+ * R_UpdateSprites — Advance sprite animations and remove expired
+ */
+static void R_UpdateSprites(float frametime)
+{
+    int i;
+
+    for (i = 0; i < r_num_sprites; ) {
+        r_sprite_t *s = &r_sprites[i];
+        s->time -= frametime;
+        s->rotation += s->rot_speed * frametime;
+
+        /* Fade out over last 30% of lifetime */
+        {
+            float life_frac = s->time / s->total_time;
+            if (life_frac < 0.3f)
+                s->color[3] *= 0.9f;
+        }
+
+        /* Rise upward for smoke-type sprites */
+        s->origin[2] += frametime * 10.0f;
+
+        if (s->time <= 0) {
+            /* Remove by swapping with last */
+            r_sprites[i] = r_sprites[--r_num_sprites];
+        } else {
+            i++;
+        }
+    }
+}
+
+/*
+ * R_DrawSprites — Render all active sprites as camera-facing quads
+ */
+static void R_DrawSprites(void)
+{
+    int i;
+    vec3_t cam_org, cam_ang;
+    vec3_t up, right;
+    float yaw_rad, pitch_rad;
+
+    if (r_num_sprites == 0)
+        return;
+
+    /* Get camera vectors for billboard orientation */
+    R_GetCameraOrigin(cam_org);
+    R_GetCameraAngles(cam_ang);
+
+    yaw_rad = cam_ang[1] * (3.14159265f / 180.0f);
+    pitch_rad = cam_ang[0] * (3.14159265f / 180.0f);
+
+    /* Camera right vector (perpendicular to view direction, in XY plane) */
+    right[0] = -(float)sin(yaw_rad);
+    right[1] = (float)cos(yaw_rad);
+    right[2] = 0;
+
+    /* Camera up vector (world up for sprites) */
+    up[0] = 0;
+    up[1] = 0;
+    up[2] = 1;
+
+    qglDisable(GL_TEXTURE_2D);
+    qglEnable(GL_BLEND);
+    qglBlendFunc(GL_SRC_ALPHA, GL_ONE);  /* additive blending */
+    qglDepthMask(GL_FALSE);
+
+    qglBegin(GL_QUADS);
+
+    for (i = 0; i < r_num_sprites; i++) {
+        r_sprite_t *s = &r_sprites[i];
+        vec3_t p1, p2, p3, p4;
+
+        qglColor4f(s->color[0], s->color[1], s->color[2], s->color[3]);
+
+        /* Calculate quad corners */
+        p1[0] = s->origin[0] - right[0] * s->size - up[0] * s->size;
+        p1[1] = s->origin[1] - right[1] * s->size - up[1] * s->size;
+        p1[2] = s->origin[2] - right[2] * s->size - up[2] * s->size;
+
+        p2[0] = s->origin[0] + right[0] * s->size - up[0] * s->size;
+        p2[1] = s->origin[1] + right[1] * s->size - up[1] * s->size;
+        p2[2] = s->origin[2] + right[2] * s->size - up[2] * s->size;
+
+        p3[0] = s->origin[0] + right[0] * s->size + up[0] * s->size;
+        p3[1] = s->origin[1] + right[1] * s->size + up[1] * s->size;
+        p3[2] = s->origin[2] + right[2] * s->size + up[2] * s->size;
+
+        p4[0] = s->origin[0] - right[0] * s->size + up[0] * s->size;
+        p4[1] = s->origin[1] - right[1] * s->size + up[1] * s->size;
+        p4[2] = s->origin[2] - right[2] * s->size + up[2] * s->size;
+
+        qglVertex3f(p1[0], p1[1], p1[2]);
+        qglVertex3f(p2[0], p2[1], p2[2]);
+        qglVertex3f(p3[0], p3[1], p3[2]);
+        qglVertex3f(p4[0], p4[1], p4[2]);
+    }
+
+    qglEnd();
+
+    qglDepthMask(GL_TRUE);
+    qglDisable(GL_BLEND);
+    qglEnable(GL_TEXTURE_2D);
+    qglColor4f(1, 1, 1, 1);
 }
 
 /*

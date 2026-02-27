@@ -501,6 +501,14 @@ static float cl_shake_intensity;       /* current shake strength */
 static float cl_shake_duration;        /* remaining shake time */
 static float cl_shake_time;            /* total shake duration for decay */
 
+/* View smoothing — stair stepping, crouch transitions, landing recovery */
+static float cl_smooth_viewheight;     /* smoothed viewheight (lerps to target) */
+static float cl_smooth_z_offset;       /* smoothed stair step Z offset */
+static float cl_prev_z;               /* previous frame Z for step detection */
+static float cl_landing_dip;          /* landing recovery dip amount */
+static float cl_prev_z_vel;          /* previous Z velocity for landing detect */
+static qboolean cl_smooth_inited;     /* first-frame guard */
+
 void SCR_AddScreenShake(float intensity, float duration)
 {
     /* Stack shakes — take the stronger one if already shaking */
@@ -532,6 +540,7 @@ void CL_Init(void)
     cl_time = 0;
     VectorClear(cl_viewangles);
     cl_use_freecam = qfalse;
+    cl_smooth_inited = qfalse;
 }
 
 void CL_Drop(void)
@@ -635,15 +644,66 @@ void CL_Frame(int msec)
             float vh = 0;
 
             if (SV_GetPlayerState(org, ang, &vh)) {
-                org[2] += vh;  /* add viewheight for eye position */
+                /* ---- View smoothing: stair step, crouch, landing ---- */
+                {
+                    if (!cl_smooth_inited) {
+                        cl_smooth_viewheight = vh;
+                        cl_prev_z = org[2];
+                        cl_smooth_z_offset = 0;
+                        cl_landing_dip = 0;
+                        cl_smooth_inited = qtrue;
+                    }
 
-                /* ---- Head bob ---- */
+                    /* Detect stair steps: sudden Z change 2-18 units */
+                    {
+                        float z_delta = org[2] - cl_prev_z;
+                        if (z_delta > 2.0f && z_delta < 20.0f) {
+                            /* Stepped up — smooth the transition */
+                            cl_smooth_z_offset -= z_delta;
+                        } else if (z_delta < -2.0f && z_delta > -20.0f) {
+                            /* Stepped down */
+                            cl_smooth_z_offset -= z_delta;
+                        }
+                        cl_prev_z = org[2];
+                    }
+
+                    /* Decay stair step offset toward zero */
+                    if (cl_smooth_z_offset > 0) {
+                        cl_smooth_z_offset -= frametime * 80.0f;
+                        if (cl_smooth_z_offset < 0) cl_smooth_z_offset = 0;
+                    } else if (cl_smooth_z_offset < 0) {
+                        cl_smooth_z_offset += frametime * 80.0f;
+                        if (cl_smooth_z_offset > 0) cl_smooth_z_offset = 0;
+                    }
+
+                    /* Smooth crouch transitions — lerp viewheight */
+                    cl_smooth_viewheight += (vh - cl_smooth_viewheight) * frametime * 12.0f;
+
+                    /* Landing recovery dip */
+                    if (cl_landing_dip > 0) {
+                        cl_landing_dip -= frametime * 6.0f;
+                        if (cl_landing_dip < 0) cl_landing_dip = 0;
+                    }
+
+                    /* Apply smoothed values */
+                    org[2] += cl_smooth_viewheight + cl_smooth_z_offset - cl_landing_dip;
+                }
+
+                /* ---- Head bob + landing detection ---- */
                 {
                     vec3_t vel;
                     float speed = 0;
 
                     if (SV_GetPlayerVelocity(vel)) {
                         speed = (float)sqrt(vel[0] * vel[0] + vel[1] * vel[1]);
+
+                        /* Landing detection: was falling, now stopped */
+                        if (cl_prev_z_vel < -150.0f && vel[2] > -50.0f) {
+                            float impact = -cl_prev_z_vel;
+                            cl_landing_dip = impact * 0.008f;
+                            if (cl_landing_dip > 4.0f) cl_landing_dip = 4.0f;
+                        }
+                        cl_prev_z_vel = vel[2];
                     }
 
                     if (speed > 20.0f) {

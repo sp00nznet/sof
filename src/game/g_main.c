@@ -28,6 +28,8 @@ extern void SCR_AddDamageNumber(int damage, int screen_x, int screen_y);
 extern void SCR_AddPickupMessage(const char *text);
 extern void SCR_AddKillFeed(const char *attacker, const char *victim, const char *weapon);
 extern void SCR_AddScreenShake(float intensity, float duration);
+extern void R_AddSprite(vec3_t origin, float size, float r, float g, float b,
+                         float alpha, float lifetime, float rotation_speed);
 
 /* Sound constants now in g_local.h */
 
@@ -938,6 +940,8 @@ static qboolean G_UseUtilityWeapon(edict_t *ent)
                     VectorCopy(c4->s.origin, c4->s.origin);
                     R_ParticleEffect(c4->s.origin, c4->s.angles, 2, 48);
                     R_AddDlight(c4->s.origin, 1.0f, 0.6f, 0.1f, 500.0f, 0.6f);
+                    R_AddSprite(c4->s.origin, 56.0f, 1.0f, 0.7f, 0.2f, 1.0f, 0.8f, 150.0f);  /* fireball */
+                    R_AddSprite(c4->s.origin, 80.0f, 0.4f, 0.4f, 0.4f, 0.6f, 1.5f, 20.0f);   /* smoke */
                     if (snd_explode)
                         gi.positioned_sound(c4->s.origin, NULL, CHAN_AUTO,
                                             snd_explode, 1.0f, ATTN_NORM, 0);
@@ -1166,6 +1170,8 @@ static void rocket_think(edict_t *self)
         /* Impact — explode */
         R_ParticleEffect(tr.endpos, tr.plane.normal, 2, 32);
         R_AddDlight(tr.endpos, 1.0f, 0.6f, 0.1f, 400.0f, 0.5f);
+        R_AddSprite(tr.endpos, 48.0f, 1.0f, 0.6f, 0.1f, 0.9f, 0.6f, 120.0f);  /* fireball */
+        R_AddSprite(tr.endpos, 64.0f, 0.3f, 0.3f, 0.3f, 0.5f, 1.2f, 30.0f);   /* smoke */
         if (snd_explode)
             gi.positioned_sound(tr.endpos, NULL, CHAN_AUTO, snd_explode, 1.0f, ATTN_NORM, 0);
 
@@ -1220,6 +1226,8 @@ static void grenade_explode(edict_t *self)
 
     R_ParticleEffect(self->s.origin, up, 2, 24);
     R_AddDlight(self->s.origin, 1.0f, 0.5f, 0.1f, 350.0f, 0.4f);
+    R_AddSprite(self->s.origin, 40.0f, 1.0f, 0.5f, 0.1f, 0.8f, 0.5f, 100.0f);  /* fireball */
+    R_AddSprite(self->s.origin, 56.0f, 0.3f, 0.3f, 0.3f, 0.4f, 1.0f, 25.0f);   /* smoke */
     if (snd_explode)
         gi.positioned_sound(self->s.origin, NULL, CHAN_AUTO, snd_explode, 1.0f, ATTN_NORM, 0);
 

@@ -360,4 +360,8 @@ void        R_DrawAliasModel(model_t *mod, vec3_t origin, vec3_t angles,
 void        R_SetInterpFraction(float frac);
 void        R_UpdateEntityInterp(void);
 
+/* Billboard sprite system (r_main.c) */
+void        R_AddSprite(vec3_t origin, float size, float r, float g, float b,
+                         float alpha, float lifetime, float rotation_speed);
+
 #endif /* R_LOCAL_H */

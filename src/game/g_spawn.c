@@ -212,6 +212,10 @@ static void SP_func_conveyor_real(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_water(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_pendulum(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_target_monster_maker(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_env_drip(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_env_steam(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_env_sparks(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_env_dust(edict_t *ent, epair_t *pairs, int num_pairs);
 
 /*
  * Spawn function dispatch table
@@ -288,6 +292,13 @@ static spawn_func_t spawn_funcs[] = {
 
     /* Splash effects */
     { "target_splash",              SP_target_splash },
+
+    /* Environmental particle emitters */
+    { "env_drip",                   SP_env_drip },
+    { "env_steam",                  SP_env_steam },
+    { "env_sparks",                 SP_env_sparks },
+    { "env_dust",                   SP_env_dust },
+    { "misc_particles",             SP_env_dust },
 
     /* Secret */
     { "trigger_secret",             SP_trigger_secret },
@@ -1692,6 +1703,76 @@ static void SP_target_splash(edict_t *ent, epair_t *pairs, int num_pairs)
 
     if (sound_str)
         ent->noise_index = gi.soundindex(sound_str);
+}
+
+/* ==========================================================================
+   Environmental Particle Emitters — Drips, sparks, steam, dust
+   ========================================================================== */
+
+/*
+ * env_emitter_think — Periodically emit particles based on entity's style
+ * style: 6=water drip, 7=steam, 8=spark, 9=dust
+ * count: particles per emission
+ * wait: seconds between emissions (stored in wait field)
+ */
+static void env_emitter_think(edict_t *self)
+{
+    vec3_t dir;
+    VectorCopy(self->s.angles, dir);
+    if (VectorLength(dir) < 0.1f)
+        VectorSet(dir, 0, 0, -1);  /* default: downward */
+
+    R_ParticleEffect(self->s.origin, dir, self->style, self->count);
+
+    self->nextthink = level.time + self->wait;
+}
+
+static void SP_env_drip(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *count_str = ED_FindValue(pairs, num_pairs, "count");
+    const char *wait_str = ED_FindValue(pairs, num_pairs, "wait");
+
+    ent->style = 6;  /* water drip particles */
+    ent->count = count_str ? atoi(count_str) : 2;
+    ent->wait = wait_str ? (float)atof(wait_str) : 0.3f;
+    ent->think = env_emitter_think;
+    ent->nextthink = level.time + (float)(rand() % 100) * 0.01f;  /* stagger */
+}
+
+static void SP_env_steam(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *count_str = ED_FindValue(pairs, num_pairs, "count");
+    const char *wait_str = ED_FindValue(pairs, num_pairs, "wait");
+
+    ent->style = 7;  /* steam particles */
+    ent->count = count_str ? atoi(count_str) : 4;
+    ent->wait = wait_str ? (float)atof(wait_str) : 0.2f;
+    ent->think = env_emitter_think;
+    ent->nextthink = level.time + (float)(rand() % 100) * 0.01f;
+}
+
+static void SP_env_sparks(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *count_str = ED_FindValue(pairs, num_pairs, "count");
+    const char *wait_str = ED_FindValue(pairs, num_pairs, "wait");
+
+    ent->style = 8;  /* spark particles */
+    ent->count = count_str ? atoi(count_str) : 6;
+    ent->wait = wait_str ? (float)atof(wait_str) : 1.5f;
+    ent->think = env_emitter_think;
+    ent->nextthink = level.time + (float)(rand() % 200) * 0.01f;
+}
+
+static void SP_env_dust(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *count_str = ED_FindValue(pairs, num_pairs, "count");
+    const char *wait_str = ED_FindValue(pairs, num_pairs, "wait");
+
+    ent->style = 9;  /* dust mote particles */
+    ent->count = count_str ? atoi(count_str) : 3;
+    ent->wait = wait_str ? (float)atof(wait_str) : 2.0f;
+    ent->think = env_emitter_think;
+    ent->nextthink = level.time + (float)(rand() % 300) * 0.01f;
 }
 
 /* ==========================================================================
