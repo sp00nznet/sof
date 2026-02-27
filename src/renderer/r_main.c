@@ -973,6 +973,8 @@ static int   vw_switch_target;      /* weapon to switch to */
 static float vw_fire_anim;          /* 0=idle, >0=animating (counts down) */
 static float vw_fire_anim_max;      /* max value for animation duration */
 static float vw_idle_time;          /* accumulated idle time for idle sway */
+static float vw_inspect_time;       /* >0 = inspecting weapon (counts down) */
+static float vw_inspect_max;        /* max inspection duration */
 
 void R_SetViewWeaponState(int weapon_id, float kick, float bob_phase,
                           float bob_amount, float sway_yaw, float sway_pitch,
@@ -1019,6 +1021,19 @@ void R_SetViewWeaponState(int weapon_id, float kick, float bob_phase,
             break;
         }
     }
+}
+
+/*
+ * R_StartWeaponInspect — Trigger weapon inspection animation
+ */
+void R_StartWeaponInspect(void)
+{
+    if (vw_weapon_id <= 0 || vw_inspect_time > 0 ||
+        vw_fire_anim > 0 || vw_reloading || vw_switch_phase > 0)
+        return;  /* Don't inspect during other animations */
+
+    vw_inspect_time = 2.0f;   /* 2 second inspection */
+    vw_inspect_max = 2.0f;
 }
 
 /*
@@ -1312,6 +1327,12 @@ static void R_DrawViewWeapon(refdef_t *fd)
         if (vw_fire_anim < 0) vw_fire_anim = 0;
     }
 
+    /* Advance weapon inspection animation */
+    if (vw_inspect_time > 0) {
+        vw_inspect_time -= 0.016f;
+        if (vw_inspect_time < 0) vw_inspect_time = 0;
+    }
+
     /* Accumulate idle time for idle sway */
     vw_idle_time += 0.016f;  /* ~60fps */
 
@@ -1412,6 +1433,17 @@ static void R_DrawViewWeapon(refdef_t *fd)
         /* Apply idle rotation as subtle roll */
         if (idle_rot != 0)
             qglRotatef(idle_rot, 0, 0, 1);
+    }
+
+    /* Weapon inspection animation — rotate weapon to show detail */
+    if (vw_inspect_time > 0 && vw_inspect_max > 0) {
+        float t = vw_inspect_time / vw_inspect_max;
+        /* Smooth bell curve: rises then falls */
+        float phase = (float)sin(t * 3.14159265f);
+        /* Tilt weapon left and rotate toward player view */
+        qglRotatef(phase * 45.0f, 0, 0, 1);     /* roll to show side */
+        qglRotatef(phase * -15.0f, 1, 0, 0);    /* slight pitch up */
+        qglTranslatef(phase * -1.0f, phase * 1.5f, 0);  /* shift up/left */
     }
 
     /* Apply weapon rotations */

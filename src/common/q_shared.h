@@ -275,10 +275,10 @@ typedef struct {
 
 typedef struct usercmd_s {
     byte    msec;
-    byte    buttons;
+    byte    impulse;
+    short   buttons;        /* expanded for sprint/prone buttons */
     short   angles[3];
     short   forwardmove, sidemove, upmove;
-    byte    impulse;
     byte    lightlevel;     /* light level the player is standing on */
 } usercmd_t;
 
@@ -311,6 +311,7 @@ typedef struct usercmd_s {
 #define BUTTON_ATTACK2      32
 #define BUTTON_SPRINT       64
 #define BUTTON_ANY          128
+#define BUTTON_PRONE        256
 
 typedef struct {
     vec3_t      origin;

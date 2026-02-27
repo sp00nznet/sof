@@ -156,6 +156,15 @@ qboolean cl_bullet_time_active = qfalse;
 static void IN_BulletTimeDown(void) { KeyDown(&in_bullettime); cl_bullet_time_active = qtrue; }
 static void IN_BulletTimeUp(void)   { KeyUp(&in_bullettime); cl_bullet_time_active = qfalse; }
 
+/* Weapon inspect */
+extern void R_StartWeaponInspect(void);
+static void IN_InspectDown(void)    { R_StartWeaponInspect(); }
+
+/* Prone */
+static kbutton_t   in_prone;
+static void IN_ProneDown(void)      { KeyDown(&in_prone); }
+static void IN_ProneUp(void)        { KeyUp(&in_prone); }
+
 /* ==========================================================================
    Build Usercmd
    ========================================================================== */
@@ -204,6 +213,8 @@ void CL_CreateCmd(usercmd_t *cmd, int msec)
         cmd->buttons |= BUTTON_ATTACK2;
     if (in_sprint.active)
         cmd->buttons |= BUTTON_SPRINT;
+    if (in_prone.active)
+        cmd->buttons |= BUTTON_PRONE;
 
     if (in_attack.active || in_attack2.active ||
         in_forward.active || in_back.active ||
@@ -262,4 +273,11 @@ void CL_InitInput(void)
     /* Bullet time */
     Cmd_AddCommand("+bullettime", IN_BulletTimeDown);
     Cmd_AddCommand("-bullettime", IN_BulletTimeUp);
+
+    /* Weapon inspection */
+    Cmd_AddCommand("inspect", IN_InspectDown);
+
+    /* Prone */
+    Cmd_AddCommand("+prone", IN_ProneDown);
+    Cmd_AddCommand("-prone", IN_ProneUp);
 }

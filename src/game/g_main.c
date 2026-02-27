@@ -2376,8 +2376,17 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
         }
     }
 
+    /* Prone handling — lowest stance, nearly flat */
+    if (ucmd->buttons & BUTTON_PRONE) {
+        if (client->viewheight > 4) {
+            client->viewheight = 4;    /* prone eye height */
+            ent->maxs[2] = 8;         /* very low bbox */
+        }
+        /* Can't sprint while prone */
+        client->sprinting = qfalse;
+    }
     /* Crouch handling */
-    if (ucmd->buttons & BUTTON_CROUCH) {
+    else if (ucmd->buttons & BUTTON_CROUCH) {
         if (client->viewheight > 10) {
             client->viewheight = 10;  /* crouched eye height */
             ent->maxs[2] = 16;  /* reduced bbox height */
@@ -2679,13 +2688,46 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
         /* Can't fire while reloading */
     } else {
         /* Fire weapon on attack button (primary or alt-fire) */
-        if (ucmd->buttons & BUTTON_ATTACK) {
+        /* If holding a throwable object, throw it instead of firing */
+        if (client->held_object && (ucmd->buttons & BUTTON_ATTACK)) {
+            edict_t *obj = client->held_object;
+            vec3_t throw_fwd, throw_rt, throw_up;
+
+            G_AngleVectors(client->viewangles, throw_fwd, throw_rt, throw_up);
+
+            /* Position object in front of player */
+            VectorMA(ent->s.origin, 48, throw_fwd, obj->s.origin);
+            obj->s.origin[2] += client->viewheight;
+
+            /* Launch it */
+            VectorScale(throw_fwd, 800.0f, obj->velocity);
+            obj->velocity[2] += 100.0f;   /* slight upward arc */
+            obj->movetype = MOVETYPE_BOUNCE;
+            obj->solid = SOLID_BBOX;
+            obj->owner = ent;
+            obj->dmg = 15;  /* Reset impact damage */
+            gi.linkentity(obj);
+
+            client->held_object = NULL;
+        } else if (ucmd->buttons & BUTTON_ATTACK) {
             player_alt_fire = qfalse;
             G_FireHitscan(ent);
         } else if (ucmd->buttons & BUTTON_ATTACK2) {
             player_alt_fire = qtrue;
             G_FireHitscan(ent);
         }
+    }
+
+    /* Update held object position — float in front of player */
+    if (client->held_object) {
+        edict_t *obj = client->held_object;
+        vec3_t hold_fwd, hold_rt, hold_up;
+
+        G_AngleVectors(client->viewangles, hold_fwd, hold_rt, hold_up);
+        VectorMA(ent->s.origin, 48, hold_fwd, obj->s.origin);
+        obj->s.origin[2] += client->viewheight - 8;
+        VectorClear(obj->velocity);
+        gi.linkentity(obj);
     }
 
     /* Use interaction — short-range trace to find usable entities */

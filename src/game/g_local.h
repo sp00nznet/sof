@@ -401,6 +401,9 @@ struct gclient_s {
     /* Bullet time */
     float           bullet_time_end;       /* level.time when bullet time ends */
     float           bullet_time_charge;    /* 0..100, builds from kills */
+
+    /* Held throwable object */
+    edict_t         *held_object;          /* entity being carried, NULL if none */
 };
 
 /* ==========================================================================

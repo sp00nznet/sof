@@ -222,6 +222,8 @@ static void SP_env_steam(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_env_sparks(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_env_dust(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_pushable(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_light_breakable(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_misc_throwable(edict_t *ent, epair_t *pairs, int num_pairs);
 
 /*
  * Spawn function dispatch table
@@ -249,6 +251,8 @@ static spawn_func_t spawn_funcs[] = {
     { "light",                      SP_light },
     { "light_mine1",                SP_light },
     { "light_mine2",                SP_light },
+    { "func_light_breakable",       SP_func_light_breakable },
+    { "light_breakable",            SP_func_light_breakable },
 
     /* Brush entities */
     { "func_door",                  SP_func_door },
@@ -328,6 +332,9 @@ static spawn_func_t spawn_funcs[] = {
     /* Misc */
     { "misc_model",                 SP_misc_model },
     { "misc_particles",             SP_misc_particles },
+    { "misc_throwable",             SP_misc_throwable },
+    { "misc_bottle",                SP_misc_throwable },
+    { "misc_barrel_small",          SP_misc_throwable },
     { "info_npc",                   SP_info_npc },
     { "info_npc_talk",              SP_info_npc },
 
@@ -692,6 +699,131 @@ static void SP_light(edict_t *ent, epair_t *pairs, int num_pairs)
 
     /* Lights are compiled into lightmaps, no runtime entity needed */
     ent->inuse = qfalse;
+}
+
+/* Forward declaration */
+static void G_UseTargets(edict_t *activator, const char *target);
+
+/*
+ * Destructible light — can be shot out, turning off its lightstyle
+ */
+static void light_breakable_die(edict_t *self, edict_t *inflictor,
+                                edict_t *attacker, int damage, vec3_t point)
+{
+    (void)inflictor; (void)attacker; (void)damage; (void)point;
+
+    /* Turn off the light by setting lightstyle to pitch black */
+    if (self->style > 0 && self->style < 64)
+        gi.configstring(CS_LIGHTS + self->style, "a");
+
+    /* Glass break particles */
+    {
+        vec3_t up = {0, 0, -1};
+        R_ParticleEffect(self->s.origin, up, 11, 8);   /* debris */
+        R_ParticleEffect(self->s.origin, up, 12, 4);   /* sparks */
+    }
+
+    /* One-time spark flash */
+    R_AddDlight(self->s.origin, 1.0f, 0.8f, 0.2f, 200.0f, 0.3f);
+
+    /* Fire targets */
+    if (self->target)
+        G_UseTargets(attacker, self->target);
+
+    /* Remove the entity */
+    self->takedamage = DAMAGE_NO;
+    self->solid = SOLID_NOT;
+    self->deadflag = 1;
+    gi.linkentity(self);
+}
+
+static void SP_func_light_breakable(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *health_str = ED_FindValue(pairs, num_pairs, "health");
+
+    ent->solid = SOLID_BSP;
+    ent->movetype = MOVETYPE_PUSH;
+    ent->takedamage = DAMAGE_YES;
+    ent->health = health_str ? atoi(health_str) : 15;
+    ent->max_health = ent->health;
+    ent->die = light_breakable_die;
+
+    /* Apply lightstyle if set */
+    if (ent->style > 0 && ent->style < 64)
+        gi.configstring(CS_LIGHTS + ent->style, "m");
+
+    gi.linkentity(ent);
+}
+
+/*
+ * Throwable object — can be picked up with USE and thrown with ATTACK
+ *
+ * When held, the object floats in front of the player.
+ * Pressing attack throws it in the look direction, dealing impact damage.
+ */
+static void throwable_use(edict_t *self, edict_t *other, edict_t *activator)
+{
+    (void)other;
+
+    if (!activator || !activator->client)
+        return;
+
+    /* If player is already holding something, drop it first */
+    if (activator->client->held_object) {
+        edict_t *held = activator->client->held_object;
+        held->movetype = MOVETYPE_TOSS;
+        held->solid = SOLID_BBOX;
+        gi.linkentity(held);
+        activator->client->held_object = NULL;
+    }
+
+    /* Pick up this object */
+    activator->client->held_object = self;
+    self->solid = SOLID_NOT;
+    self->movetype = MOVETYPE_NONE;
+    gi.linkentity(self);
+}
+
+static void throwable_touch(edict_t *self, edict_t *other,
+                            void *plane, void *surf)
+{
+    (void)plane; (void)surf;
+
+    /* Deal impact damage on collision after being thrown */
+    if (self->dmg > 0 && other && other->takedamage && other->health > 0) {
+        float speed = VectorLength(self->velocity);
+        if (speed > 100.0f) {
+            int dmg = self->dmg;
+            other->health -= dmg;
+            R_ParticleEffect(self->s.origin, self->velocity, 11, 4);
+
+            if (other->health <= 0 && other->die)
+                other->die(other, self, self->owner, dmg, self->s.origin);
+        }
+        self->dmg = 0;  /* Only damage on first impact */
+    }
+
+    /* Slow down on each bounce */
+    VectorScale(self->velocity, 0.5f, self->velocity);
+}
+
+static void SP_misc_throwable(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *dmg_str = ED_FindValue(pairs, num_pairs, "dmg");
+    (void)pairs; (void)num_pairs;
+
+    ent->solid = SOLID_BBOX;
+    ent->movetype = MOVETYPE_NONE;
+    ent->takedamage = DAMAGE_NO;
+    ent->dmg = dmg_str ? atoi(dmg_str) : 10;
+    ent->use = throwable_use;
+    ent->touch = throwable_touch;
+
+    /* Small bounding box */
+    VectorSet(ent->mins, -4, -4, -4);
+    VectorSet(ent->maxs, 4, 4, 4);
+
+    gi.linkentity(ent);
 }
 
 /* ==========================================================================
