@@ -1963,6 +1963,32 @@ void monster_pain(edict_t *self, edict_t *other, float kick, int damage)
     if (self->health <= 0)
         return;
 
+    /* Shield bearer: block frontal damage */
+    if ((self->ai_flags & 0x0800) && other) {
+        vec3_t to_attacker, my_fwd;
+        float dot;
+        float yaw = self->s.angles[1] * 3.14159f / 180.0f;
+        my_fwd[0] = cosf(yaw);
+        my_fwd[1] = sinf(yaw);
+        my_fwd[2] = 0;
+        VectorSubtract(other->s.origin, self->s.origin, to_attacker);
+        to_attacker[2] = 0;
+        VectorNormalize(to_attacker);
+        dot = DotProduct(my_fwd, to_attacker);
+        if (dot > 0.3f) {
+            /* Frontal hit — shield blocks 80% of damage */
+            int blocked = (int)(damage * 0.8f);
+            self->health += blocked;  /* restore blocked damage */
+            R_ParticleEffect(self->s.origin, my_fwd, 12, 4);  /* sparks */
+            {
+                int snd = gi.soundindex("world/metal_clang.wav");
+                if (snd)
+                    gi.sound(self, CHAN_BODY, snd, 0.8f, ATTN_NORM, 0);
+            }
+            return;  /* no pain reaction when shield blocks */
+        }
+    }
+
     /* Pain sound */
     {
         int snd = (rand() & 1) ? snd_monster_pain1 : snd_monster_pain2;
@@ -2276,6 +2302,23 @@ void SP_monster_guard(edict_t *ent, void *pairs, int num_pairs)
     ent->classname = "monster_guard";
     ent->ai_flags |= AI_STAND_GROUND;
     monster_start(ent, 200, 20, AI_CHASE_SPEED * 0.6f);
+}
+
+/*
+ * SP_monster_shield - Riot shield bearer. Blocks frontal damage.
+ * Must be flanked or hit from the side/back to deal full damage.
+ */
+void SP_monster_shield(edict_t *ent, void *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+
+    gi.dprintf("  Spawning shield bearer at (%.0f %.0f %.0f)\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
+
+    ent->classname = "monster_shield";
+    ent->ai_flags |= 0x0800;  /* AI_SHIELD flag — frontal damage reduction */
+    monster_start(ent, 150, 12, AI_CHASE_SPEED * 0.7f);
+    ent->yaw_speed = 25.0f;  /* faster turning to keep shield facing player */
 }
 
 /*

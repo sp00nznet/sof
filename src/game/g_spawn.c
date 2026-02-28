@@ -46,6 +46,7 @@ extern void SP_monster_sniper(edict_t *ent, void *pairs, int num_pairs);
 extern void SP_monster_boss(edict_t *ent, void *pairs, int num_pairs);
 extern void SP_monster_medic(edict_t *ent, void *pairs, int num_pairs);
 extern void SP_monster_dog(edict_t *ent, void *pairs, int num_pairs);
+extern void SP_monster_shield(edict_t *ent, void *pairs, int num_pairs);
 
 /* Forward declarations for precache functions */
 static void door_precache_sounds(void);
@@ -283,6 +284,7 @@ static void SP_func_laser_trip(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_floor_break(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_wall_break(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_drawbridge(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_misc_sea_mine(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_cover_point(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_trigger_monster_spawn(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_fallback_point(edict_t *ent, epair_t *pairs, int num_pairs);
@@ -403,6 +405,8 @@ static spawn_func_t spawn_funcs[] = {
     { "monster_medic",              (void (*)(edict_t *, epair_t *, int))SP_monster_medic },
     { "monster_dog",                (void (*)(edict_t *, epair_t *, int))SP_monster_dog },
     { "monster_patrol_dog",         (void (*)(edict_t *, epair_t *, int))SP_monster_dog },
+    { "monster_shield",             (void (*)(edict_t *, epair_t *, int))SP_monster_shield },
+    { "monster_riot_shield",        (void (*)(edict_t *, epair_t *, int))SP_monster_shield },
     /* Q2-compatible monster names */
     { "monster_soldier_light",      (void (*)(edict_t *, epair_t *, int))SP_monster_soldier_light },
     { "monster_infantry",           (void (*)(edict_t *, epair_t *, int))SP_monster_soldier },
@@ -613,6 +617,10 @@ static spawn_func_t spawn_funcs[] = {
     /* Drawbridge */
     { "func_drawbridge",            SP_func_drawbridge },
     { "func_bridge",                SP_func_drawbridge },
+
+    /* Underwater mine */
+    { "misc_sea_mine",              SP_misc_sea_mine },
+    { "misc_underwater_mine",       SP_misc_sea_mine },
 
     /* AI cover node */
     { "cover_point",                SP_cover_point },
@@ -7708,6 +7716,91 @@ static void SP_func_drawbridge(edict_t *ent, epair_t *pairs, int num_pairs)
     gi.dprintf("  func_drawbridge at (%.0f %.0f %.0f) speed=%.0f\n",
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
                ent->speed);
+}
+
+/* ==========================================================================
+   misc_sea_mine — Underwater explosive mine. Detonates when touched by
+   a player or monster. Creates a large underwater explosion with bubble
+   particles and damage radius.
+   Keys: "dmg" = explosion damage (default 120)
+   ========================================================================== */
+
+static void sea_mine_touch(edict_t *self, edict_t *other, void *plane,
+                            csurface_t *surf)
+{
+    extern void T_RadiusDamage(edict_t *inflictor, edict_t *attacker,
+                                float damage, float radius);
+    (void)plane; (void)surf;
+
+    if (!other || other == self)
+        return;
+    if (!other->client && !(other->svflags & SVF_MONSTER))
+        return;
+
+    /* Underwater explosion */
+    {
+        extern game_export_t globals;
+        vec3_t up = {0, 0, 1};
+        int explosion_dmg = self->dmg > 0 ? self->dmg : 120;
+        float radius = (float)explosion_dmg * 2.0f;
+        int mi;
+        R_ParticleEffect(self->s.origin, up, 6, 32);  /* water splash */
+        R_ParticleEffect(self->s.origin, up, 0, 16);  /* bubbles */
+        R_ParticleEffect(self->s.origin, up, 2, 20);  /* fire/explosion */
+        R_AddDlight(self->s.origin, 1.0f, 0.6f, 0.2f, 400.0f, 0.5f);
+        {
+            int snd = gi.soundindex("world/explosion_underwater.wav");
+            if (!snd) snd = gi.soundindex("weapons/explode.wav");
+            if (snd)
+                gi.positioned_sound(self->s.origin, NULL, CHAN_AUTO,
+                                    snd, 1.0f, ATTN_NORM, 0);
+        }
+        /* Radius damage */
+        for (mi = 1; mi < globals.num_edicts; mi++) {
+            edict_t *t = &globals.edicts[mi];
+            vec3_t diff;
+            float dist;
+            if (!t->inuse || t == self || !t->takedamage || t->health <= 0)
+                continue;
+            VectorSubtract(t->s.origin, self->s.origin, diff);
+            dist = VectorLength(diff);
+            if (dist < radius) {
+                int dmg = (int)(explosion_dmg * (1.0f - dist / radius));
+                if (dmg < 1) dmg = 1;
+                t->health -= dmg;
+                if (t->client) t->client->pers_health = t->health;
+                if (t->health <= 0 && t->die)
+                    t->die(t, self, self, dmg, self->s.origin);
+            }
+        }
+    }
+
+    /* Remove mine */
+    self->solid = SOLID_NOT;
+    self->inuse = qfalse;
+    gi.unlinkentity(self);
+}
+
+static void SP_misc_sea_mine(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *v;
+
+    ent->classname = "misc_sea_mine";
+    ent->solid = SOLID_TRIGGER;
+    ent->movetype = MOVETYPE_NONE;
+
+    v = ED_FindValue(pairs, num_pairs, "dmg");
+    ent->dmg = v ? atoi(v) : 120;
+
+    VectorSet(ent->mins, -16, -16, -16);
+    VectorSet(ent->maxs, 16, 16, 16);
+
+    ent->touch = sea_mine_touch;
+
+    gi.linkentity(ent);
+    gi.dprintf("  misc_sea_mine at (%.0f %.0f %.0f) dmg=%d\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->dmg);
 }
 
 /* ==========================================================================

@@ -3869,6 +3869,37 @@ static void G_FireHitscan(edict_t *ent)
                         ent->client->last_damage_zone == GORE_ZONE_FACE) {
                         ent->client->headshot_cam_end = level.time + 0.5f;
                         level.time_scale = 0.4f;
+                        /* Headshot decapitation: high-damage headshots gib the head */
+                        if (damage >= 40) {
+                            vec3_t head_pos, head_up;
+                            VectorCopy(tr.ent->s.origin, head_pos);
+                            head_pos[2] += 28.0f;  /* head height */
+                            VectorSet(head_up, 0, 0, 1);
+                            /* Blood spray upward from neck */
+                            R_ParticleEffect(head_pos, head_up, 1, 24);
+                            R_ParticleEffect(head_pos, head_up, 1, 16);
+                            /* Flying head gib */
+                            {
+                                edict_t *head_gib = G_AllocEdict();
+                                if (head_gib) {
+                                    head_gib->classname = "head_gib";
+                                    VectorCopy(head_pos, head_gib->s.origin);
+                                    head_gib->velocity[0] = (float)(rand() % 200 - 100);
+                                    head_gib->velocity[1] = (float)(rand() % 200 - 100);
+                                    head_gib->velocity[2] = 200.0f + (float)(rand() % 100);
+                                    head_gib->movetype = MOVETYPE_TOSS;
+                                    head_gib->solid = SOLID_NOT;
+                                    head_gib->nextthink = level.time + 5.0f;
+                                    head_gib->think = G_FreeEdict;
+                                    VectorSet(head_gib->mins, -4, -4, -4);
+                                    VectorSet(head_gib->maxs, 4, 4, 4);
+                                    gi.linkentity(head_gib);
+                                }
+                            }
+                            SCR_AddPickupMessage("DECAPITATION!");
+                            ent->client->score += 10;
+                            SCR_AddScorePopup(10);
+                        }
                     }
 
                     /* Bullet time charge: +15 per kill, capped at 100 */
@@ -4786,6 +4817,31 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
             VectorScale(right_dir, client->lean_offset, client->kick_origin);
         } else {
             VectorClear(client->kick_origin);
+        }
+    }
+
+    /* Wall cover snap: when leaning near a wall, snap into cover position */
+    if (client->lean_state != 0 && !ent->deadflag) {
+        vec3_t wall_check, wall_end;
+        trace_t wall_tr;
+        float yaw = client->viewangles[1] * 3.14159f / 180.0f;
+        /* Check for wall on the side we're leaning away from */
+        float side = (client->lean_state > 0) ? -1.0f : 1.0f;
+        wall_check[0] = -sinf(yaw) * side;
+        wall_check[1] = cosf(yaw) * side;
+        wall_check[2] = 0;
+        VectorMA(ent->s.origin, 24.0f, wall_check, wall_end);
+        wall_tr = gi.trace(ent->s.origin, NULL, NULL, wall_end, ent, MASK_SOLID);
+        if (wall_tr.fraction < 0.8f) {
+            /* Wall detected — snap to cover edge, reduce incoming damage */
+            /* Tighter aim from braced position */
+            client->recoil_accum *= 0.5f;
+            /* Lock lateral movement to prevent drifting away from wall */
+            if (fabsf(ent->velocity[0] * wall_check[0] +
+                      ent->velocity[1] * wall_check[1]) > 50.0f) {
+                ent->velocity[0] -= wall_check[0] * 50.0f;
+                ent->velocity[1] -= wall_check[1] * 50.0f;
+            }
         }
     }
 
