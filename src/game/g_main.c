@@ -3648,6 +3648,21 @@ static void G_FireHitscan(edict_t *ent)
         hitscan_impact_done:
             (void)0;  /* label requires a statement */
         } else {
+            /* Water splash: bullet entering water creates splash */
+            {
+                int hit_contents = gi.pointcontents(tr.endpos);
+                if (hit_contents & CONTENTS_WATER) {
+                    vec3_t splash_up = {0, 0, 1};
+                    R_ParticleEffect(tr.endpos, splash_up, 6, 12);  /* water splash */
+                    {
+                        int snd = gi.soundindex("world/water_splash.wav");
+                        if (snd)
+                            gi.positioned_sound(tr.endpos, NULL, CHAN_AUTO,
+                                                snd, 0.6f, ATTN_NORM, 0);
+                    }
+                }
+            }
+
             /* Surface-type impact effects */
             {
                 const char *sname = (tr.surface && tr.surface->name[0]) ?
@@ -4389,6 +4404,14 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
     if (client->dive_end > 0 && level.time >= client->dive_end) {
         level.time_scale = 1.0f;  /* restore normal speed */
         client->dive_end = 0;
+    }
+
+    /* Weapon swap animation: subtle view dip during weapon switch */
+    if (client->weapon_change_time > level.time) {
+        float swap_t = (client->weapon_change_time - level.time);
+        float dip = sinf(swap_t * 8.0f) * 2.0f;
+        client->kick_angles[0] += dip;      /* pitch wobble */
+        client->kick_origin[2] -= dip * 2;  /* weapon drops down then comes up */
     }
 
     /* Weapon inspect animation: sway weapon while inspecting */

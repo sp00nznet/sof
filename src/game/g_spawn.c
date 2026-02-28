@@ -276,6 +276,8 @@ static void SP_func_floodlight(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_barrier(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_crate(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_cover_point(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_trigger_monster_spawn(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_fallback_point(edict_t *ent, epair_t *pairs, int num_pairs);
 static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
                            int damage, vec3_t point);
 
@@ -577,6 +579,14 @@ static spawn_func_t spawn_funcs[] = {
     /* AI cover node */
     { "cover_point",                SP_cover_point },
     { "info_cover",                 SP_cover_point },
+
+    /* Monster spawner */
+    { "trigger_monster_spawn",      SP_trigger_monster_spawn },
+    { "target_spawn",               SP_trigger_monster_spawn },
+
+    /* AI fallback point */
+    { "fallback_point",             SP_fallback_point },
+    { "info_fallback",              SP_fallback_point },
 
     /* Weapons (SoF) */
     { "weapon_knife",               SP_item_pickup },
@@ -6792,6 +6802,77 @@ static void SP_cover_point(edict_t *ent, epair_t *pairs, int num_pairs)
     ent->svflags |= SVF_NOCLIENT;  /* invisible marker */
     gi.linkentity(ent);
     gi.dprintf("  cover_point at (%.0f %.0f %.0f)\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
+}
+
+/* ==========================================================================
+   trigger_monster_spawn — Spawns a monster when activated by use.
+   Keys: "classname_spawn" or "monster" = monster classname to spawn,
+         "count" = number to spawn (default 1)
+   ========================================================================== */
+
+static void monster_spawn_use(edict_t *self, edict_t *other, edict_t *activator)
+{
+    extern void G_SpawnMonster(edict_t *ent, const char *classname);
+    int i;
+    (void)other; (void)activator;
+
+    for (i = 0; i < self->count; i++) {
+        edict_t *mon = G_AllocEdict();
+        if (!mon) break;
+        VectorCopy(self->s.origin, mon->s.origin);
+        mon->s.origin[0] += gi.flrand(-32, 32);
+        mon->s.origin[1] += gi.flrand(-32, 32);
+        mon->classname = self->message ? self->message : "monster_soldier";
+        mon->solid = SOLID_BBOX;
+        mon->movetype = MOVETYPE_STEP;
+        mon->svflags |= SVF_MONSTER;
+        mon->takedamage = DAMAGE_AIM;
+        mon->health = 100;
+        mon->max_health = 100;
+        VectorSet(mon->mins, -16, -16, -24);
+        VectorSet(mon->maxs, 16, 16, 32);
+        gi.linkentity(mon);
+    }
+}
+
+static void SP_trigger_monster_spawn(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *v;
+
+    ent->classname = "trigger_monster_spawn";
+    ent->solid = SOLID_NOT;
+    ent->movetype = MOVETYPE_NONE;
+    ent->use = monster_spawn_use;
+
+    v = ED_FindValue(pairs, num_pairs, "monster");
+    if (v) ent->message = (char *)v;
+
+    v = ED_FindValue(pairs, num_pairs, "count");
+    ent->count = v ? atoi(v) : 1;
+    if (ent->count < 1) ent->count = 1;
+    if (ent->count > 8) ent->count = 8;
+
+    gi.linkentity(ent);
+    gi.dprintf("  trigger_monster_spawn at (%.0f %.0f %.0f) type=%s count=%d\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->message ? ent->message : "default", ent->count);
+}
+
+/* ==========================================================================
+   fallback_point — AI retreat marker. When AI retreats, it seeks the
+   nearest fallback_point entity to move toward.
+   ========================================================================== */
+
+static void SP_fallback_point(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+    ent->classname = "fallback_point";
+    ent->solid = SOLID_NOT;
+    ent->movetype = MOVETYPE_NONE;
+    ent->svflags |= SVF_NOCLIENT;
+    gi.linkentity(ent);
+    gi.dprintf("  fallback_point at (%.0f %.0f %.0f)\n",
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
 }
 

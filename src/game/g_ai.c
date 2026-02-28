@@ -890,17 +890,42 @@ static void ai_think_chase(edict_t *self)
     if (health_pct < 0.3f &&
         !(self->classname && Q_stricmp(self->classname, "monster_soldier_light") == 0) &&
         !(self->ai_flags & AI_STAND_GROUND)) {
-        /* Try to find cover first */
-        if (AI_SeekCover(self)) {
-            AI_MoveToward(self, self->move_origin, AI_CHASE_SPEED * 1.2f);
-        } else {
-            /* No cover — just back away from enemy */
-            vec3_t retreat_dir;
-            VectorSubtract(self->s.origin, self->enemy->s.origin, retreat_dir);
-            retreat_dir[2] = 0;
-            VectorNormalize(retreat_dir);
-            self->velocity[0] = retreat_dir[0] * AI_CHASE_SPEED;
-            self->velocity[1] = retreat_dir[1] * AI_CHASE_SPEED;
+        /* Try to find a fallback_point first, then cover, then back away */
+        {
+            extern game_export_t globals;
+            int fi;
+            float best_fb = 999999.0f;
+            vec3_t fb_pos;
+            qboolean fb_found = qfalse;
+            for (fi = 1; fi < globals.num_edicts; fi++) {
+                edict_t *fp = &globals.edicts[fi];
+                vec3_t fd;
+                float fdist;
+                if (!fp->inuse || !fp->classname ||
+                    Q_stricmp(fp->classname, "fallback_point") != 0)
+                    continue;
+                VectorSubtract(fp->s.origin, self->s.origin, fd);
+                fdist = VectorLength(fd);
+                if (fdist < 64.0f || fdist > 800.0f) continue;
+                if (fdist < best_fb) {
+                    best_fb = fdist;
+                    VectorCopy(fp->s.origin, fb_pos);
+                    fb_found = qtrue;
+                }
+            }
+            if (fb_found) {
+                AI_MoveToward(self, fb_pos, AI_CHASE_SPEED * 1.3f);
+            } else if (AI_SeekCover(self)) {
+                AI_MoveToward(self, self->move_origin, AI_CHASE_SPEED * 1.2f);
+            } else {
+                /* No cover — just back away from enemy */
+                vec3_t retreat_dir;
+                VectorSubtract(self->s.origin, self->enemy->s.origin, retreat_dir);
+                retreat_dir[2] = 0;
+                VectorNormalize(retreat_dir);
+                self->velocity[0] = retreat_dir[0] * AI_CHASE_SPEED;
+                self->velocity[1] = retreat_dir[1] * AI_CHASE_SPEED;
+            }
         }
         /* Still fire back while retreating (suppressive) */
         if (AI_Visible(self, self->enemy) && dist < AI_ATTACK_RANGE * 1.5f) {
