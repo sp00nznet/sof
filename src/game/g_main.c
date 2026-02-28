@@ -535,6 +535,194 @@ static void RunFrame(void)
             }
         }
 
+        /* Tear gas cloud: emit gas particles, slow and blur nearby entities */
+        if (ent->classname && Q_stricmp(ent->classname, "teargas_cloud") == 0) {
+            /* Transition from projectile to deployed cloud */
+            if (ent->count == 0 && level.time >= ent->nextthink) {
+                ent->count = 1;
+                ent->movetype = MOVETYPE_NONE;
+                VectorClear(ent->velocity);
+            }
+            if (ent->count == 1) {
+                /* Emit yellowish gas particles */
+                vec3_t gas_up = {0, 0, 1};
+                R_ParticleEffect(ent->s.origin, gas_up, 6, 15);
+                R_AddDlight(ent->s.origin, 0.6f, 0.6f, 0.2f, 150.0f,
+                            level.frametime + 0.05f);
+                /* Affect entities within 200u radius */
+                {
+                    int gi2;
+                    for (gi2 = 1; gi2 < globals.num_edicts; gi2++) {
+                        edict_t *victim = &globals.edicts[gi2];
+                        if (!victim->inuse || victim->health <= 0)
+                            continue;
+                        if (victim == ent)
+                            continue;
+                        {
+                            vec3_t d;
+                            float dist;
+                            VectorSubtract(victim->s.origin, ent->s.origin, d);
+                            dist = VectorLength(d);
+                            if (dist < 200.0f) {
+                                /* Slow movement for monsters */
+                                if (victim->svflags & SVF_MONSTER) {
+                                    victim->velocity[0] *= 0.5f;
+                                    victim->velocity[1] *= 0.5f;
+                                }
+                                /* Blur/cough effect for player */
+                                if (victim->client) {
+                                    victim->client->blend[0] = 0.5f;
+                                    victim->client->blend[1] = 0.5f;
+                                    victim->client->blend[2] = 0.1f;
+                                    victim->client->blend[3] = 0.3f;
+                                    /* Movement penalty */
+                                    victim->velocity[0] *= 0.7f;
+                                    victim->velocity[1] *= 0.7f;
+                                }
+                            }
+                        }
+                    }
+                }
+                /* Expire when duration ends */
+                if (level.time >= ent->wait) {
+                    ent->inuse = qfalse;
+                    gi.unlinkentity(ent);
+                }
+            }
+        }
+
+        /* EMP grenade: detonate and disable electronics in radius */
+        if (ent->classname && Q_stricmp(ent->classname, "emp_grenade") == 0) {
+            if (ent->count == 0 && level.time >= ent->nextthink) {
+                /* Detonate: electrical burst effect */
+                ent->count = 1;
+                ent->movetype = MOVETYPE_NONE;
+                VectorClear(ent->velocity);
+                R_AddDlight(ent->s.origin, 0.3f, 0.5f, 1.0f, 500.0f, 0.5f);
+                {
+                    vec3_t emp_up = {0, 0, 1};
+                    R_ParticleEffect(ent->s.origin, emp_up, 5, 30);
+                }
+                {
+                    int snd = gi.soundindex("weapons/emp_burst.wav");
+                    if (snd)
+                        gi.positioned_sound(ent->s.origin, ent, CHAN_AUTO,
+                                            snd, 1.0f, ATTN_NORM, 0);
+                }
+                SCR_AddPickupMessage("EMP DETONATED");
+                /* Disable turrets/sentries/spotlights in radius */
+                {
+                    int ei;
+                    float radius = (float)ent->dmg_radius;
+                    for (ei = 1; ei < globals.num_edicts; ei++) {
+                        edict_t *target = &globals.edicts[ei];
+                        if (!target->inuse || !target->classname)
+                            continue;
+                        {
+                            vec3_t d;
+                            float dist;
+                            VectorSubtract(target->s.origin, ent->s.origin, d);
+                            dist = VectorLength(d);
+                            if (dist < radius) {
+                                if (Q_stricmp(target->classname, "sentry_gun") == 0 ||
+                                    Q_stricmp(target->classname, "func_turret") == 0) {
+                                    /* Disable: stop thinking for EMP duration */
+                                    target->nextthink = ent->wait;
+                                    target->think = NULL;
+                                }
+                                if (Q_stricmp(target->classname, "func_spotlight") == 0) {
+                                    target->nextthink = ent->wait;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            /* Persistent EMP crackling visual until duration expires */
+            if (ent->count == 1) {
+                if (level.time < ent->wait) {
+                    /* Periodic electrical spark effect */
+                    if ((level.framenum % 3) == 0) {
+                        R_AddDlight(ent->s.origin, 0.2f, 0.3f, 0.8f, 100.0f, 0.2f);
+                    }
+                } else {
+                    ent->inuse = qfalse;
+                    gi.unlinkentity(ent);
+                }
+            }
+        }
+
+        /* Sentry gun: auto-target and fire at enemies in range */
+        if (ent->classname && Q_stricmp(ent->classname, "sentry_gun") == 0 &&
+            ent->health > 0 && ent->count > 0) {
+            /* Die callback: sentry destroyed */
+            if (ent->health <= 0) {
+                {
+                    vec3_t sentry_up = {0, 0, 1};
+                    R_ParticleEffect(ent->s.origin, sentry_up, 3, 20);
+                }
+                R_AddDlight(ent->s.origin, 1.0f, 0.5f, 0.0f, 200.0f, 0.5f);
+                ent->inuse = qfalse;
+                gi.unlinkentity(ent);
+            } else if (level.time >= ent->wait) {
+                /* Find nearest visible enemy in range */
+                edict_t *best = NULL;
+                float best_dist = ent->speed;
+                int si;
+                for (si = 1; si < globals.num_edicts; si++) {
+                    edict_t *target = &globals.edicts[si];
+                    if (!target->inuse || target->health <= 0 || target->deadflag)
+                        continue;
+                    if (!(target->svflags & SVF_MONSTER))
+                        continue;
+                    if (target->owner == ent->owner)
+                        continue;
+                    {
+                        vec3_t d;
+                        float dist;
+                        trace_t los;
+                        VectorSubtract(target->s.origin, ent->s.origin, d);
+                        dist = VectorLength(d);
+                        if (dist < best_dist) {
+                            /* LOS check */
+                            los = gi.trace(ent->s.origin, NULL, NULL,
+                                           target->s.origin, ent, MASK_SHOT);
+                            if (los.ent == target || los.fraction >= 0.95f) {
+                                best = target;
+                                best_dist = dist;
+                            }
+                        }
+                    }
+                }
+                if (best) {
+                    /* Fire at target */
+                    vec3_t dir, tracer_start;
+                    VectorSubtract(best->s.origin, ent->s.origin, dir);
+                    VectorNormalize(dir);
+                    VectorCopy(ent->s.origin, tracer_start);
+                    tracer_start[2] += 20; /* barrel height */
+                    R_AddTracer(tracer_start, best->s.origin, 1.0f, 0.8f, 0.2f);
+                    R_AddDlight(tracer_start, 1.0f, 0.8f, 0.3f, 80.0f, 0.1f);
+                    /* Apply damage */
+                    best->health -= ent->dmg;
+                    if (best->health <= 0) {
+                        best->deadflag = 1;
+                        if (best->die)
+                            best->die(best, ent, ent->owner, ent->dmg, best->s.origin);
+                    } else if (best->pain) {
+                        best->pain(best, ent, 0, ent->dmg);
+                    }
+                    ent->count--;  /* consume ammo */
+                    ent->wait = level.time + 0.2f;  /* 5 rounds/sec */
+                    {
+                        int snd = gi.soundindex("weapons/turret_fire.wav");
+                        if (snd)
+                            gi.sound(ent, CHAN_WEAPON, snd, 0.7f, ATTN_NORM, 0);
+                    }
+                }
+            }
+        }
+
         /* Run physics based on movetype */
         G_RunEntity(ent);
     }
@@ -2227,6 +2415,174 @@ static void ClientCommand(edict_t *ent)
                    ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
         if (level.objective_active && level.objective_text[0]) {
             gi.cprintf(ent, PRINT_ALL, "Objective: %s\n", level.objective_text);
+        }
+        return;
+    }
+
+    /* Tear gas grenade: throw area-denial gas cloud */
+    if (Q_stricmp(cmd, "teargas") == 0 || Q_stricmp(cmd, "gasgrenade") == 0) {
+        if (ent->deadflag)
+            return;
+        if (ent->client->ammo[WEAP_GRENADE] <= 0) {
+            gi.cprintf(ent, PRINT_ALL, "No grenades for tear gas.\n");
+            return;
+        }
+        {
+            vec3_t tg_fwd, tg_rt, tg_up;
+            edict_t *gas = G_AllocEdict();
+            if (gas) {
+                G_AngleVectors(ent->client->viewangles, tg_fwd, tg_rt, tg_up);
+                gas->classname = "teargas_cloud";
+                VectorCopy(ent->s.origin, gas->s.origin);
+                gas->s.origin[2] += ent->client->viewheight;
+                VectorScale(tg_fwd, 500.0f, gas->velocity);
+                gas->velocity[2] += 200.0f;
+                gas->movetype = MOVETYPE_TOSS;
+                gas->solid = SOLID_NOT;
+                gas->owner = ent;
+                gas->dmg = 0;
+                gas->wait = level.time + 8.0f; /* cloud duration */
+                gas->nextthink = level.time + 0.8f; /* deploy after landing */
+                gas->think = NULL; /* will be set in RunFrame gas check */
+                gas->count = 0; /* 0=projectile, 1=deployed cloud */
+                VectorSet(gas->mins, -4, -4, -4);
+                VectorSet(gas->maxs, 4, 4, 4);
+                gi.linkentity(gas);
+                ent->client->ammo[WEAP_GRENADE]--;
+                gi.cprintf(ent, PRINT_ALL, "Tear gas thrown!\n");
+                {
+                    int snd = gi.soundindex("weapons/grenade_throw.wav");
+                    if (snd)
+                        gi.sound(ent, CHAN_WEAPON, snd, 1.0f, ATTN_NORM, 0);
+                }
+            }
+        }
+        return;
+    }
+
+    /* EMP grenade: disable electronics in radius */
+    if (Q_stricmp(cmd, "emp") == 0 || Q_stricmp(cmd, "empgrenade") == 0) {
+        if (ent->deadflag)
+            return;
+        if (ent->client->ammo[WEAP_GRENADE] <= 0) {
+            gi.cprintf(ent, PRINT_ALL, "No grenades for EMP.\n");
+            return;
+        }
+        {
+            vec3_t emp_fwd, emp_rt, emp_up;
+            edict_t *emp = G_AllocEdict();
+            if (emp) {
+                G_AngleVectors(ent->client->viewangles, emp_fwd, emp_rt, emp_up);
+                emp->classname = "emp_grenade";
+                VectorCopy(ent->s.origin, emp->s.origin);
+                emp->s.origin[2] += ent->client->viewheight;
+                VectorScale(emp_fwd, 500.0f, emp->velocity);
+                emp->velocity[2] += 200.0f;
+                emp->movetype = MOVETYPE_BOUNCE;
+                emp->solid = SOLID_NOT;
+                emp->owner = ent;
+                emp->dmg_radius = 300;
+                emp->wait = level.time + 8.0f; /* EMP disable duration */
+                emp->nextthink = level.time + 1.5f; /* detonate after 1.5s */
+                emp->count = 0; /* 0=in flight, 1=detonated */
+                VectorSet(emp->mins, -4, -4, -4);
+                VectorSet(emp->maxs, 4, 4, 4);
+                gi.linkentity(emp);
+                ent->client->ammo[WEAP_GRENADE]--;
+                gi.cprintf(ent, PRINT_ALL, "EMP grenade thrown!\n");
+                {
+                    int snd = gi.soundindex("weapons/grenade_throw.wav");
+                    if (snd)
+                        gi.sound(ent, CHAN_WEAPON, snd, 1.0f, ATTN_NORM, 0);
+                }
+            }
+        }
+        return;
+    }
+
+    /* Thermal vision toggle */
+    if (Q_stricmp(cmd, "thermal") == 0 || Q_stricmp(cmd, "thermalvision") == 0) {
+        if (ent->deadflag)
+            return;
+        ent->client->thermal_on = !ent->client->thermal_on;
+        if (ent->client->thermal_on) {
+            if (ent->client->thermal_battery <= 0)
+                ent->client->thermal_battery = 100.0f;
+            /* Turn off NVG if active (mutually exclusive) */
+            ent->client->goggles_on = qfalse;
+            gi.cprintf(ent, PRINT_ALL, "Thermal vision ON\n");
+            {
+                int snd = gi.soundindex("items/goggles_on.wav");
+                if (snd)
+                    gi.sound(ent, CHAN_ITEM, snd, 0.8f, ATTN_NORM, 0);
+            }
+        } else {
+            gi.cprintf(ent, PRINT_ALL, "Thermal vision OFF\n");
+        }
+        return;
+    }
+
+    /* Deploy sentry gun */
+    if (Q_stricmp(cmd, "sentry") == 0 || Q_stricmp(cmd, "turretdeploy") == 0) {
+        if (ent->deadflag)
+            return;
+        /* Check cooldown via move_angles[1] */
+        if (ent->move_angles[1] > level.time) {
+            gi.cprintf(ent, PRINT_ALL, "Sentry not ready yet.\n");
+            return;
+        }
+        {
+            vec3_t sentry_fwd, sentry_rt, sentry_up, sentry_pos;
+            trace_t sentry_tr;
+            edict_t *sentry;
+
+            G_AngleVectors(ent->client->viewangles, sentry_fwd, sentry_rt, sentry_up);
+            VectorCopy(ent->s.origin, sentry_pos);
+            VectorMA(sentry_pos, 64, sentry_fwd, sentry_pos);
+
+            /* Trace down to find ground */
+            {
+                vec3_t ground_end;
+                VectorCopy(sentry_pos, ground_end);
+                ground_end[2] -= 128;
+                sentry_tr = gi.trace(sentry_pos, NULL, NULL, ground_end, ent, MASK_SOLID);
+                if (sentry_tr.fraction >= 1.0f) {
+                    gi.cprintf(ent, PRINT_ALL, "No ground to place sentry.\n");
+                    return;
+                }
+                VectorCopy(sentry_tr.endpos, sentry_pos);
+            }
+
+            sentry = G_AllocEdict();
+            if (sentry) {
+                sentry->classname = "sentry_gun";
+                VectorCopy(sentry_pos, sentry->s.origin);
+                sentry->s.origin[2] += 8; /* slight offset above ground */
+                sentry->movetype = MOVETYPE_NONE;
+                sentry->solid = SOLID_BBOX;
+                sentry->takedamage = DAMAGE_YES;
+                sentry->health = 150;
+                sentry->max_health = 150;
+                sentry->owner = ent;
+                sentry->dmg = 12; /* damage per shot */
+                sentry->wait = 0; /* next fire time */
+                sentry->speed = 400.0f; /* targeting range */
+                sentry->nextthink = level.time + 0.1f;
+                sentry->count = 200; /* ammo supply */
+                VectorSet(sentry->mins, -12, -12, 0);
+                VectorSet(sentry->maxs, 12, 12, 24);
+                sentry->s.modelindex = gi.modelindex("models/objects/sentry/tris.md2");
+                gi.linkentity(sentry);
+
+                gi.cprintf(ent, PRINT_ALL, "Sentry gun deployed!\n");
+                {
+                    int snd = gi.soundindex("weapons/turret_deploy.wav");
+                    if (snd)
+                        gi.sound(sentry, CHAN_ITEM, snd, 1.0f, ATTN_NORM, 0);
+                }
+                ent->move_angles[1] = level.time + 30.0f; /* 30s cooldown */
+                SCR_AddPickupMessage("SENTRY DEPLOYED");
+            }
         }
         return;
     }
@@ -6014,6 +6370,48 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
             client->blend[3] = 0.15f;
             /* Ambient light around player */
             R_AddDlight(ent->s.origin, 0.2f, 0.8f, 0.2f, 400.0f, level.frametime + 0.05f);
+        }
+    }
+
+    /* Thermal vision — orange/red tint, highlights living entities through walls */
+    if (client->thermal_on) {
+        client->thermal_battery -= level.frametime * 2.5f;  /* ~40s of battery */
+        if (client->thermal_battery <= 0) {
+            client->thermal_battery = 0;
+            client->thermal_on = qfalse;
+            gi.cprintf(ent, PRINT_ALL, "Thermal vision battery depleted\n");
+        } else {
+            /* Orange-red screen tint */
+            client->blend[0] = 0.4f;
+            client->blend[1] = 0.15f;
+            client->blend[2] = 0.0f;
+            client->blend[3] = 0.12f;
+            /* Highlight living entities with heat signature glow */
+            {
+                int ti;
+                for (ti = 1; ti < globals.num_edicts; ti++) {
+                    edict_t *target = &globals.edicts[ti];
+                    if (!target->inuse || target == ent)
+                        continue;
+                    if (target->health <= 0 || target->deadflag)
+                        continue;
+                    if (!(target->svflags & SVF_MONSTER) && !target->client)
+                        continue;
+                    /* Range check: 600 units */
+                    {
+                        vec3_t diff;
+                        float dist;
+                        VectorSubtract(target->s.origin, ent->s.origin, diff);
+                        dist = VectorLength(diff);
+                        if (dist < 600.0f) {
+                            /* Red/orange heat glow at target position */
+                            float heat_intensity = 80.0f + (1.0f - dist / 600.0f) * 120.0f;
+                            R_AddDlight(target->s.origin, 1.0f, 0.3f, 0.1f,
+                                        heat_intensity, level.frametime + 0.05f);
+                        }
+                    }
+                }
+            }
         }
     }
 

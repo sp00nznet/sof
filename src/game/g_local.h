@@ -552,6 +552,10 @@ struct gclient_s {
 
     /* Idle auto-inspect */
     float           last_action_time;      /* level.time of last fire/move/action */
+
+    /* Thermal vision */
+    qboolean        thermal_on;            /* thermal vision mode active */
+    float           thermal_battery;       /* battery remaining (0-100) */
 };
 
 /* ==========================================================================
