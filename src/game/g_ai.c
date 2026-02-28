@@ -1297,6 +1297,23 @@ static void ai_think_attack(edict_t *self)
         return;
     }
 
+    /* AI reload pause: after ~8 shots, pause 1.5s to simulate reloading */
+    if (self->style >= 8 && self->patrol_wait <= level.time) {
+        self->style = 0;  /* reset shot counter */
+        self->patrol_wait = level.time + 1.5f;  /* reload pause */
+        {
+            int snd = gi.soundindex("weapons/reload.wav");
+            if (snd) gi.sound(self, CHAN_WEAPON, snd, 0.6f, ATTN_NORM, 0);
+        }
+        self->nextthink = level.time + FRAMETIME;
+        return;
+    }
+    if (self->patrol_wait > level.time) {
+        /* Still reloading — wait */
+        self->nextthink = level.time + FRAMETIME;
+        return;
+    }
+
     /* Fire hitscan attack at the player */
     if (self->dmg_debounce_time <= level.time) {
         vec3_t start, end, dir;
@@ -1421,6 +1438,7 @@ static void ai_think_attack(edict_t *self)
 
             self->dmg_debounce_time = level.time + fire_rate;
         }
+        self->style++;  /* increment shot counter for reload mechanic */
     }
 
     self->nextthink = level.time + FRAMETIME;
@@ -1762,6 +1780,15 @@ void monster_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
 
     /* Death explosion of blood */
     R_ParticleEffect(self->s.origin, up, 1, 24);
+
+    /* Blood pool decal under corpse */
+    {
+        vec3_t down_org;
+        vec3_t down_norm = {0, 0, 1};
+        VectorCopy(self->s.origin, down_org);
+        down_org[2] -= 16;  /* at floor level */
+        R_AddDecal(down_org, down_norm, 3);  /* type 3 = blood pool */
+    }
 
     /* Stop combat, leave corpse visible for a few seconds */
     self->takedamage = DAMAGE_NO;

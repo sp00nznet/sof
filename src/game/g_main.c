@@ -3979,9 +3979,24 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
                 if (dip > 3.0f) dip = 3.0f;
                 client->kick_angles[0] += dip;  /* pitch down on landing */
             }
+            /* Landing dust puff at feet */
+            {
+                vec3_t dust_org, dust_up;
+                VectorCopy(ent->s.origin, dust_org);
+                dust_org[2] -= 8;
+                VectorSet(dust_up, 0, 0, 1);
+                R_ParticleEffect(dust_org, dust_up, 13, 4 + (int)(fall_speed * 0.01f));
+            }
         } else if (pm.groundentity && !ent->groundentity && old_z_vel < -150) {
-            /* Soft landing from small falls — subtle camera dip */
+            /* Soft landing from small falls — subtle camera dip + light dust */
             client->kick_angles[0] += 0.5f;
+            {
+                vec3_t dust_org, dust_up;
+                VectorCopy(ent->s.origin, dust_org);
+                dust_org[2] -= 8;
+                VectorSet(dust_up, 0, 0, 1);
+                R_ParticleEffect(dust_org, dust_up, 13, 2);
+            }
         }
 
         ent->groundentity = pm.groundentity;
@@ -4952,6 +4967,32 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
         client->blend[1] = 0.0f;
         client->blend[2] = 0.0f;
         client->blend[3] = (pulse > 0) ? pulse * 0.15f : 0;
+    }
+
+    /* Threat indicator — warn when an enemy is aiming directly at the player */
+    if (!ent->deadflag && ent->health > 0) {
+        int ti;
+        for (ti = 1; ti < globals.num_edicts; ti++) {
+            edict_t *npc = &globals.edicts[ti];
+            vec3_t to_player, npc_fwd;
+            float dot, tdist;
+            if (!npc->inuse || npc->health <= 0 || !(npc->svflags & SVF_MONSTER))
+                continue;
+            if (npc->enemy != ent) continue;  /* only if targeting us */
+            VectorSubtract(ent->s.origin, npc->s.origin, to_player);
+            tdist = VectorLength(to_player);
+            if (tdist < 64.0f || tdist > 1024.0f) continue;
+            VectorScale(to_player, 1.0f / tdist, to_player);
+            /* Get NPC forward direction from yaw */
+            npc_fwd[0] = cosf(npc->s.angles[1] * 3.14159265f / 180.0f);
+            npc_fwd[1] = sinf(npc->s.angles[1] * 3.14159265f / 180.0f);
+            npc_fwd[2] = 0;
+            dot = DotProduct(to_player, npc_fwd);
+            if (dot > 0.95f) {  /* aiming within ~18 degrees */
+                G_DamageDirectionToPlayer(ent, npc->s.origin);
+                break;  /* one warning per frame is enough */
+            }
+        }
     }
 
     /* Lean system — smoothly interpolate lean offset */
