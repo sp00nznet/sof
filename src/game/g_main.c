@@ -462,6 +462,25 @@ static void RunFrame(void)
                 continue;
         }
 
+        /* Smoke grenade: emit smoke particles when detonated */
+        if (ent->classname && Q_stricmp(ent->classname, "smoke_grenade") == 0) {
+            if (level.time >= ent->wait && ent->count > 0) {
+                /* Emit smoke cloud every frame */
+                vec3_t up_sm = {0, 0, 1};
+                R_ParticleEffect(ent->s.origin, up_sm, 10, 12); /* dense smoke */
+                ent->velocity[0] = ent->velocity[1] = ent->velocity[2] = 0;
+                ent->movetype = MOVETYPE_NONE;
+                /* Expire countdown: decrement 10x per sec */
+                ent->count--;
+                if (ent->count <= 0) {
+                    ent->solid = SOLID_NOT;
+                    ent->inuse = 0;
+                    gi.unlinkentity(ent);
+                }
+                ent->nextthink = level.time + 1.0f;
+            }
+        }
+
         /* Run physics based on movetype */
         G_RunEntity(ent);
     }
@@ -1661,6 +1680,53 @@ static void ClientCommand(edict_t *ent)
             ent->client->headshots,
             accuracy, ent->client->shots_hit, ent->client->shots_fired,
             ent->health, ent->max_health, ent->client->armor);
+        return;
+    }
+
+    /* Smoke grenade — throw a smoke cloud that obscures vision */
+    if (Q_stricmp(cmd, "smoke") == 0 || Q_stricmp(cmd, "smokegrenade") == 0) {
+        if (ent->deadflag)
+            return;
+        /* Use grenade ammo for smoke grenades */
+        if (ent->client->ammo[WEAP_GRENADE] <= 0) {
+            gi.cprintf(ent, PRINT_ALL, "No grenades available.\n");
+            return;
+        }
+        ent->client->ammo[WEAP_GRENADE]--;
+        {
+            vec3_t fwd_s, start_s;
+            edict_t *smoke;
+
+            G_AngleVectors(ent->client->viewangles, fwd_s, NULL, NULL);
+            VectorCopy(ent->s.origin, start_s);
+            start_s[2] += ent->client->viewheight;
+
+            smoke = G_AllocEdict();
+            if (smoke) {
+                smoke->classname = "smoke_grenade";
+                smoke->solid = SOLID_BBOX;
+                smoke->movetype = MOVETYPE_TOSS;
+                smoke->owner = ent;
+                VectorCopy(start_s, smoke->s.origin);
+                VectorScale(fwd_s, 600.0f, smoke->velocity);
+                smoke->velocity[2] += 200.0f;
+                VectorSet(smoke->mins, -4, -4, -4);
+                VectorSet(smoke->maxs, 4, 4, 4);
+                smoke->dmg = 0;
+                smoke->wait = level.time + 1.5f;  /* fuse time */
+                smoke->count = 10;  /* seconds of smoke */
+                smoke->think = NULL;  /* will be set by RunFrame smoke handler */
+                smoke->nextthink = smoke->wait;
+                gi.linkentity(smoke);
+            }
+        }
+        gi.cprintf(ent, PRINT_ALL, "Smoke grenade thrown!\n");
+        SCR_AddPickupMessage("SMOKE OUT!");
+        {
+            int snd = gi.soundindex("weapons/hgrena1b.wav");
+            if (snd)
+                gi.sound(ent, CHAN_WEAPON, snd, 1.0f, ATTN_NORM, 0);
+        }
         return;
     }
 

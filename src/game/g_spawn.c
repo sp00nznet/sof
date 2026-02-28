@@ -266,6 +266,7 @@ static void SP_func_cage(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_trigger_hazard(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_zipline(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_elevator_call(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_crane(edict_t *ent, epair_t *pairs, int num_pairs);
 static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
                            int damage, vec3_t point);
 
@@ -525,6 +526,10 @@ static spawn_func_t spawn_funcs[] = {
     /* Elevator call button */
     { "func_elevator_call",         SP_func_elevator_call },
     { "func_call_button",           SP_func_elevator_call },
+
+    /* Crane */
+    { "func_crane",                 SP_func_crane },
+    { "misc_crane",                 SP_func_crane },
 
     /* Weapons (SoF) */
     { "weapon_knife",               SP_item_pickup },
@@ -6134,6 +6139,102 @@ static void SP_func_elevator_call(edict_t *ent, epair_t *pairs, int num_pairs)
     gi.dprintf("  func_elevator_call at (%.0f %.0f %.0f) target='%s'\n",
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
                ent->target ? ent->target : "none");
+}
+
+/* ==========================================================================
+   func_crane — Overhead crane that moves objects between two positions
+   When triggered, the crane moves from its origin to endpoint and back.
+   Any entity touching the crane's platform moves with it.
+   Keys: "speed" = movement speed, "endpoint" = destination position
+   ========================================================================== */
+
+static void crane_think(edict_t *self)
+{
+    vec3_t dir, target_pos;
+    float dist, move_dist;
+
+    self->nextthink = level.time + 0.05f;
+
+    /* Determine current target: moving to endpoint (count=1) or back (count=0) */
+    if (self->count)
+        VectorCopy(self->move_origin, target_pos);
+    else
+        VectorCopy(self->s.old_origin, target_pos);
+
+    VectorSubtract(target_pos, self->s.origin, dir);
+    dist = VectorLength(dir);
+
+    if (dist < 2.0f) {
+        /* Arrived — stop and wait to be triggered again */
+        VectorCopy(target_pos, self->s.origin);
+        self->velocity[0] = self->velocity[1] = self->velocity[2] = 0;
+        self->count = !self->count;  /* toggle direction */
+        gi.linkentity(self);
+        self->nextthink = 0;  /* stop thinking until triggered */
+        return;
+    }
+
+    move_dist = self->speed * 0.05f;
+    if (move_dist > dist) move_dist = dist;
+
+    VectorNormalize(dir);
+    VectorScale(dir, self->speed, self->velocity);
+    gi.linkentity(self);
+}
+
+static void crane_use(edict_t *self, edict_t *other, edict_t *activator)
+{
+    (void)other; (void)activator;
+
+    /* Start moving */
+    self->think = crane_think;
+    self->nextthink = level.time + 0.05f;
+
+    {
+        int snd = gi.soundindex("world/crane.wav");
+        if (snd)
+            gi.sound(self, CHAN_AUTO, snd, 1.0f, ATTN_NORM, 0);
+    }
+}
+
+static void SP_func_crane(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *v;
+
+    ent->classname = "func_crane";
+    ent->solid = SOLID_BBOX;
+    ent->movetype = MOVETYPE_PUSH;
+    ent->use = crane_use;
+    ent->count = 1;  /* first activation moves to endpoint */
+
+    /* Save origin for return trip */
+    VectorCopy(ent->s.origin, ent->s.old_origin);
+
+    v = ED_FindValue(pairs, num_pairs, "speed");
+    ent->speed = v ? (float)atof(v) : 100.0f;
+
+    v = ED_FindValue(pairs, num_pairs, "endpoint");
+    if (v) {
+        sscanf(v, "%f %f %f",
+               &ent->move_origin[0], &ent->move_origin[1], &ent->move_origin[2]);
+    } else {
+        VectorCopy(ent->s.origin, ent->move_origin);
+        ent->move_origin[2] += 128.0f;  /* default: up 128 units */
+    }
+
+    v = ED_FindValue(pairs, num_pairs, "model");
+    if (v && v[0])
+        ent->s.modelindex = gi.modelindex(v);
+
+    VectorSet(ent->mins, -32, -32, 0);
+    VectorSet(ent->maxs, 32, 32, 8);
+
+    gi.linkentity(ent);
+
+    gi.dprintf("  func_crane at (%.0f %.0f %.0f) -> (%.0f %.0f %.0f) speed=%.0f\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->move_origin[0], ent->move_origin[1], ent->move_origin[2],
+               ent->speed);
 }
 
 /* ==========================================================================

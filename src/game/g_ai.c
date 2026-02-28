@@ -504,7 +504,8 @@ static qboolean AI_AvoidGrenade(edict_t *self)
         if (!e->inuse || !e->classname)
             continue;
         if (Q_stricmp(e->classname, "ai_grenade") != 0 &&
-            Q_stricmp(e->classname, "grenade") != 0)
+            Q_stricmp(e->classname, "grenade") != 0 &&
+            Q_stricmp(e->classname, "smoke_grenade") != 0)
             continue;
 
         VectorSubtract(e->s.origin, self->s.origin, diff);
