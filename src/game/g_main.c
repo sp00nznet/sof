@@ -915,6 +915,37 @@ static void RunFrame(void)
             }
         }
 
+        /* Flare projectile: emit bright light while active */
+        if (ent->classname && Q_stricmp(ent->classname, "flare_projectile") == 0) {
+            if (ent->count == 0 && ent->groundentity) {
+                ent->count = 1;
+                ent->movetype = MOVETYPE_NONE;
+                VectorClear(ent->velocity);
+            }
+            /* Emit bright white-yellow light */
+            R_AddDlight(ent->s.origin, 1.0f, 0.9f, 0.7f, 500.0f,
+                        level.frametime + 0.05f);
+            /* Fire particles */
+            {
+                vec3_t flare_up = {0, 0, 1};
+                R_ParticleEffect(ent->s.origin, flare_up, 3, 2);
+            }
+            /* Expire */
+            if (level.time >= ent->wait) {
+                ent->inuse = qfalse;
+                gi.unlinkentity(ent);
+            }
+        }
+
+        /* Tagged enemy: show tracking glow on tagged monsters */
+        if ((ent->svflags & SVF_MONSTER) && ent->inuse && ent->health > 0 &&
+            ent->teleport_time > level.time) {
+            /* Red pulsing glow visible through walls (tracked) */
+            float pulse = 0.5f + 0.5f * sinf(level.time * 4.0f);
+            R_AddDlight(ent->s.origin, 1.0f, 0.2f, 0.2f,
+                        40.0f + pulse * 40.0f, level.frametime + 0.05f);
+        }
+
         /* Squad follower: NPCs set to follow player move toward them */
         if (ent->count == 99 && ent->owner && ent->owner->inuse &&
             ent->owner->client && ent->health > 0) {
@@ -2948,6 +2979,111 @@ static void ClientCommand(edict_t *ent)
                            weapon_names[mi],
                            mastery_names[ent->client->weapon_mastery[mi]],
                            ent->client->weapon_kills[mi]);
+            }
+        }
+        return;
+    }
+
+    /* Stun baton: non-lethal melee that incapacitates enemies */
+    if (Q_stricmp(cmd, "stun") == 0 || Q_stricmp(cmd, "taser") == 0) {
+        if (ent->deadflag)
+            return;
+        if (ent->client->weapon_change_time > level.time)
+            return;
+        {
+            vec3_t stun_fwd, stun_start, stun_end;
+            trace_t stun_tr;
+            G_AngleVectors(ent->client->viewangles, stun_fwd, NULL, NULL);
+            VectorCopy(ent->s.origin, stun_start);
+            stun_start[2] += ent->client->viewheight;
+            VectorMA(stun_start, 64.0f, stun_fwd, stun_end);
+            stun_tr = gi.trace(stun_start, NULL, NULL, stun_end, ent, MASK_SHOT);
+            if (stun_tr.fraction < 1.0f && stun_tr.ent &&
+                stun_tr.ent->health > 0 && (stun_tr.ent->svflags & SVF_MONSTER)) {
+                edict_t *victim = stun_tr.ent;
+                /* Incapacitate: freeze AI for 10 seconds */
+                victim->enemy = NULL;
+                victim->count = 5;  /* AI_STATE_PAIN — stops normal behavior */
+                victim->nextthink = level.time + 10.0f;
+                VectorClear(victim->velocity);
+                /* Electrical stun visual */
+                {
+                    vec3_t stun_up = {0, 0, 1};
+                    R_ParticleEffect(victim->s.origin, stun_up, 5, 8);
+                    R_AddDlight(victim->s.origin, 0.3f, 0.5f, 1.0f, 80.0f, 0.5f);
+                }
+                {
+                    int snd = gi.soundindex("world/electric_shock.wav");
+                    if (snd) gi.sound(victim, CHAN_AUTO, snd, 0.8f, ATTN_NORM, 0);
+                }
+                gi.cprintf(ent, PRINT_ALL, "Enemy stunned!\n");
+                SCR_AddPickupMessage("STUNNED");
+                ent->client->score += 25;
+                SCR_AddScorePopup(25);
+            } else {
+                gi.cprintf(ent, PRINT_ALL, "No enemy in range to stun.\n");
+            }
+            ent->client->weapon_change_time = level.time + 0.8f;
+        }
+        return;
+    }
+
+    /* Enemy tagging: mark a visible enemy for persistent tracking */
+    if (Q_stricmp(cmd, "tag") == 0 || Q_stricmp(cmd, "mark") == 0) {
+        if (ent->deadflag)
+            return;
+        {
+            vec3_t tag_fwd, tag_start, tag_end;
+            trace_t tag_tr;
+            G_AngleVectors(ent->client->viewangles, tag_fwd, NULL, NULL);
+            VectorCopy(ent->s.origin, tag_start);
+            tag_start[2] += ent->client->viewheight;
+            VectorMA(tag_start, 1024.0f, tag_fwd, tag_end);
+            tag_tr = gi.trace(tag_start, NULL, NULL, tag_end, ent, MASK_SHOT);
+            if (tag_tr.fraction < 1.0f && tag_tr.ent &&
+                tag_tr.ent->health > 0 && (tag_tr.ent->svflags & SVF_MONSTER)) {
+                /* Mark enemy: use teleport_time as tag expiry */
+                tag_tr.ent->teleport_time = level.time + 30.0f;  /* tagged for 30s */
+                gi.cprintf(ent, PRINT_ALL, "Enemy tagged!\n");
+                SCR_AddPickupMessage("TARGET MARKED");
+                {
+                    int snd = gi.soundindex("items/tag_beep.wav");
+                    if (snd) gi.sound(ent, CHAN_ITEM, snd, 0.6f, ATTN_NORM, 0);
+                }
+            } else {
+                gi.cprintf(ent, PRINT_ALL, "No enemy in crosshairs to tag.\n");
+            }
+        }
+        return;
+    }
+
+    /* Flare gun: fire illumination flare that lights up an area */
+    if (Q_stricmp(cmd, "flare") == 0 || Q_stricmp(cmd, "flaregun") == 0) {
+        if (ent->deadflag)
+            return;
+        {
+            vec3_t flare_fwd, flare_rt, flare_up;
+            edict_t *flare = G_AllocEdict();
+            if (flare) {
+                G_AngleVectors(ent->client->viewangles, flare_fwd, flare_rt, flare_up);
+                flare->classname = "flare_projectile";
+                VectorCopy(ent->s.origin, flare->s.origin);
+                flare->s.origin[2] += ent->client->viewheight;
+                VectorScale(flare_fwd, 600.0f, flare->velocity);
+                flare->velocity[2] += 150.0f;  /* arc upward */
+                flare->movetype = MOVETYPE_TOSS;
+                flare->solid = SOLID_NOT;
+                flare->owner = ent;
+                flare->wait = level.time + 20.0f;  /* lasts 20 seconds */
+                flare->count = 0;  /* 0=in flight, 1=landed */
+                VectorSet(flare->mins, -2, -2, -2);
+                VectorSet(flare->maxs, 2, 2, 2);
+                gi.linkentity(flare);
+                gi.cprintf(ent, PRINT_ALL, "Flare fired!\n");
+                {
+                    int snd = gi.soundindex("weapons/flare_fire.wav");
+                    if (snd) gi.sound(ent, CHAN_WEAPON, snd, 0.8f, ATTN_NORM, 0);
+                }
             }
         }
         return;

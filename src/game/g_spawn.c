@@ -304,6 +304,7 @@ static void SP_func_booby_trap(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_trigger_toxic(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_trigger_fire_pit(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_misc_weapon_bench(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_rope_swing(edict_t *ent, epair_t *pairs, int num_pairs);
 static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
                            int damage, vec3_t point);
 
@@ -749,6 +750,10 @@ static spawn_func_t spawn_funcs[] = {
     /* Weapon upgrade bench */
     { "misc_weapon_bench",          SP_misc_weapon_bench },
     { "misc_workbench",             SP_misc_weapon_bench },
+
+    /* Rope swing */
+    { "func_rope_swing",            SP_func_rope_swing },
+    { "misc_rope_swing",            SP_func_rope_swing },
 
     /* Sentinel */
     { NULL, NULL }
@@ -8812,6 +8817,61 @@ static void SP_misc_weapon_bench(edict_t *ent, epair_t *pairs, int num_pairs)
     ent->s.modelindex = gi.modelindex("models/objects/bench/tris.md2");
     gi.linkentity(ent);
     gi.dprintf("  misc_weapon_bench at (%.0f %.0f %.0f)\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
+}
+
+/* ==========================================================================
+   Rope Swing — pendulum-based traversal entity.
+   Player uses the rope to swing across gaps. The rope swings back and
+   forth on a pendulum, and the player grabs on when close enough.
+   ========================================================================== */
+
+static void rope_swing_use(edict_t *self, edict_t *other, edict_t *activator)
+{
+    (void)other;
+    if (!activator || !activator->client)
+        return;
+    if (activator->health <= 0)
+        return;
+
+    /* Calculate swing direction based on entity orientation */
+    {
+        float swing_angle = sinf(level.time * 2.0f) * 45.0f;  /* pendulum */
+        float yaw = (self->s.angles[1] + swing_angle) * 3.14159f / 180.0f;
+        vec3_t swing_dir;
+        float swing_speed = 400.0f;
+
+        swing_dir[0] = cosf(yaw) * swing_speed;
+        swing_dir[1] = sinf(yaw) * swing_speed;
+        swing_dir[2] = 200.0f;  /* upward arc */
+
+        /* Launch the player in the swing direction */
+        activator->velocity[0] = swing_dir[0];
+        activator->velocity[1] = swing_dir[1];
+        activator->velocity[2] = swing_dir[2];
+        activator->groundentity = NULL;
+
+        gi.cprintf(activator, PRINT_ALL, "Rope swing!\n");
+        {
+            int snd = gi.soundindex("world/rope_swing.wav");
+            if (snd)
+                gi.sound(self, CHAN_AUTO, snd, 1.0f, ATTN_NORM, 0);
+        }
+    }
+}
+
+static void SP_func_rope_swing(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+    ent->classname = "func_rope_swing";
+    ent->solid = SOLID_BBOX;
+    ent->movetype = MOVETYPE_NONE;
+    ent->use = rope_swing_use;
+    VectorSet(ent->mins, -8, -8, -48);
+    VectorSet(ent->maxs, 8, 8, 0);
+    ent->s.modelindex = gi.modelindex("models/objects/rope/tris.md2");
+    gi.linkentity(ent);
+    gi.dprintf("  func_rope_swing at (%.0f %.0f %.0f)\n",
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
 }
 
