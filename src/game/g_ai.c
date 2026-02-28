@@ -2173,6 +2173,13 @@ void monster_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
         }
     }
 
+    /* Dead drop intel: 10% chance officers/SS drop intel documents */
+    if (self->max_health >= 100) {  /* officers and elites only */
+        if ((rand() % 100) < 10) {
+            G_DropItem(self->s.origin, "item_intel");
+        }
+    }
+
     gi.linkentity(self);
 
     gi.dprintf("Monster killed: %s\n", self->classname ? self->classname : "unknown");

@@ -287,6 +287,8 @@ static void SP_func_drawbridge(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_misc_sea_mine(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_trigger_quicksand(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_fence(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_info_sniper_nest(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_item_intel(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_cover_point(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_trigger_monster_spawn(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_fallback_point(edict_t *ent, epair_t *pairs, int num_pairs);
@@ -679,6 +681,14 @@ static spawn_func_t spawn_funcs[] = {
     /* Destructible fence */
     { "func_fence",                 SP_func_fence },
     { "func_chainlink",             SP_func_fence },
+
+    /* AI sniper nest */
+    { "info_sniper_nest",           SP_info_sniper_nest },
+    { "info_sniper_spot",           SP_info_sniper_nest },
+
+    /* Intel document pickup */
+    { "item_intel",                 SP_item_intel },
+    { "item_document",              SP_item_intel },
 
     /* Keys */
     { "key_red",                    SP_item_pickup },
@@ -7958,6 +7968,107 @@ static void SP_trigger_quicksand(edict_t *ent, epair_t *pairs, int num_pairs)
 /* ==========================================================================
    func_fence — Destructible chain-link fence with debris
    ========================================================================== */
+
+/* ==========================================================================
+   info_sniper_nest — Elevated overwatch position for AI snipers
+   Snipers will seek these positions when spawned nearby.
+   ========================================================================== */
+
+static void SP_info_sniper_nest(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+    ent->classname = "info_sniper_nest";
+    ent->solid = SOLID_NOT;
+    ent->svflags |= SVF_NOCLIENT;  /* invisible marker */
+
+    /* On spawn, check for nearby snipers and assign them this position */
+    {
+        extern game_export_t globals;
+        int i;
+        for (i = 1; i < globals.num_edicts; i++) {
+            edict_t *e = &globals.edicts[i];
+            vec3_t diff;
+            float dist;
+            if (!e->inuse || !(e->svflags & SVF_MONSTER))
+                continue;
+            if (e->weapon_index != WEAP_SNIPER)
+                continue;
+            VectorSubtract(e->s.origin, ent->s.origin, diff);
+            dist = VectorLength(diff);
+            if (dist < 1000.0f && !e->patrol_target) {
+                /* Assign this sniper to the nest */
+                e->patrol_target = ent;
+                VectorCopy(ent->s.origin, e->move_origin);
+                e->ai_flags |= 0x0001;  /* AI_STAND_GROUND — hold position */
+                gi.dprintf("  Sniper assigned to nest at (%.0f %.0f %.0f)\n",
+                           ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
+                break;  /* one sniper per nest */
+            }
+        }
+    }
+
+    gi.linkentity(ent);
+    gi.dprintf("  info_sniper_nest at (%.0f %.0f %.0f)\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
+}
+
+/* ==========================================================================
+   item_intel — Intelligence document pickup, gives score and objectives
+   ========================================================================== */
+
+static void intel_touch(edict_t *self, edict_t *other,
+                         void *plane, csurface_t *surf)
+{
+    (void)plane; (void)surf;
+    if (!other || !other->client || other->deadflag)
+        return;
+
+    /* Award score and XP */
+    other->client->score += 50;
+    other->client->xp += 25;
+    SCR_AddPickupMessage("INTEL RECOVERED +50");
+    SCR_AddScorePopup(50);
+
+    /* Progress objective if active */
+    if (level.objective_active)
+        level.objectives_completed++;
+
+    /* Pickup sound */
+    {
+        int snd = gi.soundindex("items/intel.wav");
+        if (snd)
+            gi.sound(other, CHAN_ITEM, snd, 1.0f, ATTN_NORM, 0);
+    }
+
+    /* Remove the item */
+    self->solid = SOLID_NOT;
+    self->svflags |= SVF_NOCLIENT;
+    self->touch = NULL;
+    gi.linkentity(self);
+}
+
+static void SP_item_intel(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+    ent->classname = "item_intel";
+    ent->solid = SOLID_TRIGGER;
+    ent->movetype = MOVETYPE_NONE;
+    ent->touch = intel_touch;
+
+    VectorSet(ent->mins, -16, -16, -16);
+    VectorSet(ent->maxs, 16, 16, 16);
+
+    /* Save base position for bob animation */
+    VectorCopy(ent->s.origin, ent->move_origin);
+    ent->speed = ((float)(rand() % 628)) * 0.01f;
+
+    /* Start bob/rotate animation (same as items) */
+    ent->think = NULL;  /* no custom think needed, uses item_bob if registered */
+
+    gi.linkentity(ent);
+    gi.dprintf("  item_intel at (%.0f %.0f %.0f)\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
+}
 
 static void fence_debris_expire(edict_t *self)
 {

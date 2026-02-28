@@ -48,6 +48,7 @@ static void ReadGame(const char *filename);
 void WriteLevel(const char *filename);
 static void ReadLevel(const char *filename);
 static void G_UpdateDecals(void);
+static void grapple_hook_think(edict_t *self);
 static void G_AddDecal(vec3_t origin, vec3_t normal, int type);
 static void G_SpawnGibs(edict_t *ent, int count);
 static void G_DamageDirectionToPlayer(edict_t *player, vec3_t source);
@@ -1477,6 +1478,8 @@ static void ClientCommand(edict_t *ent)
             "inspect         - Inspect weapon\n"
             "nightvision     - Toggle NV goggles\n"
             "claymore        - Place directional mine\n"
+            "grapple         - Fire grapple hook\n"
+            "parry           - Knife block/riposte\n"
             "flashbang       - Throw flashbang\n"
             "+leanleft/right - Lean\n"
             "altfire         - Toggle alt fire\n"
@@ -1712,6 +1715,68 @@ static void ClientCommand(edict_t *ent)
         } else {
             gi.cprintf(ent, PRINT_ALL, "No bayonet attached to this weapon.\n");
         }
+        return;
+    }
+
+    /* Grapple hook: fire a hook projectile, pulls player to impact point */
+    if (Q_stricmp(cmd, "grapple") == 0 || Q_stricmp(cmd, "hook") == 0) {
+        if (ent->deadflag)
+            return;
+        if (ent->client->weapon_change_time > level.time)
+            return;  /* cooldown */
+        {
+            edict_t *hook = G_AllocEdict();
+            if (hook) {
+                vec3_t fwd, rt_v, up_v, hook_start;
+                G_AngleVectors(ent->client->viewangles, fwd, rt_v, up_v);
+                VectorCopy(ent->s.origin, hook_start);
+                hook_start[2] += ent->client->viewheight;
+                VectorMA(hook_start, 16, fwd, hook_start);
+
+                hook->classname = "grapple_hook";
+                hook->owner = ent;
+                hook->solid = SOLID_BBOX;
+                hook->movetype = MOVETYPE_FLYMISSILE;
+                hook->clipmask = MASK_SHOT;
+                VectorSet(hook->mins, -2, -2, -2);
+                VectorSet(hook->maxs, 2, 2, 2);
+                VectorCopy(hook_start, hook->s.origin);
+                VectorScale(fwd, 1500, hook->velocity);
+                hook->touch = NULL;  /* handled by think */
+                hook->think = grapple_hook_think;
+                hook->nextthink = level.time + 0.05f;
+                hook->teleport_time = level.time + 3.0f;  /* max travel time */
+
+                gi.linkentity(hook);
+                {
+                    int snd = gi.soundindex("weapons/hook_fire.wav");
+                    if (snd)
+                        gi.sound(ent, CHAN_WEAPON, snd, 1.0f, ATTN_NORM, 0);
+                }
+                ent->client->weapon_change_time = level.time + 2.0f;  /* cooldown */
+            }
+        }
+        return;
+    }
+
+    /* Knife parry: alt-fire with knife to block, enables riposte */
+    if (Q_stricmp(cmd, "parry") == 0 || Q_stricmp(cmd, "block") == 0) {
+        if (ent->deadflag || ent->client->pers_weapon != WEAP_KNIFE)
+            return;
+        if (ent->client->weapon_change_time > level.time)
+            return;
+        /* Parry window: 0.5s of damage reduction, next melee hit is a riposte */
+        ent->client->shield_end = level.time + 0.5f;
+        ent->client->shield_mult = 0.3f;  /* 70% damage reduction during parry */
+        ent->client->melee_combo = 10;  /* magic value: riposte ready */
+        ent->client->melee_combo_time = level.time;
+        gi.cprintf(ent, PRINT_ALL, "Parry!\n");
+        {
+            int snd = gi.soundindex("weapons/knife_block.wav");
+            if (snd)
+                gi.sound(ent, CHAN_WEAPON, snd, 1.0f, ATTN_NORM, 0);
+        }
+        ent->client->weapon_change_time = level.time + 0.8f;
         return;
     }
 
@@ -2721,6 +2786,62 @@ void grenade_explode(edict_t *self)
     gi.unlinkentity(self);
 }
 
+/* Grapple hook think — check for impact and pull player */
+static void grapple_hook_think(edict_t *self)
+{
+    trace_t tr;
+    vec3_t end;
+
+    if (!self->owner || !self->owner->inuse || !self->owner->client) {
+        self->inuse = qfalse;
+        gi.unlinkentity(self);
+        return;
+    }
+
+    /* Timed out? */
+    if (level.time >= self->teleport_time) {
+        self->inuse = qfalse;
+        gi.unlinkentity(self);
+        return;
+    }
+
+    /* Check for impact via trace ahead */
+    VectorMA(self->s.origin, 0.05f, self->velocity, end);
+    tr = gi.trace(self->s.origin, self->mins, self->maxs, end, self, MASK_SOLID);
+
+    if (tr.fraction < 1.0f) {
+        /* Hit something — pull player toward this point */
+        edict_t *player = self->owner;
+        vec3_t pull_dir;
+        float pull_dist;
+
+        VectorSubtract(tr.endpos, player->s.origin, pull_dir);
+        pull_dist = VectorLength(pull_dir);
+        VectorNormalize(pull_dir);
+
+        if (pull_dist > 48.0f) {
+            /* Apply pull velocity toward hook point */
+            VectorScale(pull_dir, 600.0f, player->velocity);
+            player->velocity[2] += 100.0f;  /* slight upward boost */
+            player->client->double_jump_used = qfalse;  /* reset jump */
+        }
+
+        /* Hook sound and cleanup */
+        {
+            int snd = gi.soundindex("weapons/hook_hit.wav");
+            if (snd)
+                gi.sound(self, CHAN_AUTO, snd, 1.0f, ATTN_NORM, 0);
+        }
+        R_ParticleEffect(tr.endpos, tr.plane.normal, 12, 6);  /* sparks */
+
+        self->inuse = qfalse;
+        gi.unlinkentity(self);
+        return;
+    }
+
+    self->nextthink = level.time + 0.05f;
+}
+
 /* Sticky grenade touch — stick to surface or entity on contact */
 static void sticky_grenade_touch(edict_t *self, edict_t *other,
                                   void *plane, csurface_t *surf)
@@ -3706,6 +3827,18 @@ static void G_FireHitscan(edict_t *ent)
                     ent->client->score += ent->client->melee_combo * 5;
                     SCR_AddScorePopup(ent->client->melee_combo * 5);
                 }
+            }
+
+            /* Melee riposte: if parry was active, deal massive counter-damage */
+            if (weap == WEAP_KNIFE && ent->client &&
+                ent->client->melee_combo == 10 &&
+                level.time - ent->client->melee_combo_time < 1.0f) {
+                damage *= 4;  /* 4x damage riposte */
+                ent->client->melee_combo = 0;
+                ent->client->shield_end = 0;  /* clear parry */
+                SCR_AddPickupMessage("RIPOSTE!");
+                ent->client->score += 20;
+                SCR_AddScorePopup(20);
             }
 
             /* Knife bleed: melee hits cause bleeding DoT */
