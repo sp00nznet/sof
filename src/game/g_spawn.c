@@ -48,6 +48,7 @@ extern void SP_monster_medic(edict_t *ent, void *pairs, int num_pairs);
 extern void SP_monster_dog(edict_t *ent, void *pairs, int num_pairs);
 extern void SP_monster_shield(edict_t *ent, void *pairs, int num_pairs);
 extern void SP_monster_hostage(edict_t *ent, void *pairs, int num_pairs);
+extern void SP_monster_engineer(edict_t *ent, void *pairs, int num_pairs);
 
 /* Forward declarations for precache functions */
 static void door_precache_sounds(void);
@@ -413,6 +414,8 @@ static spawn_func_t spawn_funcs[] = {
     { "monster_shield",             (void (*)(edict_t *, epair_t *, int))SP_monster_shield },
     { "monster_hostage",            (void (*)(edict_t *, epair_t *, int))SP_monster_hostage },
     { "monster_civilian",           (void (*)(edict_t *, epair_t *, int))SP_monster_hostage },
+    { "monster_engineer",           (void (*)(edict_t *, epair_t *, int))SP_monster_engineer },
+    { "monster_combat_engineer",    (void (*)(edict_t *, epair_t *, int))SP_monster_engineer },
     { "monster_riot_shield",        (void (*)(edict_t *, epair_t *, int))SP_monster_shield },
     /* Q2-compatible monster names */
     { "monster_soldier_light",      (void (*)(edict_t *, epair_t *, int))SP_monster_soldier_light },

@@ -1480,6 +1480,7 @@ static void ClientCommand(edict_t *ent)
             "claymore        - Place directional mine\n"
             "grapple         - Fire grapple hook\n"
             "sling           - Quick-draw weapon swap\n"
+            "paint           - Cycle weapon paint job\n"
             "parry           - Knife block/riposte\n"
             "flashbang       - Throw flashbang\n"
             "+leanleft/right - Lean\n"
@@ -1756,6 +1757,22 @@ static void ClientCommand(edict_t *ent)
                 }
                 ent->client->weapon_change_time = level.time + 2.0f;  /* cooldown */
             }
+        }
+        return;
+    }
+
+    /* Weapon paint job: cycle custom color tint for current weapon */
+    if (Q_stricmp(cmd, "paint") == 0 || Q_stricmp(cmd, "paintjob") == 0) {
+        int w = ent->client->pers_weapon;
+        if (w > 0 && w < WEAP_COUNT) {
+            /* Cycle through 6 paint schemes */
+            int paint = (ent->client->weapon_camo[w] / 5 + 1) % 6;
+            static const char *paint_names[] = {
+                "Factory", "Crimson", "Cobalt", "Gold", "Forest", "Onyx"
+            };
+            ent->client->weapon_camo[w] = paint * 5;  /* encode in camo field */
+            gi.cprintf(ent, PRINT_ALL, "%s paint: %s\n",
+                       weapon_names[w], paint_names[paint]);
         }
         return;
     }
@@ -4806,6 +4823,39 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
     /* Reset double jump when landing */
     if (ent->groundentity)
         client->double_jump_used = false;
+
+    /* Wall-run: sprint + airborne + near wall = horizontal run along wall */
+    if (!ent->groundentity && !ent->deadflag && client->sprinting &&
+        ucmd->forwardmove > 0 && ent->velocity[2] > -100.0f) {
+        vec3_t wr_fwd, wr_rt, wr_up;
+        vec3_t wr_start, wr_end;
+        trace_t wr_tr;
+
+        G_AngleVectors(client->viewangles, wr_fwd, wr_rt, wr_up);
+        VectorCopy(ent->s.origin, wr_start);
+        wr_start[2] += client->viewheight;
+
+        /* Check right side wall */
+        VectorMA(wr_start, 28, wr_rt, wr_end);
+        wr_tr = gi.trace(wr_start, NULL, NULL, wr_end, ent, MASK_SOLID);
+        if (wr_tr.fraction < 1.0f) {
+            /* Right wall — run along it */
+            ent->velocity[2] = 20.0f;  /* sustain height, slow descent */
+            ent->velocity[0] = wr_fwd[0] * 350.0f;
+            ent->velocity[1] = wr_fwd[1] * 350.0f;
+            R_ParticleEffect(wr_tr.endpos, wr_tr.plane.normal, 13, 1);
+        } else {
+            /* Check left side wall */
+            VectorMA(wr_start, -28, wr_rt, wr_end);
+            wr_tr = gi.trace(wr_start, NULL, NULL, wr_end, ent, MASK_SOLID);
+            if (wr_tr.fraction < 1.0f) {
+                ent->velocity[2] = 20.0f;
+                ent->velocity[0] = wr_fwd[0] * 350.0f;
+                ent->velocity[1] = wr_fwd[1] * 350.0f;
+                R_ParticleEffect(wr_tr.endpos, wr_tr.plane.normal, 13, 1);
+            }
+        }
+    }
 
     /* Mantling/vaulting: climb over low obstacles when jumping near a ledge */
     if (!ent->groundentity && !ent->deadflag && ucmd->forwardmove > 0 &&

@@ -26,9 +26,13 @@ extern edict_t *G_AllocEdict(void);
 extern void grenade_explode(edict_t *self);
 extern edict_t *G_DropItem(vec3_t origin, const char *classname);
 
+/* AI flag for combat engineer */
+#define AI_ENGINEER  0x1000
+
 /* Forward declarations */
 static void AI_FormationSpread(edict_t *self);
 static void AI_MedicThink(edict_t *self);
+static void engineer_place_mine(edict_t *self);
 static void AI_TryBreach(edict_t *self);
 static void AI_LeapfrogAdvance(edict_t *self);
 static void AI_BlindFire(edict_t *self);
@@ -727,6 +731,31 @@ static qboolean AI_TryRetreat(edict_t *self)
         extern int snd_monster_pain1;
         if (snd_monster_pain1)
             gi.sound(self, CHAN_VOICE, snd_monster_pain1, 1.0f, ATTN_NORM, 0);
+    }
+
+    /* Retreat smoke: pop a smoke grenade to cover retreat (cooldown via move_angles[2]) */
+    if (level.time >= self->move_angles[2] + 8.0f) {
+        edict_t *smoke = G_AllocEdict();
+        if (smoke) {
+            vec3_t smoke_up = {0, 0, 1};
+            smoke->classname = "ai_smoke";
+            smoke->solid = SOLID_NOT;
+            smoke->movetype = MOVETYPE_NONE;
+            VectorCopy(self->s.origin, smoke->s.origin);
+            smoke->nextthink = level.time + 5.0f;  /* smoke lasts 5s */
+            smoke->think = NULL;  /* will just expire */
+
+            /* Visual: dense smoke particles */
+            R_ParticleEffect(self->s.origin, smoke_up, 14, 30);
+            R_AddDlight(self->s.origin, 0.5f, 0.5f, 0.5f, 200.0f, 5.0f);
+            {
+                int snd = gi.soundindex("weapons/smoke.wav");
+                if (snd)
+                    gi.sound(self, CHAN_AUTO, snd, 0.8f, ATTN_NORM, 0);
+            }
+            gi.linkentity(smoke);
+            self->move_angles[2] = level.time;  /* cooldown */
+        }
     }
 
     return qtrue;
@@ -1942,6 +1971,11 @@ void monster_think(edict_t *self)
         AI_MedicThink(self);
     }
 
+    /* Engineer behavior: place mines during combat */
+    if (self->ai_flags & AI_ENGINEER) {
+        engineer_place_mine(self);
+    }
+
     switch (self->count) {  /* count field used as AI state */
     case AI_STATE_IDLE:     ai_think_idle(self); break;
     case AI_STATE_ALERT:    ai_think_alert(self); break;
@@ -2542,6 +2576,73 @@ void SP_monster_hostage(edict_t *ent, void *pairs, int num_pairs)
     ent->enemy = NULL;
 
     gi.linkentity(ent);
+}
+
+/*
+ * SP_monster_engineer - AI Combat Engineer
+ * Places proximity mines during combat. Periodically deploys traps along
+ * retreat paths and choke points.
+ */
+
+static void engineer_place_mine(edict_t *self)
+{
+    edict_t *mine;
+    vec3_t fwd;
+    float yaw;
+
+    if (!self->enemy || self->health <= 0)
+        return;
+    /* Cooldown: use move_angles[1] for mine placement timer */
+    if (level.time < self->move_angles[1] + 6.0f)
+        return;
+
+    mine = G_AllocEdict();
+    if (!mine)
+        return;
+
+    yaw = self->s.angles[1] * 3.14159f / 180.0f;
+    fwd[0] = cosf(yaw);
+    fwd[1] = sinf(yaw);
+    fwd[2] = 0;
+
+    mine->classname = "ai_mine";
+    mine->solid = SOLID_TRIGGER;
+    mine->movetype = MOVETYPE_NONE;
+    VectorCopy(self->s.origin, mine->s.origin);
+    mine->s.origin[2] -= 20.0f;  /* on ground */
+    VectorCopy(fwd, mine->move_origin);  /* facing direction */
+    mine->owner = self;
+    mine->dmg = 80;
+    mine->health = 15;
+    mine->takedamage = DAMAGE_YES;
+    mine->count = 0;  /* arming */
+    mine->nextthink = level.time + 2.0f;  /* arm delay */
+    VectorSet(mine->mins, -4, -4, 0);
+    VectorSet(mine->maxs, 4, 4, 8);
+
+    gi.linkentity(mine);
+    self->move_angles[1] = level.time;
+
+    /* Placement callout */
+    {
+        int snd = gi.soundindex("npc/setting_trap.wav");
+        if (snd)
+            gi.sound(self, CHAN_VOICE, snd, 1.0f, ATTN_NORM, 0);
+    }
+}
+
+void SP_monster_engineer(edict_t *ent, void *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+
+    gi.dprintf("  Spawning combat engineer at (%.0f %.0f %.0f)\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
+
+    ent->classname = "monster_engineer";
+    monster_start(ent, 120, 10, AI_CHASE_SPEED * 0.8f);
+    ent->yaw_speed = 18.0f;
+    ent->weapon_index = WEAP_MACHINEGUN;
+    ent->ai_flags |= AI_ENGINEER;
 }
 
 /* AI Medic behavior — called from monster_think for medic-flagged monsters */
