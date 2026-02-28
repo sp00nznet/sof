@@ -285,6 +285,7 @@ typedef enum {
 #define ATTACH_LASER        0x08    /* laser sight (reduced spread) */
 #define ATTACH_BAYONET      0x10    /* bayonet for quick melee */
 #define ATTACH_TACLIGHT     0x20    /* tactical flashlight on weapon */
+#define ATTACH_M203         0x40    /* underbarrel grenade launcher */
 
 /* Key/keycard bitmask flags */
 #define KEY_RED     1

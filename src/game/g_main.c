@@ -1762,6 +1762,75 @@ static void ClientCommand(edict_t *ent)
         return;
     }
 
+    /* Front kick: melee kick to stagger enemies */
+    if (Q_stricmp(cmd, "kick") == 0 || Q_stricmp(cmd, "frontkick") == 0) {
+        vec3_t k_fwd, k_rt, k_up, k_start, k_end;
+        trace_t k_tr;
+        if (ent->deadflag)
+            return;
+        if (ent->client->weapon_change_time > level.time)
+            return;  /* cooldown */
+
+        G_AngleVectors(ent->client->viewangles, k_fwd, k_rt, k_up);
+        VectorCopy(ent->s.origin, k_start);
+        k_start[2] += ent->client->viewheight * 0.5f;  /* waist height */
+        VectorMA(k_start, 64, k_fwd, k_end);
+
+        k_tr = gi.trace(k_start, NULL, NULL, k_end, ent, MASK_SHOT);
+        if (k_tr.fraction < 1.0f && k_tr.ent && k_tr.ent->takedamage &&
+            k_tr.ent->health > 0) {
+            int kick_dmg = 20;
+            /* Apply damage */
+            k_tr.ent->health -= kick_dmg;
+            if (k_tr.ent->client)
+                k_tr.ent->client->pers_health = k_tr.ent->health;
+
+            /* Knockback — push enemy away */
+            k_tr.ent->velocity[0] += k_fwd[0] * 300.0f;
+            k_tr.ent->velocity[1] += k_fwd[1] * 300.0f;
+            k_tr.ent->velocity[2] += 80.0f;
+
+            /* Stagger: stun AI briefly */
+            if (k_tr.ent->svflags & SVF_MONSTER) {
+                k_tr.ent->count = 5;  /* AI_STATE_PAIN */
+                k_tr.ent->nextthink = level.time + 0.8f;
+            }
+
+            R_ParticleEffect(k_tr.endpos, k_tr.plane.normal, 1, 4);
+            {
+                int snd = gi.soundindex("player/kick_hit.wav");
+                if (snd)
+                    gi.sound(ent, CHAN_BODY, snd, 1.0f, ATTN_NORM, 0);
+            }
+            SCR_TriggerHitMarker();
+
+            if (k_tr.ent->health <= 0 && k_tr.ent->die)
+                k_tr.ent->die(k_tr.ent, ent, ent, kick_dmg, k_tr.endpos);
+        } else {
+            /* Whiff sound */
+            int snd = gi.soundindex("player/kick_miss.wav");
+            if (snd)
+                gi.sound(ent, CHAN_BODY, snd, 0.5f, ATTN_NORM, 0);
+        }
+        ent->client->weapon_change_time = level.time + 0.7f;  /* cooldown */
+        return;
+    }
+
+    /* Underbarrel grenade: attach M203 to assault rifle */
+    if (Q_stricmp(cmd, "m203") == 0 || Q_stricmp(cmd, "underbarrel") == 0) {
+        int w = ent->client->pers_weapon;
+        if (w == WEAP_ASSAULT || w == WEAP_MACHINEGUN) {
+            ent->client->attachments[w] ^= ATTACH_M203;
+            if (ent->client->attachments[w] & ATTACH_M203)
+                gi.cprintf(ent, PRINT_ALL, "M203 grenade launcher attached.\n");
+            else
+                gi.cprintf(ent, PRINT_ALL, "M203 removed.\n");
+        } else {
+            gi.cprintf(ent, PRINT_ALL, "Only assault rifles can mount M203.\n");
+        }
+        return;
+    }
+
     /* Tactical light: toggle weapon-mounted flashlight */
     if (Q_stricmp(cmd, "taclight") == 0 || Q_stricmp(cmd, "weaplight") == 0) {
         int w = ent->client->pers_weapon;
@@ -2316,6 +2385,10 @@ static float weapon_draw_time[WEAP_COUNT] = {
 static float player_next_fire;  /* level.time when player can fire again */
 float player_last_fire_time;    /* level.time when player last fired (for view kick) */
 static qboolean player_alt_fire;  /* true if alt-fire mode active */
+
+/* Weapon charge shot state (MPG / Slugger hold-to-charge) */
+static float charge_start_time;     /* level.time when charge began (0=not charging) */
+static float charge_damage_mult;    /* damage multiplier from charge (1.0-3.0) */
 
 /*
  * G_UseUtilityWeapon — Handle non-hitscan weapons (medkit, etc.)
@@ -3516,6 +3589,12 @@ static void G_FireHitscan(edict_t *ent)
     /* Adrenaline rush damage boost */
     if (ent->client->adrenaline_end > level.time && ent->client->adrenaline_mult > 1.0f)
         damage = (int)(damage * ent->client->adrenaline_mult);
+
+    /* Charge shot multiplier (MPG / Slugger hold-to-charge) */
+    if (charge_damage_mult > 1.0f) {
+        damage = (int)(damage * charge_damage_mult);
+        charge_damage_mult = 1.0f;  /* reset after use */
+    }
 
     {
         float firerate = (weap > 0 && weap < WEAP_COUNT) ? weapon_firerate[weap] : 0.2f;
@@ -4842,6 +4921,61 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
             }
         }
     }
+    /* Ground pound: crouch while airborne to slam down for area damage */
+    if (!ent->groundentity && !ent->deadflag &&
+        (ucmd->upmove < 0) && ent->velocity[2] < -50.0f &&
+        client->dive_end < level.time) {
+        /* Accelerate downward */
+        ent->velocity[2] = -600.0f;
+        client->dive_end = level.time + 0.3f;  /* brief cooldown */
+    }
+    /* Ground pound impact: check if just landed from a slam */
+    if (ent->groundentity && client->dive_end > level.time &&
+        client->dive_end - level.time < 0.25f) {
+        /* Area damage on landing */
+        extern game_export_t globals;
+        int gp_i;
+        vec3_t gp_up = {0, 0, 1};
+
+        R_ParticleEffect(ent->s.origin, gp_up, 13, 20);
+        SCR_AddScreenShake(0.35f, 0.3f);
+        {
+            int snd = gi.soundindex("world/stone_break.wav");
+            if (snd)
+                gi.sound(ent, CHAN_AUTO, snd, 1.0f, ATTN_NORM, 0);
+        }
+
+        for (gp_i = 1; gp_i < globals.num_edicts; gp_i++) {
+            edict_t *victim = &globals.edicts[gp_i];
+            vec3_t gp_diff;
+            float gp_dist;
+            if (victim == ent || !victim->inuse || victim->health <= 0)
+                continue;
+            if (!victim->takedamage)
+                continue;
+            VectorSubtract(victim->s.origin, ent->s.origin, gp_diff);
+            gp_dist = VectorLength(gp_diff);
+            if (gp_dist < 150.0f) {
+                int gp_dmg = (int)(40.0f * (1.0f - gp_dist / 150.0f));
+                if (gp_dmg < 1) gp_dmg = 1;
+                victim->health -= gp_dmg;
+                if (victim->client)
+                    victim->client->pers_health = victim->health;
+                /* Knockback */
+                victim->velocity[2] += 120.0f;
+                /* Stagger */
+                if (victim->svflags & SVF_MONSTER) {
+                    victim->count = 5;  /* AI_STATE_PAIN */
+                    victim->nextthink = level.time + 0.6f;
+                }
+                if (victim->health <= 0 && victim->die)
+                    victim->die(victim, ent, ent, gp_dmg, ent->s.origin);
+            }
+        }
+        SCR_AddPickupMessage("GROUND POUND!");
+        client->dive_end = 0;  /* consumed */
+    }
+
     /* Reset double jump when landing */
     if (ent->groundentity)
         client->double_jump_used = false;
@@ -5743,11 +5877,58 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
 
             client->held_object = NULL;
         } else if (ucmd->buttons & BUTTON_ATTACK) {
+            /* Charge shot: MPG and Slugger hold fire to charge up */
+            if (client->pers_weapon == WEAP_MPG ||
+                client->pers_weapon == WEAP_SLUGGER) {
+                if (charge_start_time == 0)
+                    charge_start_time = level.time;
+                /* Visual feedback: growing energy glow at weapon */
+                {
+                    float ct = level.time - charge_start_time;
+                    if (ct > 0.3f) {
+                        float pct = (ct > 2.0f) ? 1.0f : (ct / 2.0f);
+                        vec3_t cg_fwd, cg_rt, cg_up, glow_pos;
+                        G_AngleVectors(client->viewangles, cg_fwd, cg_rt, cg_up);
+                        VectorCopy(ent->s.origin, glow_pos);
+                        glow_pos[2] += client->viewheight;
+                        VectorMA(glow_pos, 16, cg_fwd, glow_pos);
+                        if (client->pers_weapon == WEAP_MPG)
+                            R_AddDlight(glow_pos, 0.3f, 0.6f, 1.0f,
+                                        60 + pct * 200, level.frametime + 0.05f);
+                        else
+                            R_AddDlight(glow_pos, 1.0f, 0.5f, 0.2f,
+                                        60 + pct * 200, level.frametime + 0.05f);
+                    }
+                }
+                /* Don't fire yet — still charging */
+            } else {
+                charge_start_time = 0;
+                player_alt_fire = qfalse;
+                G_FireHitscan(ent);
+            }
+        } else if (!(ucmd->buttons & BUTTON_ATTACK) && charge_start_time > 0) {
+            /* Charge shot release: fire with bonus damage */
+            float ct = level.time - charge_start_time;
+            float mult = 1.0f + (ct > 2.0f ? 2.0f : ct);  /* 1x-3x over 2s */
+            charge_damage_mult = mult;
+            charge_start_time = 0;
             player_alt_fire = qfalse;
             G_FireHitscan(ent);
+            if (mult >= 2.5f)
+                SCR_AddPickupMessage("CHARGED SHOT!");
         } else if (ucmd->buttons & BUTTON_ATTACK2) {
-            player_alt_fire = qtrue;
-            G_FireHitscan(ent);
+            /* M203 underbarrel grenade: alt-fire launches grenade */
+            if ((client->pers_weapon == WEAP_ASSAULT ||
+                 client->pers_weapon == WEAP_MACHINEGUN) &&
+                (client->attachments[client->pers_weapon] & ATTACH_M203) &&
+                client->ammo[WEAP_GRENADE] > 0) {
+                client->ammo[WEAP_GRENADE]--;
+                G_FireProjectile(ent, qtrue);
+                gi.cprintf(ent, PRINT_ALL, "M203 fired!\n");
+            } else {
+                player_alt_fire = qtrue;
+                G_FireHitscan(ent);
+            }
         }
         } /* end grenade cook gate */
     }
