@@ -1623,6 +1623,34 @@ static void ClientCommand(edict_t *ent)
         return;
     }
 
+    /* Ping/mark — place a marker at crosshair location for team awareness */
+    if (Q_stricmp(cmd, "ping") == 0 || Q_stricmp(cmd, "mark") == 0) {
+        vec3_t fwd_p, start_p, end_p;
+        trace_t tr_p;
+
+        G_AngleVectors(ent->client->viewangles, fwd_p, NULL, NULL);
+        VectorCopy(ent->s.origin, start_p);
+        start_p[2] += ent->client->viewheight;
+        VectorMA(start_p, 4096.0f, fwd_p, end_p);
+        tr_p = gi.trace(start_p, NULL, NULL, end_p, ent, MASK_SHOT);
+
+        if (tr_p.fraction < 1.0f) {
+            /* Visual marker at ping location */
+            vec3_t up_p = {0, 0, 1};
+            R_ParticleEffect(tr_p.endpos, up_p, 2, 12);   /* green burst */
+            R_AddDlight(tr_p.endpos, 0.2f, 1.0f, 0.2f, 300.0f, 3.0f); /* green glow */
+            {
+                int snd = gi.soundindex("player/ping.wav");
+                if (snd)
+                    gi.sound(ent, CHAN_AUTO, snd, 0.5f, ATTN_NONE, 0);
+            }
+            gi.cprintf(ent, PRINT_ALL, "Marked position (%.0f %.0f %.0f)\n",
+                       tr_p.endpos[0], tr_p.endpos[1], tr_p.endpos[2]);
+            SCR_AddPickupMessage("MARKED!");
+        }
+        return;
+    }
+
     gi.cprintf(ent, PRINT_ALL, "Unknown command: %s\n", cmd);
 }
 
@@ -3371,11 +3399,18 @@ static void G_FireHitscan(edict_t *ent)
                 }
 
                 /* Wall penetration: high-power weapons punch through thin surfaces */
+                /* Hollow point ammo fragments on impact — no penetration */
                 if ((weap == WEAP_SNIPER || weap == WEAP_SLUGGER ||
-                     weap == WEAP_ASSAULT) && !is_metal) {
+                     weap == WEAP_ASSAULT) && !is_metal &&
+                     !(ent->client->ammo_type == 1)) {
                     vec3_t pen_start, pen_end;
                     trace_t pen_tr;
-                    int pen_dmg = damage / 3;  /* 33% damage after penetration */
+                    /* Surface-dependent penetration damage */
+                    float pen_mult = 0.33f;
+                    if (is_wood) pen_mult = 0.5f;     /* wood: less resistance */
+                    else if (is_glass) pen_mult = 0.7f; /* glass: minimal loss */
+                    else if (is_dirt) pen_mult = 0.2f;  /* dirt: absorbs more */
+                    int pen_dmg = (int)(damage * pen_mult);
 
                     /* Start trace 8 units past the wall surface */
                     VectorMA(tr.endpos, 8.0f, pellet_dir, pen_start);

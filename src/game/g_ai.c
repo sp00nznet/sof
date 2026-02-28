@@ -1013,6 +1013,44 @@ static void ai_think_attack(edict_t *self)
         AI_Dodge(self);
     }
 
+    /* Squad leader: toughest monster coordinates nearby allies */
+    if (self->max_health >= 120 && level.time > self->move_angles[0] + 4.0f) {
+        extern game_export_t globals;
+        int i;
+        qboolean should_advance = (dist > AI_ATTACK_RANGE * 0.7f);
+
+        for (i = 1; i < globals.num_edicts; i++) {
+            edict_t *ally = &globals.edicts[i];
+            vec3_t d;
+            float ally_dist;
+
+            if (ally == self || !ally->inuse || ally->health <= 0)
+                continue;
+            if (!(ally->svflags & SVF_MONSTER) || !ally->enemy)
+                continue;
+
+            VectorSubtract(ally->s.origin, self->s.origin, d);
+            ally_dist = VectorLength(d);
+            if (ally_dist > 600.0f)
+                continue;
+
+            if (should_advance) {
+                /* Order advance — allies chase more aggressively */
+                ally->count = AI_STATE_CHASE;
+                VectorCopy(self->enemy->s.origin, ally->move_origin);
+            }
+            /* else hold position — allies stay in attack state */
+        }
+
+        /* Leader callout sound */
+        {
+            int snd = gi.soundindex(should_advance ?
+                "npc/advance.wav" : "npc/hold.wav");
+            if (snd)
+                gi.sound(self, CHAN_VOICE, snd, 1.0f, ATTN_NORM, 0);
+        }
+    }
+
     /* Combat callout: periodically re-alert allies with updated enemy position */
     if (level.time > self->move_angles[0] + 5.0f) {
         self->move_angles[0] = level.time;

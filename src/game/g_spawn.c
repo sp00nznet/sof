@@ -262,6 +262,7 @@ static void SP_func_alarm(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_cover(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_trigger_cutscene(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_trigger_music(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_cage(edict_t *ent, epair_t *pairs, int num_pairs);
 static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
                            int damage, vec3_t point);
 
@@ -502,6 +503,10 @@ static spawn_func_t spawn_funcs[] = {
     /* Music triggers */
     { "trigger_music",              SP_trigger_music },
     { "target_music",               SP_trigger_music },
+
+    /* Trap cage */
+    { "func_cage",                  SP_func_cage },
+    { "func_trap_cage",             SP_func_cage },
 
     /* Weapons (SoF) */
     { "weapon_knife",               SP_item_pickup },
@@ -5732,6 +5737,112 @@ static void SP_trigger_music(edict_t *ent, epair_t *pairs, int num_pairs)
 
     gi.dprintf("  trigger_music at (%.0f %.0f %.0f) track=%d\n",
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2], ent->count);
+}
+
+/* ==========================================================================
+   func_cage — Trap cage that drops when triggered, trapping the player
+   Starts raised, drops on use. Player must destroy it (takedamage) to escape.
+   ========================================================================== */
+
+static void cage_drop(edict_t *self)
+{
+    /* Drop cage downward */
+    self->s.origin[2] -= 2.0f;
+
+    /* Check if cage reached ground */
+    {
+        vec3_t below;
+        trace_t tr;
+        VectorCopy(self->s.origin, below);
+        below[2] -= 4.0f;
+        tr = gi.trace(self->s.origin, self->mins, self->maxs, below, self, MASK_SOLID);
+        if (tr.fraction < 1.0f || self->count <= 0) {
+            /* Cage landed */
+            self->solid = SOLID_BSP;
+            self->takedamage = DAMAGE_YES;
+            gi.linkentity(self);
+            {
+                int snd = gi.soundindex("world/cage_land.wav");
+                if (snd)
+                    gi.positioned_sound(self->s.origin, self, CHAN_AUTO,
+                                        snd, 1.0f, ATTN_NORM, 0);
+            }
+            self->think = NULL;
+            return;
+        }
+    }
+
+    self->count--;
+    gi.linkentity(self);
+    self->nextthink = level.time + 0.05f;
+}
+
+static void cage_use(edict_t *self, edict_t *other, edict_t *activator)
+{
+    (void)other; (void)activator;
+
+    /* Start dropping */
+    self->think = cage_drop;
+    self->nextthink = level.time + 0.05f;
+    self->count = 60;  /* max drop frames */
+    self->solid = SOLID_NOT;  /* no collision while dropping */
+    self->use = NULL;
+
+    {
+        int snd = gi.soundindex("world/cage_drop.wav");
+        if (snd)
+            gi.positioned_sound(self->s.origin, self, CHAN_AUTO,
+                                snd, 1.0f, ATTN_NORM, 0);
+    }
+}
+
+static void cage_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
+                      int damage, vec3_t point)
+{
+    vec3_t center, up;
+    (void)inflictor; (void)damage; (void)point;
+
+    center[0] = (self->absmin[0] + self->absmax[0]) * 0.5f;
+    center[1] = (self->absmin[1] + self->absmax[1]) * 0.5f;
+    center[2] = (self->absmin[2] + self->absmax[2]) * 0.5f;
+    VectorSet(up, 0, 0, 1);
+
+    R_ParticleEffect(center, up, 12, 16);  /* metal sparks */
+    {
+        int snd = gi.soundindex("world/cage_break.wav");
+        if (snd)
+            gi.positioned_sound(center, NULL, CHAN_AUTO, snd, 1.0f, ATTN_NORM, 0);
+    }
+
+    if (self->target)
+        G_UseTargets(attacker, self->target);
+
+    self->solid = SOLID_NOT;
+    self->svflags |= SVF_NOCLIENT;
+    self->takedamage = DAMAGE_NO;
+    self->inuse = qfalse;
+    gi.unlinkentity(self);
+}
+
+static void SP_func_cage(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *health_str = ED_FindValue(pairs, num_pairs, "health");
+
+    ent->movetype = MOVETYPE_PUSH;
+    ent->solid = SOLID_NOT;  /* starts non-solid until dropped */
+    ent->use = cage_use;
+    ent->die = cage_die;
+    ent->health = health_str ? atoi(health_str) : 100;
+    ent->max_health = ent->health;
+    ent->takedamage = DAMAGE_NO;  /* not damageable until landed */
+
+    VectorSet(ent->mins, -32, -32, 0);
+    VectorSet(ent->maxs, 32, 32, 64);
+
+    gi.linkentity(ent);
+
+    gi.dprintf("  func_cage at (%.0f %.0f %.0f) hp=%d\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2], ent->health);
 }
 
 /* ==========================================================================

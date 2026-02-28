@@ -1,0 +1,42 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:en.wikipedia.org)",
+      "WebFetch(domain:www.pcgamingwiki.com)",
+      "WebFetch(domain:www.gamesradar.com)",
+      "WebFetch(domain:www.mobygames.com)",
+      "WebFetch(domain:archive.org)",
+      "Bash(cd:*)",
+      "WebFetch(domain:www.gamedeveloper.com)",
+      "Bash(tail:*)",
+      "Bash(cat:*)",
+      "Bash(python3:*)",
+      "Bash(/c/Users/nedch/AppData/Local/Programs/Python/Python311/python.exe:*)",
+      "Bash(head:*)",
+      "Bash(xxd:*)",
+      "Bash(pip install:*)",
+      "WebFetch(domain:www.ebay.com)",
+      "Bash(/c/Windows/SysWOW64/UniExtract/bin/IsXunpack.exe:*)",
+      "Bash(which gcc:*)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:api.github.com)",
+      "Bash(curl:*)",
+      "Bash(which cmake:*)",
+      "Bash(cd /d/recomp/pc/sof/build && cmake --build . --config Release 2>&1)",
+      "Bash(cd /d/recomp/pc/sof/build && cmake .. -DCMAKE_TOOLCHAIN_FILE=/c/vcpkg/scripts/buildsystems/vcpkg.cmake 2>&1 | tail -3 && cmake --build . --config Release 2>&1)",
+      "Bash(true:*)",
+      "Bash(cd /d/recomp/pc/sof && git push origin main 2>&1)",
+      "Bash(cd /d/recomp/pc/sof/build && cmake .. -DCMAKE_TOOLCHAIN_FILE=/c/vcpkg/scripts/buildsystems/vcpkg.cmake 2>&1 | tail -5 && cmake --build . --config Release 2>&1)",
+      "Bash(grep:*)",
+      "Bash(wc:*)",
+      "Bash(find:*)",
+      "Bash(timeout 3 ./sof.exe:*)",
+      "Bash(git add:*)",
+      "Bash(git push:*)",
+      "Bash(cmake ..:*)",
+      "Bash(git commit:*)"
+    ]
+  }
+}
