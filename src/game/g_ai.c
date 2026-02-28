@@ -2414,6 +2414,136 @@ void SP_monster_dog(edict_t *ent, void *pairs, int num_pairs)
     ent->ai_flags |= 0x0400;  /* AI_DOG flag — melee only */
 }
 
+/*
+ * SP_monster_hostage - Civilian/hostage NPC
+ * Non-combatant that can be rescued for score. Killing penalizes player.
+ * Follows player when "used" (activated).
+ */
+static void hostage_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
+                         int damage, vec3_t point)
+{
+    (void)inflictor; (void)damage; (void)point;
+
+    /* Penalty for killing civilians */
+    if (attacker && attacker->client) {
+        attacker->client->score -= 50;
+        attacker->client->xp -= 25;
+        SCR_AddPickupMessage("CIVILIAN KILLED! -50");
+        gi.cprintf(attacker, PRINT_ALL, "You killed a hostage!\n");
+    }
+
+    {
+        int snd = gi.soundindex("npc/civilian_die.wav");
+        if (snd)
+            gi.sound(self, CHAN_VOICE, snd, 1.0f, ATTN_NORM, 0);
+    }
+
+    self->takedamage = DAMAGE_NO;
+    self->solid = SOLID_NOT;
+    self->deadflag = 1;
+    self->svflags |= SVF_DEADMONSTER;
+    self->think = monster_corpse_remove;
+    self->nextthink = level.time + 10.0f;
+    gi.linkentity(self);
+}
+
+static void hostage_use(edict_t *self, edict_t *other, edict_t *activator)
+{
+    (void)other;
+    if (!activator || !activator->client)
+        return;
+    if (self->deadflag || self->health <= 0)
+        return;
+
+    /* Start following the player */
+    self->enemy = activator;  /* follow target */
+    self->count = AI_STATE_CHASE;  /* use chase state to follow */
+    self->speed = AI_CHASE_SPEED * 0.8f;  /* slower than soldiers */
+
+    gi.cprintf(activator, PRINT_ALL, "Hostage rescued! Escorting...\n");
+    SCR_AddPickupMessage("HOSTAGE RESCUED +100");
+    activator->client->score += 100;
+    activator->client->xp += 50;
+    SCR_AddScorePopup(100);
+
+    if (level.objective_active)
+        level.objectives_completed++;
+
+    {
+        int snd = gi.soundindex("npc/civilian_thanks.wav");
+        if (snd)
+            gi.sound(self, CHAN_VOICE, snd, 1.0f, ATTN_NORM, 0);
+    }
+}
+
+static void hostage_think(edict_t *self)
+{
+    self->nextthink = level.time + FRAMETIME;
+
+    /* If following player, move toward them */
+    if (self->enemy && self->enemy->client && self->enemy->health > 0) {
+        vec3_t diff;
+        float dist;
+        VectorSubtract(self->enemy->s.origin, self->s.origin, diff);
+        dist = VectorLength(diff);
+        if (dist > 96.0f) {
+            AI_MoveToward(self, self->enemy->s.origin,
+                          self->speed > 0 ? self->speed : 120.0f);
+        }
+        /* Face the player — inline yaw toward */
+        {
+            float yaw = (float)(atan2(diff[1], diff[0]) * 180.0 / 3.14159265);
+            float current = self->s.angles[1];
+            float move = yaw - current;
+            while (move > 180) move -= 360;
+            while (move < -180) move += 360;
+            if (move > self->yaw_speed) move = self->yaw_speed;
+            else if (move < -self->yaw_speed) move = -self->yaw_speed;
+            self->s.angles[1] = current + move;
+        }
+    }
+
+    /* Idle animation */
+    self->s.frame++;
+    if (self->s.frame < FRAME_STAND_START || self->s.frame > FRAME_STAND_END)
+        self->s.frame = FRAME_STAND_START;
+}
+
+void SP_monster_hostage(edict_t *ent, void *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+
+    gi.dprintf("  Spawning hostage at (%.0f %.0f %.0f)\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
+
+    ent->classname = "monster_hostage";
+    ent->solid = SOLID_BBOX;
+    ent->movetype = MOVETYPE_STEP;
+    ent->takedamage = DAMAGE_YES;
+    ent->health = 50;
+    ent->max_health = 50;
+    ent->dmg = 0;  /* non-combatant, no damage */
+    ent->mass = 150;
+    ent->gravity = 1.0f;
+    ent->yaw_speed = 15.0f;
+
+    VectorSet(ent->mins, -16, -16, -24);
+    VectorSet(ent->maxs, 16, 16, 32);
+
+    ent->svflags |= SVF_MONSTER;
+    ent->die = hostage_die;
+    ent->pain = NULL;  /* no pain reaction */
+    ent->use = hostage_use;
+    ent->think = hostage_think;
+    ent->nextthink = level.time + 1.0f;
+
+    ent->random = 100.0f;  /* morale doesn't apply, but set high */
+    ent->count = 0;  /* idle state */
+    ent->enemy = NULL;
+
+    gi.linkentity(ent);
+}
+
 /* AI Medic behavior — called from monster_think for medic-flagged monsters */
 static void AI_MedicThink(edict_t *self)
 {

@@ -1479,6 +1479,7 @@ static void ClientCommand(edict_t *ent)
             "nightvision     - Toggle NV goggles\n"
             "claymore        - Place directional mine\n"
             "grapple         - Fire grapple hook\n"
+            "sling           - Quick-draw weapon swap\n"
             "parry           - Knife block/riposte\n"
             "flashbang       - Throw flashbang\n"
             "+leanleft/right - Lean\n"
@@ -1755,6 +1756,33 @@ static void ClientCommand(edict_t *ent)
                 }
                 ent->client->weapon_change_time = level.time + 2.0f;  /* cooldown */
             }
+        }
+        return;
+    }
+
+    /* Weapon sling: quick-draw from sling for faster weapon swap */
+    if (Q_stricmp(cmd, "sling") == 0 || Q_stricmp(cmd, "quickdraw") == 0) {
+        if (ent->deadflag)
+            return;
+        /* Sling stores the previous weapon for instant swap */
+        if (player_prev_weapon > 0 && player_prev_weapon < WEAP_COUNT &&
+            player_prev_weapon != ent->client->pers_weapon) {
+            int cur = ent->client->pers_weapon;
+            ent->client->pers_weapon = player_prev_weapon;
+            ent->weapon_index = player_prev_weapon;
+            player_prev_weapon = cur;
+            /* Sling swap is 40% faster than normal weapon switch */
+            ent->client->weapon_change_time = level.time +
+                G_WeapDrawTime(ent->client->pers_weapon) * 0.6f;
+            gi.cprintf(ent, PRINT_ALL, "Quick draw: %s\n",
+                       weapon_names[ent->client->pers_weapon]);
+            {
+                int snd = gi.soundindex("weapons/sling_draw.wav");
+                if (snd)
+                    gi.sound(ent, CHAN_ITEM, snd, 1.0f, ATTN_NORM, 0);
+            }
+        } else {
+            gi.cprintf(ent, PRINT_ALL, "No weapon on sling.\n");
         }
         return;
     }
@@ -4129,6 +4157,12 @@ static void G_FireHitscan(edict_t *ent)
                     ent->client->bullet_time_charge += 15.0f;
                     if (ent->client->bullet_time_charge > 100.0f)
                         ent->client->bullet_time_charge = 100.0f;
+
+                    /* Bullet time chain: kills during active BT extend it */
+                    if (ent->client->bullet_time_end > level.time) {
+                        ent->client->bullet_time_end += 1.5f;
+                        SCR_AddPickupMessage("BT CHAIN +1.5s!");
+                    }
 
                     /* Kill streak tracking — 3s window between kills */
                     if (level.time - ent->client->streak_last_kill < 3.0f)

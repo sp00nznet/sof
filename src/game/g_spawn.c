@@ -47,6 +47,7 @@ extern void SP_monster_boss(edict_t *ent, void *pairs, int num_pairs);
 extern void SP_monster_medic(edict_t *ent, void *pairs, int num_pairs);
 extern void SP_monster_dog(edict_t *ent, void *pairs, int num_pairs);
 extern void SP_monster_shield(edict_t *ent, void *pairs, int num_pairs);
+extern void SP_monster_hostage(edict_t *ent, void *pairs, int num_pairs);
 
 /* Forward declarations for precache functions */
 static void door_precache_sounds(void);
@@ -410,6 +411,8 @@ static spawn_func_t spawn_funcs[] = {
     { "monster_dog",                (void (*)(edict_t *, epair_t *, int))SP_monster_dog },
     { "monster_patrol_dog",         (void (*)(edict_t *, epair_t *, int))SP_monster_dog },
     { "monster_shield",             (void (*)(edict_t *, epair_t *, int))SP_monster_shield },
+    { "monster_hostage",            (void (*)(edict_t *, epair_t *, int))SP_monster_hostage },
+    { "monster_civilian",           (void (*)(edict_t *, epair_t *, int))SP_monster_hostage },
     { "monster_riot_shield",        (void (*)(edict_t *, epair_t *, int))SP_monster_shield },
     /* Q2-compatible monster names */
     { "monster_soldier_light",      (void (*)(edict_t *, epair_t *, int))SP_monster_soldier_light },
@@ -6616,6 +6619,7 @@ static void func_spotlight_think(edict_t *self)
 {
     extern void R_AddDlight(vec3_t origin, float r, float g, float b,
                              float intensity, float duration);
+    extern game_export_t globals;
     float angle;
     vec3_t light_pos;
 
@@ -6630,6 +6634,39 @@ static void func_spotlight_think(edict_t *self)
     R_AddDlight(light_pos,
                 self->move_angles[0], self->move_angles[1], self->move_angles[2],
                 self->dmg > 0 ? (float)self->dmg : 300.0f, 0.06f);
+
+    /* AI detection: check if player is caught in spotlight beam */
+    {
+        edict_t *player = &globals.edicts[1];
+        if (player->inuse && player->client && !player->deadflag) {
+            vec3_t diff;
+            float dist;
+            VectorSubtract(player->s.origin, light_pos, diff);
+            dist = VectorLength(diff);
+            if (dist < 80.0f) {
+                /* Player caught in beam — alert nearby AI */
+                int i;
+                for (i = 1; i < globals.num_edicts; i++) {
+                    edict_t *e = &globals.edicts[i];
+                    vec3_t d2;
+                    float d2_len;
+                    if (!e->inuse || !(e->svflags & SVF_MONSTER) || e->health <= 0)
+                        continue;
+                    if (e->enemy)  /* already alerted */
+                        continue;
+                    VectorSubtract(e->s.origin, self->s.origin, d2);
+                    d2_len = VectorLength(d2);
+                    if (d2_len < 1500.0f) {
+                        e->enemy = player;
+                        e->count = 1;  /* AI_STATE_ALERT */
+                        e->nextthink = level.time + 0.3f;
+                    }
+                }
+                /* Flash the light red briefly when detecting */
+                R_AddDlight(light_pos, 1.0f, 0.2f, 0.2f, 400.0f, 0.2f);
+            }
+        }
+    }
 }
 
 static void SP_func_spotlight(edict_t *ent, epair_t *pairs, int num_pairs)
