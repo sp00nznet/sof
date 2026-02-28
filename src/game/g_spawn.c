@@ -222,6 +222,7 @@ static void SP_env_drip(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_env_steam(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_env_sparks(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_env_dust(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_env_rain_puddle(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_pushable(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_light_breakable(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_misc_throwable(edict_t *ent, epair_t *pairs, int num_pairs);
@@ -372,6 +373,10 @@ static spawn_func_t spawn_funcs[] = {
     { "env_sparks",                 SP_env_sparks },
     { "env_dust",                   SP_env_dust },
     { "misc_particles",             SP_env_dust },
+
+    /* Rain puddles */
+    { "env_rain_puddle",            SP_env_rain_puddle },
+    { "env_puddle",                 SP_env_rain_puddle },
 
     /* Environmental hazard zones */
     { "env_lava",                   SP_env_lava },
@@ -6862,6 +6867,57 @@ static void SP_trigger_monster_spawn(edict_t *ent, epair_t *pairs, int num_pairs
     gi.dprintf("  trigger_monster_spawn at (%.0f %.0f %.0f) type=%s count=%d\n",
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
                ent->message ? ent->message : "default", ent->count);
+}
+
+/* ==========================================================================
+   env_rain_puddle — Visual puddle on the ground that ripples during rain.
+   Spawns periodic ripple particles when weather is set to rain.
+   Keys: "radius" (via "dmg") = puddle size (default 32)
+   ========================================================================== */
+
+static void rain_puddle_think(edict_t *self)
+{
+    /* Only ripple during rain weather */
+    if (level.weather == 1) {
+        /* Spawn ripple particles at random positions within the puddle */
+        vec3_t ripple_pos, ripple_up;
+        float radius = self->dmg > 0 ? (float)self->dmg : 32.0f;
+        float rx = ((float)(rand() % 200) - 100.0f) * 0.01f * radius;
+        float ry = ((float)(rand() % 200) - 100.0f) * 0.01f * radius;
+
+        VectorCopy(self->s.origin, ripple_pos);
+        ripple_pos[0] += rx;
+        ripple_pos[1] += ry;
+        VectorSet(ripple_up, 0, 0, 1);
+        R_ParticleEffect(ripple_pos, ripple_up, 6, 1);  /* water drop */
+
+        /* Random ripple interval for natural look */
+        self->nextthink = level.time + 0.2f + ((float)(rand() % 30)) * 0.01f;
+    } else {
+        /* Not raining — check back later */
+        self->nextthink = level.time + 2.0f;
+    }
+}
+
+static void SP_env_rain_puddle(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *v;
+
+    ent->classname = "env_rain_puddle";
+    ent->solid = SOLID_NOT;
+    ent->movetype = MOVETYPE_NONE;
+    ent->svflags |= SVF_NOCLIENT;
+
+    v = ED_FindValue(pairs, num_pairs, "dmg");
+    ent->dmg = v ? atoi(v) : 32;
+
+    ent->think = rain_puddle_think;
+    ent->nextthink = level.time + 1.0f + ((float)(rand() % 100)) * 0.01f;
+
+    gi.linkentity(ent);
+    gi.dprintf("  env_rain_puddle at (%.0f %.0f %.0f) radius=%d\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->dmg);
 }
 
 /* ==========================================================================

@@ -1141,21 +1141,36 @@ static void ClientCommand(edict_t *ent)
         if (w > 0 && w < WEAP_COUNT) {
             int att = ent->client->attachments[w];
             {
+                static const char *mastery_names[] = {
+                    "Novice", "Skilled", "Expert", "Master"
+                };
                 float cond = ent->client->weapon_condition[w];
+                int mastery = ent->client->weapon_mastery[w];
+                int kills = ent->client->weapon_kills[w];
+                float accuracy = 0;
                 if (cond <= 0) cond = 1.0f;
+                if (mastery > 3) mastery = 3;
+                if (ent->client->shots_fired > 0)
+                    accuracy = (float)ent->client->shots_hit * 100.0f /
+                               (float)ent->client->shots_fired;
                 gi.cprintf(ent, PRINT_ALL,
                     "--- %s ---\n"
-                    "Ammo: %d/%d  Mag: %d\n"
-                    "Damage: %d  Heat: %.0f%%\n"
-                    "Condition: %.0f%%  Draw: %.2fs\n"
+                    "Ammo: %d/%d  Mag: %d/%d\n"
+                    "Damage: %d\n"
+                    "Condition: %.0f%%  Heat: %.0f%%\n"
+                    "Draw: %.2fs  Reload: %.1fs\n"
+                    "Kills: %d  Mastery: %s\n"
+                    "Accuracy: %.1f%%  Headshots: %d\n"
                     "Attachments:%s%s%s%s%s\n",
                     weapon_names[w],
                     ent->client->ammo[w], ent->client->ammo_max[w],
-                    ent->client->magazine[w],
+                    ent->client->magazine[w], weapon_magazine_size[w],
                     weapon_damage[w],
-                    ent->client->weapon_heat * 100.0f,
                     cond * 100.0f,
-                    weapon_draw_time[w],
+                    ent->client->weapon_heat * 100.0f,
+                    weapon_draw_time[w], weapon_reload_time[w],
+                    kills, mastery_names[mastery],
+                    accuracy, ent->client->headshots,
                     (att & ATTACH_SILENCER) ? " Silencer" : "",
                     (att & ATTACH_SCOPE) ? " Scope" : "",
                     (att & ATTACH_EXTMAG) ? " ExtMag" : "",
@@ -3921,8 +3936,57 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
         }
     }
 
-    /* Dead — check for respawn on attack press */
+    /* Dead — check for last stand revive or respawn */
     if (ent->deadflag) {
+        /* Record time of death for last stand window */
+        if (client->downed_time <= 0)
+            client->downed_time = level.time;
+
+        /* Last stand: if player has a field pack, they can self-revive
+           within 5 seconds of dying by pressing USE */
+        if (!client->last_stand_used && client->fpak_count > 0 &&
+            client->downed_time > 0 &&
+            level.time - client->downed_time < 5.0f) {
+            /* Show last stand prompt with pulsing red screen */
+            float pulse = sinf(level.time * 6.0f) * 0.3f + 0.3f;
+            client->blend[0] = 0.8f;
+            client->blend[1] = 0.0f;
+            client->blend[2] = 0.0f;
+            client->blend[3] = pulse;
+
+            if (ucmd->buttons & BUTTON_USE) {
+                /* Self-revive! Consume field pack, restore 30 HP */
+                client->fpak_count--;
+                ent->health = 30;
+                ent->max_health = 100;
+                client->pers_health = 30;
+                ent->deadflag = 0;
+                client->ps.pm_type = PM_NORMAL;
+                client->blend[3] = 0;
+                client->last_stand_used = qtrue;
+                client->invuln_time = level.time + 2.0f;
+                client->downed_time = 0;
+                SCR_AddPickupMessage("LAST STAND REVIVE!");
+                /* Healing particles */
+                {
+                    vec3_t up = {0, 0, 1};
+                    R_ParticleEffect(ent->s.origin, up, 2, 12);
+                }
+                {
+                    int snd = gi.soundindex("items/medkit/use.wav");
+                    if (snd)
+                        gi.sound(ent, CHAN_ITEM, snd, 1.0f, ATTN_NORM, 0);
+                }
+                return;
+            }
+            /* Attack to skip last stand and go to normal respawn */
+            if (ucmd->buttons & BUTTON_ATTACK) {
+                client->downed_time = 0;  /* expire last stand window */
+            } else {
+                return;  /* waiting for input */
+            }
+        }
+
         if (ucmd->buttons & (BUTTON_ATTACK | BUTTON_USE)) {
             /* Count death on respawn */
             client->deaths++;
@@ -3936,6 +4000,7 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
             client->ps.pm_type = PM_NORMAL;
             client->blend[3] = 0;
             client->invuln_time = level.time + 3.0f;  /* 3s spawn protection */
+            client->last_stand_used = qfalse;  /* reset for next life */
         }
         return;
     }

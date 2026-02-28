@@ -120,6 +120,54 @@ typedef enum {
 #define FRAME_DEATH1_END    183
 
 /* ==========================================================================
+   AI Tactical Callouts — context-sensitive voice lines
+   Monsters shout tactical info: reloading, contact, grenade warning, etc.
+   Uses move_angles[0] as voice cooldown to prevent spam.
+   ========================================================================== */
+
+#define AI_CALLOUT_COOLDOWN  3.0f  /* min seconds between callouts */
+
+static void AI_Callout(edict_t *self, const char *sound_name)
+{
+    int snd;
+    if (self->move_angles[0] > level.time - AI_CALLOUT_COOLDOWN)
+        return;  /* too soon since last callout */
+    snd = gi.soundindex(sound_name);
+    if (snd)
+        gi.sound(self, CHAN_VOICE, snd, 1.0f, ATTN_NORM, 0);
+    self->move_angles[0] = level.time;
+}
+
+/* Callout when first spotting the player */
+static void AI_CalloutContact(edict_t *self)
+{
+    static const char *contact_sounds[] = {
+        "npc/contact.wav",
+        "npc/spotted.wav",
+        "npc/enemy.wav"
+    };
+    AI_Callout(self, contact_sounds[rand() % 3]);
+}
+
+/* Callout when throwing grenade */
+static void AI_CalloutGrenade(edict_t *self)
+{
+    AI_Callout(self, "npc/grenade_out.wav");
+}
+
+/* Callout when taking heavy damage */
+static void AI_CalloutTakingFire(edict_t *self)
+{
+    AI_Callout(self, "npc/taking_fire.wav");
+}
+
+/* Callout when an ally dies nearby */
+static void AI_CalloutManDown(edict_t *self)
+{
+    AI_Callout(self, "npc/man_down.wav");
+}
+
+/* ==========================================================================
    AI Utility Functions
    ========================================================================== */
 
@@ -262,6 +310,10 @@ static qboolean AI_FindTarget(edict_t *self)
         return qfalse;
 
     self->enemy = player;
+
+    /* Tactical callout: "Contact!" */
+    AI_CalloutContact(self);
+
     return qtrue;
 }
 
@@ -318,6 +370,9 @@ static void AI_ThrowGrenade(edict_t *self, vec3_t target_pos)
 
     /* Throw sound */
     gi.sound(self, CHAN_WEAPON, gi.soundindex("weapons/grenade/throw.wav"), 1.0f, ATTN_NORM, 0);
+
+    /* Tactical callout: "Grenade out!" */
+    AI_CalloutGrenade(self);
 }
 
 /*
@@ -1787,6 +1842,10 @@ void monster_pain(edict_t *self, edict_t *other, float kick, int damage)
             gi.sound(self, CHAN_VOICE, snd, 1.0f, ATTN_NORM, 0);
     }
 
+    /* Tactical callout: "Taking fire!" (only on significant damage) */
+    if (damage > 15)
+        AI_CalloutTakingFire(self);
+
     /* Brief pain stun — longer for heavy hits */
     self->count = AI_STATE_PAIN;
     self->velocity[0] = self->velocity[1] = 0;
@@ -2368,6 +2427,7 @@ void AI_AllyDied(vec3_t death_origin)
 {
     extern game_export_t globals;
     int i;
+    qboolean callout_done = qfalse;
 
     for (i = 1; i < globals.num_edicts; i++) {
         edict_t *e = &globals.edicts[i];
@@ -2385,6 +2445,12 @@ void AI_AllyDied(vec3_t death_origin)
         dist = VectorLength(diff);
         if (dist > AI_MORALE_RANGE)
             continue;
+
+        /* Tactical callout: "Man down!" — only first witness calls out */
+        if (!callout_done) {
+            AI_CalloutManDown(e);
+            callout_done = qtrue;
+        }
 
         /* Count alive vs dead monsters nearby */
         alive_nearby = 0;
