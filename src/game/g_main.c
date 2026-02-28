@@ -4227,6 +4227,25 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
         }
     }
 
+    /* Weapon canting — slight roll tilt when strafing */
+    {
+        float side_vel = ent->velocity[0] * sinf(client->viewangles[1] * 3.14159265f / 180.0f) -
+                         ent->velocity[1] * cosf(client->viewangles[1] * 3.14159265f / 180.0f);
+        float cant_target = side_vel * 0.005f;  /* subtle tilt */
+        if (cant_target > 2.0f) cant_target = 2.0f;
+        if (cant_target < -2.0f) cant_target = -2.0f;
+        client->kick_angles[2] += cant_target;
+    }
+
+    /* Scope glint — when zoomed with sniper, emit a light visible to enemies */
+    if (client->zoomed && client->pers_weapon == WEAP_SNIPER) {
+        vec3_t glint_pos, fwd_g;
+        G_AngleVectors(client->viewangles, fwd_g, NULL, NULL);
+        VectorMA(ent->s.origin, 20.0f, fwd_g, glint_pos);
+        glint_pos[2] += client->viewheight;
+        R_AddDlight(glint_pos, 1.0f, 1.0f, 0.8f, 50.0f, 0.05f);  /* brief glint */
+    }
+
     /* Concussion effect — view sway and spread penalty */
     if (client->concussion_end > level.time) {
         float sway_t = level.time * 5.0f;

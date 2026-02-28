@@ -270,6 +270,7 @@ static void SP_func_crane(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_generator(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_trap_floor(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_modstation(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_spotlight(edict_t *ent, epair_t *pairs, int num_pairs);
 static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
                            int damage, vec3_t point);
 
@@ -548,6 +549,9 @@ static spawn_func_t spawn_funcs[] = {
     /* Weapon mod station */
     { "func_modstation",            SP_func_modstation },
     { "misc_modstation",            SP_func_modstation },
+
+    /* Spotlight (dynamic light version) */
+    { "func_spotlight",             SP_func_spotlight },
 
     /* Weapons (SoF) */
     { "weapon_knife",               SP_item_pickup },
@@ -6473,6 +6477,64 @@ static void SP_func_modstation(edict_t *ent, epair_t *pairs, int num_pairs)
 
     gi.dprintf("  func_modstation at (%.0f %.0f %.0f)\n",
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
+}
+
+/* ==========================================================================
+   func_spotlight — Rotating spotlight that emits a dynamic light
+   The spotlight rotates continuously, creating a sweeping light effect.
+   Keys: "light" = intensity, "speed" = rotation speed, "_color" = R G B
+   ========================================================================== */
+
+static void func_spotlight_think(edict_t *self)
+{
+    extern void R_AddDlight(vec3_t origin, float r, float g, float b,
+                             float intensity, float duration);
+    float angle;
+    vec3_t light_pos;
+
+    self->nextthink = level.time + 0.05f;
+
+    /* Rotate angle over time */
+    angle = level.time * self->speed;
+    light_pos[0] = self->s.origin[0] + cosf(angle) * 128.0f;
+    light_pos[1] = self->s.origin[1] + sinf(angle) * 128.0f;
+    light_pos[2] = self->s.origin[2] - 64.0f;  /* project downward */
+
+    R_AddDlight(light_pos,
+                self->move_angles[0], self->move_angles[1], self->move_angles[2],
+                self->dmg > 0 ? (float)self->dmg : 300.0f, 0.06f);
+}
+
+static void SP_func_spotlight(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *v;
+
+    ent->classname = "func_spotlight";
+    ent->solid = SOLID_NOT;
+    ent->movetype = MOVETYPE_NONE;
+    ent->think = func_spotlight_think;
+    ent->nextthink = level.time + 1.0f;
+
+    v = ED_FindValue(pairs, num_pairs, "speed");
+    ent->speed = v ? (float)atof(v) : 1.0f;
+
+    v = ED_FindValue(pairs, num_pairs, "light");
+    ent->dmg = v ? atoi(v) : 300;
+
+    /* Color defaults to white */
+    v = ED_FindValue(pairs, num_pairs, "_color");
+    if (v) {
+        sscanf(v, "%f %f %f",
+               &ent->move_angles[0], &ent->move_angles[1], &ent->move_angles[2]);
+    } else {
+        VectorSet(ent->move_angles, 1.0f, 1.0f, 0.9f);
+    }
+
+    gi.linkentity(ent);
+
+    gi.dprintf("  func_spotlight at (%.0f %.0f %.0f) speed=%.1f intensity=%d\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->speed, ent->dmg);
 }
 
 /* ==========================================================================
