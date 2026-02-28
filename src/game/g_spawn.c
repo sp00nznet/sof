@@ -271,6 +271,7 @@ static void SP_func_generator(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_trap_floor(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_modstation(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_spotlight(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_portcullis(edict_t *ent, epair_t *pairs, int num_pairs);
 static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
                            int damage, vec3_t point);
 
@@ -552,6 +553,10 @@ static spawn_func_t spawn_funcs[] = {
 
     /* Spotlight (dynamic light version) */
     { "func_spotlight",             SP_func_spotlight },
+
+    /* Portcullis / gate */
+    { "func_portcullis",            SP_func_portcullis },
+    { "func_gate",                  SP_func_portcullis },
 
     /* Weapons (SoF) */
     { "weapon_knife",               SP_item_pickup },
@@ -6535,6 +6540,112 @@ static void SP_func_spotlight(edict_t *ent, epair_t *pairs, int num_pairs)
     gi.dprintf("  func_spotlight at (%.0f %.0f %.0f) speed=%.1f intensity=%d\n",
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
                ent->speed, ent->dmg);
+}
+
+/* ==========================================================================
+   func_portcullis — Vertical gate that raises on use, lowers after delay.
+   Keys: "lip" = raise height (default 128), "speed" = movement speed,
+         "wait" = time before lowering (-1 = stay open)
+   ========================================================================== */
+
+static void portcullis_lower(edict_t *self);
+
+static void portcullis_lower_done(edict_t *self)
+{
+    self->moveinfo.state = 0;  /* closed */
+    self->velocity[2] = 0;
+    VectorCopy(self->moveinfo.start_origin, self->s.origin);
+    gi.linkentity(self);
+}
+
+static void portcullis_lower(edict_t *self)
+{
+    self->moveinfo.state = 3;  /* lowering */
+    self->velocity[2] = -self->speed;
+    /* Check if reached bottom */
+    if (self->s.origin[2] <= self->moveinfo.start_origin[2]) {
+        portcullis_lower_done(self);
+        return;
+    }
+    self->think = portcullis_lower;
+    self->nextthink = level.time + 0.1f;
+}
+
+static void portcullis_wait(edict_t *self)
+{
+    portcullis_lower(self);
+}
+
+static void portcullis_raise_done(edict_t *self)
+{
+    self->moveinfo.state = 1;  /* open */
+    self->velocity[2] = 0;
+    VectorCopy(self->moveinfo.end_origin, self->s.origin);
+    gi.linkentity(self);
+    /* Wait then lower, unless wait == -1 (stay open) */
+    if (self->wait >= 0) {
+        self->think = portcullis_wait;
+        self->nextthink = level.time + (self->wait > 0 ? self->wait : 3.0f);
+    }
+}
+
+static void portcullis_raise(edict_t *self)
+{
+    self->moveinfo.state = 2;  /* raising */
+    self->velocity[2] = self->speed;
+    /* Check if reached top */
+    if (self->s.origin[2] >= self->moveinfo.end_origin[2]) {
+        portcullis_raise_done(self);
+        return;
+    }
+    self->think = portcullis_raise;
+    self->nextthink = level.time + 0.1f;
+}
+
+static void portcullis_use(edict_t *self, edict_t *other, edict_t *activator)
+{
+    (void)other; (void)activator;
+    if (self->moveinfo.state == 0) {
+        /* Closed — raise */
+        int snd = gi.soundindex("world/gate_open.wav");
+        if (snd)
+            gi.sound(self, CHAN_BODY, snd, 1.0f, ATTN_STATIC, 0);
+        portcullis_raise(self);
+    } else if (self->moveinfo.state == 1) {
+        /* Open — lower immediately */
+        portcullis_lower(self);
+    }
+}
+
+static void SP_func_portcullis(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *v;
+    float lip;
+
+    ent->classname = "func_portcullis";
+    ent->solid = SOLID_BSP;
+    ent->movetype = MOVETYPE_PUSH;
+    ent->use = portcullis_use;
+
+    v = ED_FindValue(pairs, num_pairs, "speed");
+    ent->speed = v ? (float)atof(v) : 80.0f;
+
+    v = ED_FindValue(pairs, num_pairs, "lip");
+    lip = v ? (float)atof(v) : 128.0f;
+
+    v = ED_FindValue(pairs, num_pairs, "wait");
+    ent->wait = v ? (float)atof(v) : 3.0f;
+
+    VectorCopy(ent->s.origin, ent->moveinfo.start_origin);
+    VectorCopy(ent->s.origin, ent->moveinfo.end_origin);
+    ent->moveinfo.end_origin[2] += lip;
+
+    ent->moveinfo.state = 0;  /* starts closed */
+
+    gi.linkentity(ent);
+    gi.dprintf("  func_portcullis at (%.0f %.0f %.0f) lip=%.0f speed=%.0f\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               lip, ent->speed);
 }
 
 /* ==========================================================================

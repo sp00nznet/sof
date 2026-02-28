@@ -534,6 +534,9 @@ struct gclient_s {
 
     /* Armor type: 0=none, 1=light (40%), 2=medium (60%), 3=heavy (80%) */
     int             armor_type;
+
+    /* Double jump */
+    qboolean        double_jump_used;      /* already used air jump this flight */
 };
 
 /* ==========================================================================

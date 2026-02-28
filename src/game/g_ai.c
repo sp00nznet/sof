@@ -85,7 +85,8 @@ typedef enum {
     AI_STATE_CHASE,
     AI_STATE_ATTACK,
     AI_STATE_PAIN,
-    AI_STATE_DEAD
+    AI_STATE_DEAD,
+    AI_STATE_SEARCH
 } ai_state_t;
 
 /* Sight range and attack range */
@@ -968,11 +969,58 @@ static void ai_think_chase(edict_t *self)
         }
 
         if (last_dist < 32.0f) {
-            self->enemy = NULL;
-            self->count = AI_STATE_IDLE;
+            /* Reached last known position — search the area */
+            self->count = AI_STATE_SEARCH;
+            self->patrol_wait = level.time + 4.0f;  /* search for 4 seconds */
             self->velocity[0] = self->velocity[1] = 0;
         }
     }
+
+    self->nextthink = level.time + FRAMETIME;
+}
+
+/* AI Search — investigate last known position before giving up */
+static void ai_think_search(edict_t *self)
+{
+    float search_speed = AI_CHASE_SPEED * 0.5f;
+
+    /* If search time expired, return to idle */
+    if (level.time >= self->patrol_wait) {
+        self->enemy = NULL;
+        self->count = AI_STATE_IDLE;
+        self->velocity[0] = self->velocity[1] = 0;
+        self->ai_flags &= ~AI_LOST_SIGHT;
+        self->nextthink = level.time + 0.5f;
+        return;
+    }
+
+    /* If we spot the enemy again, re-engage */
+    if (self->enemy && self->enemy->inuse && self->enemy->health > 0 &&
+        AI_Visible(self, self->enemy)) {
+        self->count = AI_STATE_CHASE;
+        self->ai_flags &= ~AI_LOST_SIGHT;
+        VectorCopy(self->enemy->s.origin, self->move_origin);
+        self->nextthink = level.time + FRAMETIME;
+        return;
+    }
+
+    /* Wander in a small pattern around last known position */
+    {
+        float phase = level.time * 2.0f + (float)(int)(self - (edict_t *)0) * 0.7f;
+        vec3_t wander;
+        wander[0] = self->move_origin[0] + cosf(phase) * 64.0f;
+        wander[1] = self->move_origin[1] + sinf(phase) * 64.0f;
+        wander[2] = self->s.origin[2];
+        AI_MoveToward(self, wander, search_speed);
+    }
+
+    /* Look around — rotate yaw */
+    self->s.angles[1] += sinf(level.time * 3.0f) * 5.0f;
+
+    /* Walk animation */
+    self->s.frame++;
+    if (self->s.frame < FRAME_RUN_START || self->s.frame > FRAME_RUN_END)
+        self->s.frame = FRAME_RUN_START;
 
     self->nextthink = level.time + FRAMETIME;
 }
@@ -1595,6 +1643,7 @@ void monster_think(edict_t *self)
             ai_think_attack(self);
         break;
     case AI_STATE_PAIN:     ai_think_pain(self); break;
+    case AI_STATE_SEARCH:   ai_think_search(self); break;
     default:                self->nextthink = level.time + 1.0f; break;
     }
 }

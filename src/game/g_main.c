@@ -4029,6 +4029,30 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
         }
     }
 
+    /* Double jump: one extra jump while airborne */
+    if (!ent->groundentity && !ent->deadflag && ucmd->upmove > 0 &&
+        !client->double_jump_used && ent->velocity[2] < 100.0f &&
+        ent->velocity[2] > -300.0f) {
+        /* Only trigger if not wall-jumping this frame */
+        if (level.time > client->wall_jump_time + 0.1f) {
+            ent->velocity[2] = 270.0f;  /* second jump boost */
+            client->double_jump_used = true;
+            VectorCopy(ent->velocity, client->ps.velocity);
+            /* Small dust puff below feet */
+            {
+                vec3_t below;
+                vec3_t up_dir;
+                VectorCopy(ent->s.origin, below);
+                below[2] -= 8;
+                VectorSet(up_dir, 0, 0, 1);
+                R_ParticleEffect(below, up_dir, 13, 3);
+            }
+        }
+    }
+    /* Reset double jump when landing */
+    if (ent->groundentity)
+        client->double_jump_used = false;
+
     /* Dash/dodge: double-tap movement direction for quick dodge */
     if (client->dash_end > level.time) {
         /* Dashing — apply dash velocity */
@@ -4235,6 +4259,18 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
         if (cant_target > 2.0f) cant_target = 2.0f;
         if (cant_target < -2.0f) cant_target = -2.0f;
         client->kick_angles[2] += cant_target;
+    }
+
+    /* Weapon idle sway — subtle breathing-based oscillation when standing still */
+    {
+        float speed_sq = ent->velocity[0] * ent->velocity[0] +
+                         ent->velocity[1] * ent->velocity[1];
+        if (speed_sq < 25.0f * 25.0f && ent->groundentity && !ent->deadflag) {
+            float breath = level.time * 1.8f;  /* slow breathing cycle */
+            float amp = client->zoomed ? 0.4f : 0.15f;  /* more sway when zoomed */
+            client->kick_angles[0] += sinf(breath) * amp;
+            client->kick_angles[1] += cosf(breath * 0.7f) * amp * 0.6f;
+        }
     }
 
     /* Scope glint — when zoomed with sniper, emit a light visible to enemies */
