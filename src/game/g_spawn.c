@@ -508,6 +508,9 @@ static spawn_func_t spawn_funcs[] = {
     { "func_cage",                  SP_func_cage },
     { "func_trap_cage",             SP_func_cage },
 
+    /* Mountable turret (alias) */
+    { "func_turret",                SP_misc_turret },
+
     /* Weapons (SoF) */
     { "weapon_knife",               SP_item_pickup },
     { "weapon_pistol1",             SP_item_pickup },

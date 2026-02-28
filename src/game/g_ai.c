@@ -790,6 +790,38 @@ static void ai_think_chase(edict_t *self)
         return;
     }
 
+    /* Generic wounded retreat: any monster below 30% HP tries to fall back */
+    if (health_pct < 0.3f &&
+        !(self->classname && Q_stricmp(self->classname, "monster_soldier_light") == 0) &&
+        !(self->ai_flags & AI_STAND_GROUND)) {
+        /* Try to find cover first */
+        if (AI_SeekCover(self)) {
+            AI_MoveToward(self, self->move_origin, AI_CHASE_SPEED * 1.2f);
+        } else {
+            /* No cover — just back away from enemy */
+            vec3_t retreat_dir;
+            VectorSubtract(self->s.origin, self->enemy->s.origin, retreat_dir);
+            retreat_dir[2] = 0;
+            VectorNormalize(retreat_dir);
+            self->velocity[0] = retreat_dir[0] * AI_CHASE_SPEED;
+            self->velocity[1] = retreat_dir[1] * AI_CHASE_SPEED;
+        }
+        /* Still fire back while retreating (suppressive) */
+        if (AI_Visible(self, self->enemy) && dist < AI_ATTACK_RANGE * 1.5f) {
+            AI_FaceEnemy(self);
+            if (level.time > self->dmg_debounce_time) {
+                if (snd_monster_fire)
+                    gi.sound(self, CHAN_WEAPON, snd_monster_fire, 1.0f, ATTN_NORM, 0);
+                self->dmg_debounce_time = level.time + 0.4f;  /* slower fire while retreating */
+            }
+        }
+        self->s.frame++;
+        if (self->s.frame < FRAME_RUN_START || self->s.frame > FRAME_RUN_END)
+            self->s.frame = FRAME_RUN_START;
+        self->nextthink = level.time + FRAMETIME;
+        return;
+    }
+
     /* SS soldiers seek cover more aggressively when hurt (<60% HP) */
     if (self->classname && Q_stricmp(self->classname, "monster_soldier_ss") == 0 &&
         health_pct < 0.6f && self->dmg_debounce_time <= level.time) {

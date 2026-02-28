@@ -152,7 +152,10 @@ static int snd_ambient_wind;           /* outdoor wind ambience */
 static int snd_ambient_drip;           /* water area dripping */
 static int snd_ladder_step;            /* ladder climbing sound */
 
-#define WEAPON_SWITCH_TIME  0.5f        /* 500ms weapon switch delay */
+#define WEAPON_SWITCH_TIME  0.5f        /* 500ms weapon switch delay (fallback) */
+/* Per-weapon draw time (declared below weapon tables, used via G_WeapDrawTime) */
+static float weapon_draw_time[WEAP_COUNT];  /* tentative — real init below */
+#define G_WeapDrawTime(w) (((w) > 0 && (w) < WEAP_COUNT) ? weapon_draw_time[w] : WEAPON_SWITCH_TIME)
 static int player_prev_weapon;  /* previous weapon for quick-switch (Q key) */
 
 /* Quicksave state */
@@ -595,7 +598,7 @@ static void ClientCommand(edict_t *ent)
             if (Q_stricmp(item, weapon_names[i]) == 0) {
                 ent->client->pers_weapon = i;
                 ent->weapon_index = i;
-                ent->client->weapon_change_time = level.time + WEAPON_SWITCH_TIME;
+                ent->client->weapon_change_time = level.time + G_WeapDrawTime(i);
                 if (snd_weapon_switch)
                     gi.sound(ent, CHAN_ITEM, snd_weapon_switch, 1.0f, ATTN_NORM, 0);
                 gi.cprintf(ent, PRINT_ALL, "Switched to %s\n", weapon_names[i]);
@@ -612,7 +615,7 @@ static void ClientCommand(edict_t *ent)
         player_prev_weapon = ent->client->pers_weapon;
         ent->client->pers_weapon = w;
         ent->weapon_index = w;
-        ent->client->weapon_change_time = level.time + WEAPON_SWITCH_TIME;
+        ent->client->weapon_change_time = level.time + G_WeapDrawTime(w);
         /* Cancel zoom on weapon switch */
         if (ent->client->zoomed) {
             ent->client->zoomed = qfalse;
@@ -630,7 +633,7 @@ static void ClientCommand(edict_t *ent)
         player_prev_weapon = ent->client->pers_weapon;
         ent->client->pers_weapon = w;
         ent->weapon_index = w;
-        ent->client->weapon_change_time = level.time + WEAPON_SWITCH_TIME;
+        ent->client->weapon_change_time = level.time + G_WeapDrawTime(w);
         /* Cancel zoom on weapon switch */
         if (ent->client->zoomed) {
             ent->client->zoomed = qfalse;
@@ -649,7 +652,7 @@ static void ClientCommand(edict_t *ent)
             ent->client->pers_weapon = player_prev_weapon;
             ent->weapon_index = player_prev_weapon;
             player_prev_weapon = cur;
-            ent->client->weapon_change_time = level.time + WEAPON_SWITCH_TIME;
+            ent->client->weapon_change_time = level.time + G_WeapDrawTime(player_prev_weapon);
             if (ent->client->zoomed) { ent->client->zoomed = qfalse; ent->client->fov = 90.0f; }
             if (snd_weapon_switch) gi.sound(ent, CHAN_ITEM, snd_weapon_switch, 1.0f, ATTN_NORM, 0);
             gi.cprintf(ent, PRINT_ALL, "Weapon: %s\n", weapon_names[ent->client->pers_weapon]);
@@ -663,7 +666,7 @@ static void ClientCommand(edict_t *ent)
             player_prev_weapon = ent->client->pers_weapon;
             ent->client->pers_weapon = slot;
             ent->weapon_index = slot;
-            ent->client->weapon_change_time = level.time + WEAPON_SWITCH_TIME;
+            ent->client->weapon_change_time = level.time + G_WeapDrawTime(slot);
             if (ent->client->zoomed) { ent->client->zoomed = qfalse; ent->client->fov = 90.0f; }
             if (snd_weapon_switch) gi.sound(ent, CHAN_ITEM, snd_weapon_switch, 1.0f, ATTN_NORM, 0);
             gi.cprintf(ent, PRINT_ALL, "Weapon: %s\n", weapon_names[slot]);
@@ -801,7 +804,7 @@ static void ClientCommand(edict_t *ent)
             ent->client->weapon_holstered = qfalse;
             ent->client->pers_weapon = ent->client->holster_weapon;
             ent->weapon_index = ent->client->holster_weapon;
-            ent->client->weapon_change_time = level.time + WEAPON_SWITCH_TIME;
+            ent->client->weapon_change_time = level.time + G_WeapDrawTime(ent->client->holster_weapon);
             if (snd_weapon_switch)
                 gi.sound(ent, CHAN_ITEM, snd_weapon_switch, 1.0f, ATTN_NORM, 0);
             gi.cprintf(ent, PRINT_ALL, "Weapon drawn\n");
@@ -1283,7 +1286,7 @@ static void ClientCommand(edict_t *ent)
                 player_prev_weapon = ent->client->pers_weapon;
                 ent->client->pers_weapon = w;
                 ent->weapon_index = w;
-                ent->client->weapon_change_time = level.time + WEAPON_SWITCH_TIME;
+                ent->client->weapon_change_time = level.time + G_WeapDrawTime(w);
                 if (snd_weapon_switch)
                     gi.sound(ent, CHAN_ITEM, snd_weapon_switch, 1.0f, ATTN_NORM, 0);
                 gi.cprintf(ent, PRINT_ALL, "Slot %d: %s\n", slot + 1, weapon_names[w]);
@@ -1500,7 +1503,7 @@ static void ClientCommand(edict_t *ent)
             /* Switch to knife */
             ent->client->pers_weapon = WEAP_KNIFE;
             ent->weapon_index = WEAP_KNIFE;
-            ent->client->weapon_change_time = level.time + WEAPON_SWITCH_TIME;
+            ent->client->weapon_change_time = level.time + G_WeapDrawTime(WEAP_KNIFE);
             if (snd_weapon_switch)
                 gi.sound(ent, CHAN_ITEM, snd_weapon_switch, 1.0f, ATTN_NORM, 0);
         } else {
@@ -1517,7 +1520,7 @@ static void ClientCommand(edict_t *ent)
             ent->client->pers_weapon = player_prev_weapon;
             ent->weapon_index = player_prev_weapon;
             player_prev_weapon = cur;
-            ent->client->weapon_change_time = level.time + WEAPON_SWITCH_TIME;
+            ent->client->weapon_change_time = level.time + G_WeapDrawTime(player_prev_weapon);
             if (snd_weapon_switch)
                 gi.sound(ent, CHAN_ITEM, snd_weapon_switch, 1.0f, ATTN_NORM, 0);
             gi.cprintf(ent, PRINT_ALL, "Weapon: %s\n",
@@ -1760,6 +1763,28 @@ static float weapon_spread[WEAP_COUNT] = {
     0,      /* WEAP_MEDKIT */
     0,      /* WEAP_GOGGLES */
     0,      /* WEAP_FPAK */
+};
+
+/* Per-weapon draw speed — heavier weapons take longer to switch to */
+static float weapon_draw_time[WEAP_COUNT] = {
+    0.3f,   /* WEAP_NONE */
+    0.2f,   /* WEAP_KNIFE — fast draw */
+    0.35f,  /* WEAP_PISTOL1 — quick sidearm */
+    0.35f,  /* WEAP_PISTOL2 */
+    0.6f,   /* WEAP_SHOTGUN — pump action, slower */
+    0.55f,  /* WEAP_MACHINEGUN */
+    0.5f,   /* WEAP_ASSAULT */
+    0.7f,   /* WEAP_SNIPER — bolt-action, heavy */
+    0.65f,  /* WEAP_SLUGGER */
+    0.8f,   /* WEAP_ROCKET — heaviest */
+    0.5f,   /* WEAP_FLAMEGUN */
+    0.6f,   /* WEAP_MPG */
+    0.4f,   /* WEAP_MPISTOL — compact SMG */
+    0.3f,   /* WEAP_GRENADE — quick toss */
+    0.3f,   /* WEAP_C4 */
+    0.4f,   /* WEAP_MEDKIT */
+    0.3f,   /* WEAP_GOGGLES */
+    0.3f,   /* WEAP_FPAK */
 };
 
 static float player_next_fire;  /* level.time when player can fire again */
@@ -2749,6 +2774,21 @@ static void G_FireHitscan(edict_t *ent)
 
     damage = (weap > 0 && weap < WEAP_COUNT) ? weapon_damage[weap] : 15;
 
+    /* Turret override: mounted turret uses turret damage, zero spread */
+    if (ent->movetype == MOVETYPE_NONE) {
+        /* Check if player is on a turret */
+        extern game_export_t globals;
+        int ti;
+        for (ti = 1; ti < globals.num_edicts; ti++) {
+            edict_t *t = &globals.edicts[ti];
+            if (t->inuse && t->owner == ent && t->classname &&
+                Q_stricmp(t->classname, "func_turret") == 0) {
+                damage = t->dmg > 0 ? t->dmg : 40;
+                break;
+            }
+        }
+    }
+
     /* Ammo type modifiers */
     if (ent->client->ammo_type == 1) {
         /* Hollow point: +30% damage, no penetration */
@@ -3350,8 +3390,12 @@ static void G_FireHitscan(edict_t *ent)
                                             ric_snd, 0.7f, ATTN_NORM, 0);
                 }
 
-                /* Ricochet bullet — metal surfaces bounce a weaker projectile */
-                if (is_metal && weap != WEAP_SHOTGUN && weap != WEAP_KNIFE) {
+                /* Ricochet bullet — hard surfaces bounce a weaker projectile */
+                if ((is_metal || (!is_wood && !is_dirt && !is_glass)) &&
+                    weap != WEAP_SHOTGUN && weap != WEAP_KNIFE) {
+                    /* Metal: always ricochet; stone/concrete: 40% chance */
+                    int do_ricochet = is_metal ? 1 : (gi.irand(0, 100) < 40);
+                if (do_ricochet) {
                     vec3_t reflect, ric_end;
                     trace_t ric_tr;
                     float dot_n;
@@ -3396,7 +3440,8 @@ static void G_FireHitscan(edict_t *ent)
                             }
                         }
                     }
-                }
+                } /* end do_ricochet */
+                } /* end hard surface check */
 
                 /* Wall penetration: high-power weapons punch through thin surfaces */
                 /* Hollow point ammo fragments on impact — no penetration */
@@ -4235,7 +4280,7 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
             client->weapon_holstered = qfalse;
             client->pers_weapon = client->holster_weapon;
             ent->weapon_index = client->holster_weapon;
-            client->weapon_change_time = level.time + WEAPON_SWITCH_TIME;
+            client->weapon_change_time = level.time + G_WeapDrawTime(client->holster_weapon);
         }
 
         /* Grenade cooking: hold attack to cook, release to throw */
