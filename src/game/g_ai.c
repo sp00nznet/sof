@@ -752,6 +752,12 @@ static edict_t *AI_FindByTargetname(const char *targetname)
 
 static void ai_think_idle(edict_t *self)
 {
+    /* Morale recovery while idle — slowly regain courage */
+    if (self->random < 80.0f) {
+        self->random += 2.0f * FRAMETIME;
+        if (self->random > 80.0f) self->random = 80.0f;
+    }
+
     /* Ambush: stay hidden until player is very close, then surprise attack */
     if (self->ai_flags & AI_AMBUSH) {
         if (AI_FindTarget(self)) {
@@ -1989,6 +1995,10 @@ void monster_pain(edict_t *self, edict_t *other, float kick, int damage)
         }
     }
 
+    /* Morale loss from taking damage */
+    self->random -= (float)damage * 0.3f;
+    if (self->random < 0) self->random = 0;
+
     /* Pain sound */
     {
         int snd = (rand() & 1) ? snd_monster_pain1 : snd_monster_pain2;
@@ -2223,6 +2233,10 @@ static void monster_start(edict_t *ent, int health, int damage,
     ent->yaw_speed = 20.0f;
     ent->mass = 200;
     ent->gravity = 1.0f;
+
+    /* Initialize morale: higher HP = braver, skill affects it */
+    ent->random = 60.0f + (float)health * 0.2f + sk * 5.0f;
+    if (ent->random > 100.0f) ent->random = 100.0f;
 
     /* Set bounding box (humanoid) */
     VectorSet(ent->mins, -16, -16, -24);
@@ -2740,11 +2754,26 @@ void AI_AllyDied(vec3_t death_origin)
                 dead_nearby++;
         }
 
-        /* If too many allies dead, break and flee */
-        if (dead_nearby > 0 && alive_nearby > 0 &&
-            (float)dead_nearby / (float)(alive_nearby + dead_nearby) > AI_MORALE_FLEE_PCT) {
-            /* Low-health soldiers flee; tougher ones hold ground */
-            if (e->max_health < 120) {
+        /* Morale system: drop morale when allies die nearby */
+        {
+            float morale_loss = 15.0f;
+            /* Closer deaths are more demoralizing */
+            if (dist < 200.0f) morale_loss = 25.0f;
+            else if (dist < 500.0f) morale_loss = 18.0f;
+
+            /* Tough enemies lose less morale */
+            if (e->max_health >= 120) morale_loss *= 0.5f;
+
+            e->random -= morale_loss;
+            if (e->random < 0) e->random = 0;
+        }
+
+        /* If too many allies dead or morale is broken, flee */
+        if ((dead_nearby > 0 && alive_nearby > 0 &&
+            (float)dead_nearby / (float)(alive_nearby + dead_nearby) > AI_MORALE_FLEE_PCT)
+            || e->random < 15.0f) {
+            /* Low-morale soldiers flee; tougher ones hold ground */
+            if (e->max_health < 120 || e->random < 5.0f) {
                 vec3_t flee_dir;
                 VectorSubtract(e->s.origin, death_origin, flee_dir);
                 flee_dir[2] = 0;
@@ -2753,6 +2782,17 @@ void AI_AllyDied(vec3_t death_origin)
                 VectorMA(e->s.origin, 300.0f, flee_dir, e->move_origin);
                 e->count = AI_STATE_CHASE; /* will chase toward flee point */
                 e->enemy = NULL;           /* disengage */
+
+                /* Surrender if morale is extremely low */
+                if (e->random < 5.0f && e->health > 0) {
+                    int snd = gi.soundindex("npc/surrender.wav");
+                    if (snd)
+                        gi.sound(e, CHAN_VOICE, snd, 1.0f, ATTN_NORM, 0);
+                    e->count = AI_STATE_PAIN;  /* freeze in pain/surrender pose */
+                    e->takedamage = DAMAGE_YES;
+                    e->enemy = NULL;
+                    e->nextthink = level.time + 30.0f;  /* stay surrendered */
+                }
             }
         }
     }

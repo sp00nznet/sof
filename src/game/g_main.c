@@ -2721,6 +2721,33 @@ void grenade_explode(edict_t *self)
     gi.unlinkentity(self);
 }
 
+/* Sticky grenade touch — stick to surface or entity on contact */
+static void sticky_grenade_touch(edict_t *self, edict_t *other,
+                                  void *plane, csurface_t *surf)
+{
+    (void)surf;
+    if (other == self->owner)
+        return;
+
+    /* Stop moving — stick in place */
+    self->movetype = MOVETYPE_NONE;
+    self->velocity[0] = self->velocity[1] = self->velocity[2] = 0;
+    self->touch = NULL;  /* no more touch callbacks */
+
+    /* If hit an enemy, attach to them */
+    if (other && other->inuse && other->health > 0 &&
+        (other->svflags & SVF_MONSTER)) {
+        self->enemy = other;  /* track the entity we're stuck to */
+    }
+
+    /* Stick sound */
+    {
+        int snd = gi.soundindex("weapons/c4_plant.wav");
+        if (snd)
+            gi.sound(self, CHAN_AUTO, snd, 0.5f, ATTN_NORM, 0);
+    }
+}
+
 /*
  * G_FireProjectile — Spawn a rocket or grenade projectile
  */
@@ -2763,9 +2790,18 @@ static void G_FireProjectile(edict_t *ent, qboolean is_grenade)
             ent->client->grenade_cook_start = 0;
         }
 
-        proj->movetype = MOVETYPE_BOUNCE;
-        VectorScale(forward, 600, proj->velocity);
-        proj->velocity[2] += 200;  /* arc upward */
+        /* Alt-fire: sticky grenade mode */
+        if (ent->client->alt_fire) {
+            proj->classname = "sticky_grenade";
+            proj->movetype = MOVETYPE_FLY;
+            VectorScale(forward, 800, proj->velocity);
+            proj->velocity[2] += 100;
+            proj->touch = sticky_grenade_touch;
+        } else {
+            proj->movetype = MOVETYPE_BOUNCE;
+            VectorScale(forward, 600, proj->velocity);
+            proj->velocity[2] += 200;  /* arc upward */
+        }
         proj->dmg = weapon_damage[WEAP_GRENADE];
         proj->dmg_radius = 200;
         proj->think = grenade_explode;
@@ -3231,6 +3267,14 @@ static void G_FireHitscan(edict_t *ent)
                 return;
             }
             ent->client->magazine[weap]--;
+
+            /* Bolt lock: distinct feedback on last round */
+            if (ent->client->magazine[weap] == 0) {
+                int snd_bolt = gi.soundindex("weapons/bolt_lock.wav");
+                if (snd_bolt)
+                    gi.sound(ent, CHAN_ITEM, snd_bolt, 0.6f, ATTN_NORM, 0);
+                gi.cprintf(ent, PRINT_ALL, "Bolt locked — magazine empty!\n");
+            }
         } else {
             /* Non-magazine weapon: consume from ammo directly */
             if (ent->client->ammo[weap] <= 0) {
@@ -5024,6 +5068,27 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
                 VectorSet(foot_dir, 0, 0, 1);
                 R_ParticleEffect(foot_pos, foot_dir, 13,
                                  speed > 250.0f ? 3 : 1);
+            }
+
+            /* Footprint trail decals on soft surfaces */
+            {
+                vec3_t fp_start, fp_end;
+                trace_t fp_tr;
+                VectorCopy(ent->s.origin, fp_start);
+                VectorCopy(ent->s.origin, fp_end);
+                fp_end[2] -= 32;
+                fp_tr = gi.trace(fp_start, NULL, NULL, fp_end, ent, MASK_SOLID);
+                if (fp_tr.fraction < 1.0f && fp_tr.surface &&
+                    fp_tr.surface->name[0]) {
+                    const char *tex = fp_tr.surface->name;
+                    if (strstr(tex, "dirt") || strstr(tex, "mud") ||
+                        strstr(tex, "sand") || strstr(tex, "snow") ||
+                        strstr(tex, "grass")) {
+                        /* Place footprint decal at impact point */
+                        vec3_t fp_norm = {0, 0, 1};
+                        R_AddDecal(fp_tr.endpos, fp_norm, 4);  /* type 4 = footprint */
+                    }
+                }
             }
 
             /* Alert nearby AI based on footstep volume and movement speed */
