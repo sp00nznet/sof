@@ -560,6 +560,9 @@ struct gclient_s {
     /* Jetpack */
     qboolean        jetpack_on;            /* jetpack currently active */
     float           jetpack_fuel;          /* fuel remaining (0-100) */
+
+    /* Binoculars */
+    qboolean        binos_active;          /* binoculars zoom active */
 };
 
 /* ==========================================================================

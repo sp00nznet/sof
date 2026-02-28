@@ -309,6 +309,7 @@ static void SP_func_steam_vent(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_trampoline(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_fan(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_crusher(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_turntable(edict_t *ent, epair_t *pairs, int num_pairs);
 static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
                            int damage, vec3_t point);
 
@@ -776,6 +777,10 @@ static spawn_func_t spawn_funcs[] = {
     /* Crusher trap */
     { "func_crusher",               SP_func_crusher },
     { "func_crush_wall",            SP_func_crusher },
+
+    /* Rotating platform / turntable */
+    { "func_turntable",             SP_func_turntable },
+    { "func_rotating_platform",     SP_func_turntable },
 
     /* Sentinel */
     { NULL, NULL }
@@ -9245,6 +9250,78 @@ static void SP_func_crusher(edict_t *ent, epair_t *pairs, int num_pairs)
     gi.dprintf("  func_crusher at (%.0f %.0f %.0f) dmg=%d speed=%.0f lip=%.0f\n",
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
                ent->dmg, ent->speed, lip);
+}
+
+/* ==========================================================================
+   Turntable — rotating platform that continuously spins, carrying entities.
+   "speed" = rotation speed in degrees/sec (default 30).
+   Entities standing on it rotate with the platform.
+   ========================================================================== */
+
+static void turntable_think(edict_t *self)
+{
+    float rot_speed;
+    int i;
+    edict_t *ent;
+
+    self->nextthink = level.time + 0.1f;
+    rot_speed = self->speed > 0 ? self->speed : 30.0f;
+
+    /* Rotate the platform */
+    self->s.angles[1] += rot_speed * 0.1f;
+    if (self->s.angles[1] >= 360.0f) self->s.angles[1] -= 360.0f;
+    if (self->s.angles[1] < 0.0f) self->s.angles[1] += 360.0f;
+
+    /* Rotate entities standing on the platform */
+    for (i = 0; i < globals.num_edicts; i++) {
+        ent = &globals.edicts[i];
+        if (!ent->inuse || ent == self || !ent->groundentity)
+            continue;
+        if (!ent->client && !(ent->svflags & SVF_MONSTER))
+            continue;
+        /* Check if entity is on top of the turntable */
+        {
+            float dx = ent->s.origin[0] - self->s.origin[0];
+            float dy = ent->s.origin[1] - self->s.origin[1];
+            float dz = ent->s.origin[2] - self->s.origin[2];
+            float hdist = (float)sqrt(dx * dx + dy * dy);
+
+            if (hdist > 64.0f || dz < -8.0f || dz > 48.0f)
+                continue;
+
+            /* Apply angular velocity to entity position */
+            {
+                float ang_rad = rot_speed * 0.1f * (3.14159265f / 180.0f);
+                float cos_a = (float)cos(ang_rad);
+                float sin_a = (float)sin(ang_rad);
+                float nx = dx * cos_a - dy * sin_a;
+                float ny = dx * sin_a + dy * cos_a;
+                ent->s.origin[0] = self->s.origin[0] + nx;
+                ent->s.origin[1] = self->s.origin[1] + ny;
+                gi.linkentity(ent);
+            }
+        }
+    }
+
+    gi.linkentity(self);
+}
+
+static void SP_func_turntable(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+    ent->classname = "func_turntable";
+    ent->solid = SOLID_BBOX;
+    ent->movetype = MOVETYPE_NONE;
+    if (ent->speed <= 0) ent->speed = 30.0f;
+    ent->think = turntable_think;
+    ent->nextthink = level.time + 1.0f;
+    VectorSet(ent->mins, -64, -64, -8);
+    VectorSet(ent->maxs, 64, 64, 8);
+    ent->s.modelindex = gi.modelindex("models/objects/platform/tris.md2");
+    gi.linkentity(ent);
+    gi.dprintf("  func_turntable at (%.0f %.0f %.0f) speed=%.0f\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->speed);
 }
 
 /* ==========================================================================

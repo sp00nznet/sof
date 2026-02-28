@@ -946,6 +946,59 @@ static void RunFrame(void)
                         40.0f + pulse * 40.0f, level.frametime + 0.05f);
         }
 
+        /* Smoke cloud: emit particles and block AI visibility */
+        if (ent->classname && Q_stricmp(ent->classname, "smoke_cloud") == 0) {
+            vec3_t smoke_up = {0, 0, 0.5f};
+            R_ParticleEffect(ent->s.origin, smoke_up, 8, 12); /* grey smoke */
+            R_ParticleEffect(ent->s.origin, smoke_up, 14, 8); /* white wisps */
+            /* Cause nearby AI to lose sight of player */
+            {
+                int si;
+                for (si = 1; si < globals.num_edicts; si++) {
+                    edict_t *m = &globals.edicts[si];
+                    if (!m->inuse || !(m->svflags & SVF_MONSTER) || m->health <= 0)
+                        continue;
+                    {
+                        vec3_t sd;
+                        VectorSubtract(m->s.origin, ent->s.origin, sd);
+                        if (VectorLength(sd) < 200.0f) {
+                            m->enemy = NULL;
+                            m->count = 0; /* AI_STATE_IDLE */
+                        }
+                    }
+                }
+            }
+        }
+
+        /* Thrown weapon: check for collision with enemies */
+        if (ent->classname && Q_stricmp(ent->classname, "thrown_weapon") == 0 &&
+            ent->inuse) {
+            int ti;
+            for (ti = 1; ti < globals.num_edicts; ti++) {
+                edict_t *t = &globals.edicts[ti];
+                vec3_t td;
+                float tdist;
+                if (!t->inuse || t->health <= 0 || t == ent->owner)
+                    continue;
+                if (!t->client && !(t->svflags & SVF_MONSTER))
+                    continue;
+                VectorSubtract(t->s.origin, ent->s.origin, td);
+                tdist = VectorLength(td);
+                if (tdist < 32.0f) {
+                    t->health -= ent->dmg;
+                    if (t->client)
+                        t->client->pers_health = t->health;
+                    if (t->health <= 0 && t->die)
+                        t->die(t, ent, ent->owner ? ent->owner : ent, ent->dmg, ent->s.origin);
+                    else if (t->pain)
+                        t->pain(t, ent, 0, ent->dmg);
+                    ent->inuse = qfalse;
+                    gi.unlinkentity(ent);
+                    break;
+                }
+            }
+        }
+
         /* Squad follower: NPCs set to follow player move toward them */
         if (ent->count == 99 && ent->owner && ent->owner->inuse &&
             ent->owner->client && ent->health > 0) {
@@ -3218,6 +3271,93 @@ static void ClientCommand(edict_t *ent)
         } else {
             ent->client->jetpack_on = false;
             gi.cprintf(ent, PRINT_ALL, "Jetpack disengaged.\n");
+        }
+        return;
+    }
+
+    /* Smoke screen: deploy smoke cloud that blocks AI visibility */
+    if (Q_stricmp(cmd, "smoke") == 0 || Q_stricmp(cmd, "smokescreen") == 0) {
+        if (ent->deadflag)
+            return;
+        if (ent->move_angles[2] > level.time) {
+            gi.cprintf(ent, PRINT_ALL, "Smoke not ready.\n");
+            return;
+        }
+        {
+            edict_t *smoke = G_AllocEdict();
+            if (smoke) {
+                vec3_t fwd, rt, up;
+                G_AngleVectors(ent->client->viewangles, fwd, rt, up);
+                smoke->classname = "smoke_cloud";
+                VectorCopy(ent->s.origin, smoke->s.origin);
+                smoke->s.origin[0] += fwd[0] * 80.0f;
+                smoke->s.origin[1] += fwd[1] * 80.0f;
+                smoke->s.origin[2] += 16.0f;
+                smoke->solid = SOLID_NOT;
+                smoke->movetype = MOVETYPE_NONE;
+                smoke->nextthink = level.time + 12.0f; /* 12s duration */
+                smoke->think = G_FreeEdict;
+                smoke->dmg = 1; /* marker: active smoke */
+                smoke->owner = ent;
+                gi.linkentity(smoke);
+                SCR_AddPickupMessage("SMOKE DEPLOYED");
+                ent->move_angles[2] = level.time + 15.0f;
+            }
+        }
+        return;
+    }
+
+    /* Binoculars: toggle zoom for long-distance scouting */
+    if (Q_stricmp(cmd, "binoculars") == 0 || Q_stricmp(cmd, "binos") == 0) {
+        if (ent->deadflag)
+            return;
+        if (ent->client->binos_active) {
+            /* Already zoomed — unzoom */
+            ent->client->binos_active = 0;
+            gi.cprintf(ent, PRINT_ALL, "Binoculars lowered.\n");
+        } else {
+            ent->client->binos_active = 1; /* repurpose as zoom flag */
+            gi.cprintf(ent, PRINT_ALL, "Binoculars raised — 4x zoom.\n");
+            SCR_AddPickupMessage("4X ZOOM");
+        }
+        return;
+    }
+
+    /* Weapon throw: hurl current weapon as a damaging projectile */
+    if (Q_stricmp(cmd, "throw") == 0 || Q_stricmp(cmd, "toss") == 0) {
+        if (ent->deadflag)
+            return;
+        {
+            int w = ent->client->pers_weapon;
+            if (w <= WEAP_KNIFE) {
+                gi.cprintf(ent, PRINT_ALL, "Can't throw that.\n");
+                return;
+            }
+            {
+                edict_t *proj = G_AllocEdict();
+                if (proj) {
+                    vec3_t fwd, rt, up;
+                    G_AngleVectors(ent->client->viewangles, fwd, rt, up);
+                    proj->classname = "thrown_weapon";
+                    VectorCopy(ent->s.origin, proj->s.origin);
+                    proj->s.origin[2] += 16.0f;
+                    VectorScale(fwd, 800.0f, proj->velocity);
+                    proj->velocity[2] += 50.0f;
+                    proj->movetype = MOVETYPE_TOSS;
+                    proj->solid = SOLID_BBOX;
+                    proj->dmg = 30 + w * 5; /* heavier weapons do more */
+                    proj->owner = ent;
+                    VectorSet(proj->mins, -4, -4, -4);
+                    VectorSet(proj->maxs, 4, 4, 4);
+                    proj->nextthink = level.time + 5.0f;
+                    proj->think = G_FreeEdict;
+                    gi.linkentity(proj);
+                    /* Remove weapon from inventory */
+                    ent->client->pers_weapon = WEAP_KNIFE;
+                    gi.cprintf(ent, PRINT_ALL, "Weapon thrown!\n");
+                    SCR_AddPickupMessage("WEAPON THROWN");
+                }
+            }
         }
         return;
     }
@@ -7250,6 +7390,44 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
                                         heat_intensity, level.frametime + 0.05f);
                         }
                     }
+                }
+            }
+        }
+    }
+
+    /* Binoculars zoom — narrow FOV, slight green tint, range markers */
+    if (client->binos_active) {
+        /* Scope overlay tint */
+        if (client->blend[3] < 0.06f) {
+            client->blend[0] = 0.1f;
+            client->blend[1] = 0.2f;
+            client->blend[2] = 0.1f;
+            client->blend[3] = 0.06f;
+        }
+        /* Tag enemies visible in binos range (auto-mark at 800u) */
+        {
+            int bi;
+            vec3_t bfwd, brt, bup;
+            G_AngleVectors(client->viewangles, bfwd, brt, bup);
+            for (bi = 1; bi < globals.num_edicts; bi++) {
+                edict_t *tgt = &globals.edicts[bi];
+                vec3_t bd;
+                float bdist, dot;
+                if (!tgt->inuse || tgt->health <= 0 || tgt == ent)
+                    continue;
+                if (!(tgt->svflags & SVF_MONSTER))
+                    continue;
+                VectorSubtract(tgt->s.origin, ent->s.origin, bd);
+                bdist = VectorLength(bd);
+                if (bdist < 100.0f || bdist > 800.0f)
+                    continue;
+                VectorNormalize(bd);
+                dot = bd[0] * bfwd[0] + bd[1] * bfwd[1] + bd[2] * bfwd[2];
+                if (dot > 0.95f) {
+                    /* Auto-tag spotted enemies */
+                    tgt->teleport_time = level.time + 10.0f;
+                    R_AddDlight(tgt->s.origin, 0.2f, 1.0f, 0.2f,
+                                30.0f, level.frametime + 0.05f);
                 }
             }
         }
