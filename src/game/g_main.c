@@ -723,6 +723,123 @@ static void RunFrame(void)
             }
         }
 
+        /* Supply crate: detect landing and provide supplies */
+        if (ent->classname && Q_stricmp(ent->classname, "supply_crate") == 0) {
+            if (ent->count == 0 && ent->groundentity) {
+                /* Landed — mark as active supply point */
+                ent->count = 1;
+                ent->movetype = MOVETYPE_NONE;
+                VectorClear(ent->velocity);
+                ent->wait = level.time + 30.0f; /* lasts 30 seconds */
+                R_AddDlight(ent->s.origin, 0.2f, 1.0f, 0.2f, 200.0f, 0.5f);
+                {
+                    int snd = gi.soundindex("world/crate_land.wav");
+                    if (snd)
+                        gi.positioned_sound(ent->s.origin, ent, CHAN_AUTO,
+                                            snd, 1.0f, ATTN_NORM, 0);
+                }
+                SCR_AddPickupMessage("SUPPLY CRATE LANDED");
+            }
+            if (ent->count == 1) {
+                /* Green beacon glow */
+                R_AddDlight(ent->s.origin, 0.1f, 0.8f, 0.1f, 80.0f,
+                            level.frametime + 0.05f);
+                /* Check if player is near to resupply */
+                {
+                    edict_t *player = &g_edicts[1];
+                    if (player->inuse && player->client && player->health > 0) {
+                        vec3_t d;
+                        float dist;
+                        VectorSubtract(player->s.origin, ent->s.origin, d);
+                        dist = VectorLength(d);
+                        if (dist < 64.0f) {
+                            /* Resupply: refill ammo + heal */
+                            int wi;
+                            for (wi = 0; wi < WEAP_COUNT; wi++) {
+                                if (player->client->ammo_max[wi] > 0 &&
+                                    player->client->ammo[wi] < player->client->ammo_max[wi]) {
+                                    player->client->ammo[wi] = player->client->ammo_max[wi];
+                                }
+                            }
+                            if (player->health < player->max_health) {
+                                player->health = player->max_health;
+                                player->client->pers_health = player->health;
+                            }
+                            gi.cprintf(player, PRINT_ALL, "Resupplied!\n");
+                            SCR_AddPickupMessage("+AMMO +HEALTH");
+                            ent->inuse = qfalse;
+                            gi.unlinkentity(ent);
+                        }
+                    }
+                }
+                /* Expire after duration */
+                if (level.time >= ent->wait) {
+                    ent->inuse = qfalse;
+                    gi.unlinkentity(ent);
+                }
+            }
+        }
+
+        /* Tripwire: laser beam detection and detonation */
+        if (ent->classname && Q_stricmp(ent->classname, "tripwire") == 0) {
+            if (level.time >= ent->wait) {
+                /* Armed — project laser beam and check for intersection */
+                vec3_t beam_end;
+                trace_t beam_tr;
+                /* Beam projects opposite to wall normal (into the room) */
+                VectorMA(ent->s.origin, 256.0f, ent->move_origin, beam_end);
+                beam_tr = gi.trace(ent->s.origin, NULL, NULL, beam_end, ent, MASK_SHOT);
+                /* Red laser visual */
+                R_AddTracer(ent->s.origin, beam_tr.endpos, 1.0f, 0.0f, 0.0f);
+                /* Small red light at emitter */
+                R_AddDlight(ent->s.origin, 1.0f, 0.0f, 0.0f, 20.0f,
+                            level.frametime + 0.05f);
+                /* Check if something crossed the beam */
+                if (beam_tr.fraction < 1.0f && beam_tr.ent &&
+                    beam_tr.ent != ent->owner &&
+                    beam_tr.ent->health > 0 && beam_tr.ent->takedamage) {
+                    /* BOOM — detonate */
+                    {
+                        int tw_i;
+                        float tw_radius = (float)ent->dmg_radius;
+                        vec3_t tw_up = {0, 0, 1};
+                        R_ParticleEffect(ent->s.origin, tw_up, 3, 25);
+                        R_AddDlight(ent->s.origin, 1.0f, 0.6f, 0.2f, 300.0f, 0.5f);
+                        SCR_AddScreenShake(0.3f, 0.25f);
+                        {
+                            int snd = gi.soundindex("weapons/explosion.wav");
+                            if (snd)
+                                gi.positioned_sound(ent->s.origin, ent, CHAN_AUTO,
+                                                    snd, 1.0f, ATTN_NORM, 0);
+                        }
+                        /* Radius damage */
+                        for (tw_i = 1; tw_i < globals.num_edicts; tw_i++) {
+                            edict_t *v = &globals.edicts[tw_i];
+                            vec3_t dd;
+                            float ddist;
+                            if (!v->inuse || v->health <= 0 || !v->takedamage)
+                                continue;
+                            VectorSubtract(v->s.origin, ent->s.origin, dd);
+                            ddist = VectorLength(dd);
+                            if (ddist < tw_radius) {
+                                int tw_dmg = (int)(ent->dmg * (1.0f - ddist / tw_radius));
+                                if (tw_dmg < 1) tw_dmg = 1;
+                                v->health -= tw_dmg;
+                                if (v->client)
+                                    v->client->pers_health = v->health;
+                                if (v->health <= 0 && v->die)
+                                    v->die(v, ent, ent->owner, tw_dmg, ent->s.origin);
+                                else if (v->pain)
+                                    v->pain(v, ent, 0, tw_dmg);
+                            }
+                        }
+                    }
+                    ent->inuse = qfalse;
+                    gi.unlinkentity(ent);
+                }
+            }
+        }
+
         /* Run physics based on movetype */
         G_RunEntity(ent);
     }
@@ -2518,6 +2635,104 @@ static void ClientCommand(edict_t *ent)
             }
         } else {
             gi.cprintf(ent, PRINT_ALL, "Thermal vision OFF\n");
+        }
+        return;
+    }
+
+    /* Supply airdrop: call in an ammo/health crate from above */
+    if (Q_stricmp(cmd, "airdrop") == 0 || Q_stricmp(cmd, "supplydrop") == 0) {
+        if (ent->deadflag)
+            return;
+        /* Cooldown via move_angles[2] (reuse smoke cooldown for player) */
+        if (ent->move_angles[2] > level.time) {
+            gi.cprintf(ent, PRINT_ALL, "Supply drop not ready (%.0fs).\n",
+                       ent->move_angles[2] - level.time);
+            return;
+        }
+        {
+            vec3_t drop_fwd, drop_rt, drop_up, drop_pos;
+            edict_t *crate;
+
+            G_AngleVectors(ent->client->viewangles, drop_fwd, drop_rt, drop_up);
+            VectorCopy(ent->s.origin, drop_pos);
+            VectorMA(drop_pos, 128, drop_fwd, drop_pos); /* 128u ahead */
+            drop_pos[2] += 512.0f; /* spawn high above */
+
+            crate = G_AllocEdict();
+            if (crate) {
+                crate->classname = "supply_crate";
+                VectorCopy(drop_pos, crate->s.origin);
+                crate->movetype = MOVETYPE_TOSS;
+                crate->solid = SOLID_BBOX;
+                crate->takedamage = DAMAGE_NO;
+                crate->health = 1;
+                crate->count = 0; /* 0=falling, 1=landed */
+                crate->owner = ent;
+                crate->velocity[2] = -200.0f; /* falling speed */
+                VectorSet(crate->mins, -16, -16, 0);
+                VectorSet(crate->maxs, 16, 16, 24);
+                crate->s.modelindex = gi.modelindex("models/objects/crate/tris.md2");
+                gi.linkentity(crate);
+
+                gi.cprintf(ent, PRINT_ALL, "Supply drop incoming!\n");
+                SCR_AddPickupMessage("SUPPLY DROP CALLED");
+                {
+                    int snd = gi.soundindex("world/radio_static.wav");
+                    if (snd)
+                        gi.sound(ent, CHAN_VOICE, snd, 1.0f, ATTN_NORM, 0);
+                }
+                ent->move_angles[2] = level.time + 45.0f; /* 45s cooldown */
+            }
+        }
+        return;
+    }
+
+    /* Tripwire trap: deploy a laser tripwire explosive */
+    if (Q_stricmp(cmd, "tripwire") == 0 || Q_stricmp(cmd, "lasertrap") == 0) {
+        if (ent->deadflag)
+            return;
+        if (ent->client->ammo[WEAP_C4] <= 0) {
+            gi.cprintf(ent, PRINT_ALL, "Need C4 for tripwire.\n");
+            return;
+        }
+        {
+            vec3_t tw_fwd, tw_rt, tw_up, tw_start, tw_end;
+            trace_t tw_tr;
+            edict_t *tw;
+
+            G_AngleVectors(ent->client->viewangles, tw_fwd, tw_rt, tw_up);
+            VectorCopy(ent->s.origin, tw_start);
+            tw_start[2] += ent->client->viewheight;
+            VectorMA(tw_start, 64, tw_fwd, tw_end);
+
+            tw_tr = gi.trace(tw_start, NULL, NULL, tw_end, ent, MASK_SOLID);
+            if (tw_tr.fraction >= 1.0f) {
+                gi.cprintf(ent, PRINT_ALL, "Must place tripwire on a wall.\n");
+                return;
+            }
+
+            tw = G_AllocEdict();
+            if (tw) {
+                tw->classname = "tripwire";
+                VectorCopy(tw_tr.endpos, tw->s.origin);
+                tw->movetype = MOVETYPE_NONE;
+                tw->solid = SOLID_NOT;
+                tw->owner = ent;
+                tw->dmg = 80; /* explosion damage */
+                tw->dmg_radius = 200;
+                tw->wait = level.time + 1.5f; /* arm time */
+                /* Store beam direction (along wall surface normal) */
+                VectorCopy(tw_tr.plane.normal, tw->move_origin);
+                gi.linkentity(tw);
+
+                ent->client->ammo[WEAP_C4]--;
+                gi.cprintf(ent, PRINT_ALL, "Tripwire placed — arms in 1.5s.\n");
+                {
+                    int snd = gi.soundindex("weapons/c4_plant.wav");
+                    if (snd)
+                        gi.sound(tw, CHAN_ITEM, snd, 0.8f, ATTN_NORM, 0);
+                }
+            }
         }
         return;
     }

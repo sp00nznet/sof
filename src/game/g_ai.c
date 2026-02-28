@@ -39,6 +39,7 @@ static void radioman_call_reinforcements(edict_t *self);
 static void AI_TryBreach(edict_t *self);
 static void AI_LeapfrogAdvance(edict_t *self);
 static void AI_BlindFire(edict_t *self);
+static void AI_SuppressionFire(edict_t *self);
 static void AI_DragWounded(edict_t *self);
 void AI_SetupRappel(edict_t *ent);
 void AI_AllyDied(vec3_t death_origin);
@@ -1220,6 +1221,13 @@ static void ai_think_chase(edict_t *self)
     if ((self->ai_flags & AI_LOST_SIGHT) && self->max_health >= 60 &&
         self->move_angles[2] < level.time) {
         AI_BlindFire(self);
+    }
+
+    /* Suppression fire: heavy soldiers pin down the player with bursts */
+    if (!(self->ai_flags & AI_LOST_SIGHT) && self->max_health >= 100 &&
+        dist > 200.0f && dist < 600.0f &&
+        self->move_angles[2] < level.time && (rand() % 8) == 0) {
+        AI_SuppressionFire(self);
     }
 
     /* Coordinated breach: try to breach doors between us and enemy */
@@ -3363,6 +3371,67 @@ static void AI_BlindFire(edict_t *self)
 
     /* Fire 2-3 shots then pause */
     self->move_angles[2] = level.time + 0.2f + ((float)(rand() % 30)) * 0.01f;
+}
+
+/* ==========================================================================
+   AI Suppression Fire — sustained burst to pin down a player in cover.
+   Heavy soldiers (100+ HP) fire rapid bursts at the player's cover position
+   to prevent them from peeking, while allies can flank.
+   ========================================================================== */
+
+static void AI_SuppressionFire(edict_t *self)
+{
+    vec3_t aim_dir, aim_end, fire_origin;
+    trace_t sftr;
+    int burst;
+
+    if (!self->enemy || !self->enemy->inuse || self->enemy->health <= 0)
+        return;
+
+    /* Only suppress when we CAN see the enemy (pin them in place) */
+    if (!AI_Visible(self, self->enemy))
+        return;
+
+    /* Fire a burst of 3-5 rapid shots near the enemy */
+    VectorSubtract(self->enemy->s.origin, self->s.origin, aim_dir);
+    VectorNormalize(aim_dir);
+    VectorCopy(self->s.origin, fire_origin);
+    fire_origin[2] += 36.0f;  /* eye height */
+
+    for (burst = 0; burst < 3 + (rand() % 3); burst++) {
+        vec3_t spray;
+        spray[0] = aim_dir[0] + ((float)(rand() % 80) - 40.0f) * 0.002f;
+        spray[1] = aim_dir[1] + ((float)(rand() % 80) - 40.0f) * 0.002f;
+        spray[2] = aim_dir[2] + ((float)(rand() % 40) - 20.0f) * 0.002f;
+        VectorMA(fire_origin, 1024.0f, spray, aim_end);
+        sftr = gi.trace(fire_origin, NULL, NULL, aim_end, self, MASK_SHOT);
+        R_AddTracer(fire_origin, sftr.endpos, 1.0f, 0.8f, 0.3f);
+
+        /* Impact effects */
+        if (sftr.fraction < 1.0f) {
+            R_ParticleEffect(sftr.endpos, sftr.plane.normal, 0, 3);
+            if (sftr.ent && sftr.ent->takedamage && sftr.ent->health > 0) {
+                int sf_dmg = (self->dmg ? self->dmg : 8) / 2;
+                if (sf_dmg < 2) sf_dmg = 2;
+                sftr.ent->health -= sf_dmg;
+                if (sftr.ent->client) {
+                    sftr.ent->client->pers_health = sftr.ent->health;
+                    sftr.ent->client->blend[0] = 1.0f;
+                    sftr.ent->client->blend[3] = 0.15f;
+                    /* Suppression: briefly slow player and blur */
+                    sftr.ent->client->concussion_end = level.time + 0.3f;
+                }
+                if (sftr.ent->health <= 0 && sftr.ent->die)
+                    sftr.ent->die(sftr.ent, self, self, sf_dmg, sftr.endpos);
+            }
+        }
+    }
+
+    if (snd_monster_fire)
+        gi.sound(self, CHAN_WEAPON, snd_monster_fire, 1.0f, ATTN_NORM, 0);
+
+    /* Long cooldown — suppression is expensive */
+    self->move_angles[2] = level.time + 1.5f + ((float)(rand() % 50)) * 0.01f;
 }
 
 /* ==========================================================================
