@@ -285,6 +285,8 @@ static void SP_func_floor_break(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_wall_break(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_drawbridge(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_misc_sea_mine(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_trigger_quicksand(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_fence(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_cover_point(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_trigger_monster_spawn(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_fallback_point(edict_t *ent, epair_t *pairs, int num_pairs);
@@ -669,6 +671,14 @@ static spawn_func_t spawn_funcs[] = {
     { "item_armor_jacket",          SP_item_pickup },
     { "item_armor_shard",           SP_item_pickup },
     { "item_ammo_crate",            SP_item_pickup },
+
+    /* Quicksand/mud terrain */
+    { "trigger_quicksand",          SP_trigger_quicksand },
+    { "trigger_mud",                SP_trigger_quicksand },
+
+    /* Destructible fence */
+    { "func_fence",                 SP_func_fence },
+    { "func_chainlink",             SP_func_fence },
 
     /* Keys */
     { "key_red",                    SP_item_pickup },
@@ -7882,6 +7892,153 @@ void G_InitFireSpread(void)
             e->nextthink = level.time + 3.0f;  /* start spreading after 3s */
         }
     }
+}
+
+/* ==========================================================================
+   trigger_quicksand — Mud/quicksand terrain that slows and sinks players
+   ========================================================================== */
+
+static void quicksand_touch(edict_t *self, edict_t *other,
+                             void *plane, csurface_t *surf)
+{
+    (void)plane; (void)surf;
+    if (!other || !other->client || other->deadflag)
+        return;
+
+    /* Slow horizontal movement to 30% */
+    other->velocity[0] *= 0.3f;
+    other->velocity[1] *= 0.3f;
+
+    /* Sink downward — pull player down slowly */
+    if (other->velocity[2] >= 0)
+        other->velocity[2] = -30.0f;
+
+    /* Struggle: jumping while in quicksand gives a small boost */
+    if (other->client->ps.pm_flags & PMF_JUMP_HELD)
+        other->velocity[2] = 40.0f;
+
+    /* Mud screen tint — brown overlay */
+    other->client->blend[0] = 0.4f;
+    other->client->blend[1] = 0.3f;
+    other->client->blend[2] = 0.1f;
+    other->client->blend[3] = 0.2f;
+
+    /* Take small damage if fully submerged (below trigger top) */
+    if (other->s.origin[2] < self->absmax[2] - 40.0f) {
+        if (level.time >= other->client->next_env_damage) {
+            other->health -= 2;
+            other->client->pers_health = other->health;
+            other->client->next_env_damage = level.time + 1.0f;
+            gi.cprintf(other, PRINT_ALL, "You're sinking!\n");
+            if (other->health <= 0 && other->die)
+                other->die(other, self, self, 2, other->s.origin);
+        }
+    }
+}
+
+static void SP_trigger_quicksand(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+    ent->classname = "trigger_quicksand";
+    ent->solid = SOLID_TRIGGER;
+    ent->movetype = MOVETYPE_NONE;
+    ent->touch = quicksand_touch;
+    ent->svflags |= SVF_NOCLIENT;  /* invisible trigger */
+
+    if (ent->mins[0] == 0 && ent->maxs[0] == 0) {
+        VectorSet(ent->mins, -128, -128, -16);
+        VectorSet(ent->maxs, 128, 128, 16);
+    }
+
+    gi.linkentity(ent);
+    gi.dprintf("  trigger_quicksand at (%.0f %.0f %.0f)\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
+}
+
+/* ==========================================================================
+   func_fence — Destructible chain-link fence with debris
+   ========================================================================== */
+
+static void fence_debris_expire(edict_t *self)
+{
+    self->inuse = qfalse;
+    self->solid = SOLID_NOT;
+    self->svflags |= SVF_NOCLIENT;
+    gi.unlinkentity(self);
+}
+
+static void fence_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
+                       int damage, vec3_t point)
+{
+    vec3_t up = {0, 0, 1};
+    int i;
+    (void)inflictor; (void)attacker; (void)damage; (void)point;
+
+    /* Metal debris particles */
+    R_ParticleEffect(self->s.origin, up, 8, 20);  /* metal sparks */
+
+    /* Spawn fence debris fragments */
+    for (i = 0; i < 4; i++) {
+        edict_t *debris = G_AllocEdict();
+        if (!debris)
+            break;
+        debris->classname = "fence_debris";
+        debris->movetype = MOVETYPE_TOSS;
+        debris->solid = SOLID_NOT;
+        VectorCopy(self->s.origin, debris->s.origin);
+        debris->velocity[0] = gi.flrand(-100, 100);
+        debris->velocity[1] = gi.flrand(-100, 100);
+        debris->velocity[2] = gi.flrand(50, 150);
+        debris->nextthink = level.time + 3.0f;
+        debris->think = fence_debris_expire;
+        debris->svflags &= ~SVF_NOCLIENT;
+        gi.linkentity(debris);
+    }
+
+    /* Play metal break sound */
+    {
+        int snd = gi.soundindex("world/metal_break.wav");
+        if (snd)
+            gi.sound(self, CHAN_AUTO, snd, 1.0f, ATTN_NORM, 0);
+    }
+
+    /* Fire targets */
+    if (self->target) {
+        extern game_export_t globals;
+        int j;
+        for (j = 1; j < globals.num_edicts; j++) {
+            edict_t *t = &globals.edicts[j];
+            if (!t->inuse || !t->targetname)
+                continue;
+            if (Q_stricmp(t->targetname, self->target) == 0 && t->use)
+                t->use(t, self, self);
+        }
+    }
+
+    /* Remove the fence */
+    self->solid = SOLID_NOT;
+    self->svflags |= SVF_NOCLIENT;
+    self->takedamage = DAMAGE_NO;
+    gi.linkentity(self);
+}
+
+static void SP_func_fence(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+    ent->classname = "func_fence";
+    ent->solid = SOLID_BSP;
+    ent->movetype = MOVETYPE_PUSH;
+
+    if (ent->health <= 0)
+        ent->health = 30;  /* fences are fragile */
+    ent->max_health = ent->health;
+    ent->takedamage = DAMAGE_YES;
+    ent->die = fence_die;
+
+    gi.linkentity(ent);
+    gi.dprintf("  func_fence at (%.0f %.0f %.0f) hp=%d\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->health);
 }
 
 /* ==========================================================================

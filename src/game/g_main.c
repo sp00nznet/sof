@@ -1476,6 +1476,7 @@ static void ClientCommand(edict_t *ent)
             "dive            - Slow-mo dive\n"
             "inspect         - Inspect weapon\n"
             "nightvision     - Toggle NV goggles\n"
+            "claymore        - Place directional mine\n"
             "flashbang       - Throw flashbang\n"
             "+leanleft/right - Lean\n"
             "altfire         - Toggle alt fire\n"
@@ -1544,6 +1545,51 @@ static void ClientCommand(edict_t *ent)
                 gi.cprintf(ent, PRINT_ALL, "%s camo: %s\n",
                            weapon_names[w],
                            camo_names[ent->client->weapon_camo[w]]);
+            }
+        }
+        return;
+    }
+
+    /* Claymore mine: player-placed directional explosive */
+    if (Q_stricmp(cmd, "claymore") == 0 || Q_stricmp(cmd, "mine") == 0) {
+        if (ent->deadflag)
+            return;
+        if (ent->client->ammo[WEAP_GRENADE] < 1) {
+            gi.cprintf(ent, PRINT_ALL, "No explosives to place.\n");
+            return;
+        }
+        {
+            edict_t *mine = G_AllocEdict();
+            if (mine) {
+                vec3_t fwd, rt, up_v;
+                G_AngleVectors(ent->client->viewangles, fwd, rt, up_v);
+
+                mine->classname = "claymore_mine";
+                mine->solid = SOLID_TRIGGER;
+                mine->movetype = MOVETYPE_NONE;
+                VectorCopy(ent->s.origin, mine->s.origin);
+                mine->s.origin[2] -= 20.0f;  /* place on ground */
+                VectorCopy(fwd, mine->move_origin);  /* store facing direction */
+                mine->owner = ent;
+                mine->dmg = 120;
+                mine->health = 20;  /* can be shot to destroy */
+                mine->takedamage = DAMAGE_YES;
+                mine->die = NULL;  /* just remove on destruction */
+                VectorSet(mine->mins, -4, -4, 0);
+                VectorSet(mine->maxs, 4, 4, 8);
+                mine->nextthink = level.time + 1.5f;  /* arm delay */
+                mine->think = NULL;  /* armed after delay */
+                mine->count = 0;  /* 0=arming, 1=armed */
+
+                gi.linkentity(mine);
+                ent->client->ammo[WEAP_GRENADE]--;
+
+                {
+                    int snd = gi.soundindex("weapons/c4_plant.wav");
+                    if (snd)
+                        gi.sound(ent, CHAN_ITEM, snd, 1.0f, ATTN_NORM, 0);
+                }
+                SCR_AddPickupMessage("Claymore placed. Faces forward.");
             }
         }
         return;
@@ -5202,6 +5248,92 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
     if (client->weapon_heat > 0 && !client->weapon_overheated) {
         client->weapon_heat -= 0.15f * level.frametime;  /* cools in ~6.5s idle */
         if (client->weapon_heat < 0) client->weapon_heat = 0;
+    }
+
+    /* Weapon overheat barrel glow visual — orange-red dlight when heat > 50% */
+    if (client->weapon_heat > 0.5f) {
+        vec3_t muzzle;
+        float glow = (client->weapon_heat - 0.5f) * 2.0f;  /* 0..1 ramp */
+        if (glow > 1.0f) glow = 1.0f;
+        VectorCopy(ent->s.origin, muzzle);
+        muzzle[2] += client->viewheight;
+        R_AddDlight(muzzle, 1.0f, 0.3f + glow * 0.2f, 0.05f,
+                    40.0f + glow * 60.0f, 0.15f);
+    }
+
+    /* Claymore mine arming + proximity check */
+    {
+        extern game_export_t globals;
+        int i;
+        for (i = 0; i < globals.num_edicts; i++) {
+            edict_t *mine = &globals.edicts[i];
+            if (!mine->inuse || !mine->classname)
+                continue;
+            if (Q_stricmp(mine->classname, "claymore_mine") != 0)
+                continue;
+            if (mine->count == 0 && level.time >= mine->nextthink) {
+                mine->count = 1;  /* armed */
+                {
+                    int snd = gi.soundindex("weapons/arming.wav");
+                    if (snd)
+                        gi.sound(mine, CHAN_AUTO, snd, 0.5f, ATTN_NORM, 0);
+                }
+            }
+            if (mine->count == 1) {
+                /* Check for enemies in front within 200 units */
+                edict_t *touch[32];
+                vec3_t detect_mins, detect_maxs;
+                int j, n_touch;
+                VectorSet(detect_mins,
+                          mine->s.origin[0] - 200,
+                          mine->s.origin[1] - 200,
+                          mine->s.origin[2] - 32);
+                VectorSet(detect_maxs,
+                          mine->s.origin[0] + 200,
+                          mine->s.origin[1] + 200,
+                          mine->s.origin[2] + 64);
+                n_touch = gi.BoxEdicts(detect_mins, detect_maxs, touch, 32, 1);
+                for (j = 0; j < n_touch; j++) {
+                    edict_t *targ = touch[j];
+                    if (targ == mine || targ == mine->owner)
+                        continue;
+                    if (!targ->inuse || targ->health <= 0)
+                        continue;
+                    if (!(targ->svflags & SVF_MONSTER) && !targ->client)
+                        continue;
+                    /* Directional check: target must be in front cone */
+                    {
+                        vec3_t to_targ;
+                        float dot;
+                        VectorSubtract(targ->s.origin, mine->s.origin, to_targ);
+                        to_targ[2] = 0;
+                        VectorNormalize(to_targ);
+                        dot = mine->move_origin[0] * to_targ[0]
+                            + mine->move_origin[1] * to_targ[1];
+                        if (dot > 0.3f) {
+                            /* BOOM — directional blast */
+                            vec3_t up = {0, 0, 1};
+                            R_ParticleEffect(mine->s.origin, up, 2, 40);
+                            R_AddDlight(mine->s.origin, 1.0f, 0.5f, 0.1f,
+                                        400.0f, 0.4f);
+                            SCR_AddScreenShake(0.4f, 0.25f);
+                            {
+                                int snd = gi.soundindex("weapons/explode.wav");
+                                if (snd)
+                                    gi.sound(mine, CHAN_AUTO, snd, 1.0f,
+                                             ATTN_NONE, 0);
+                            }
+                            T_RadiusDamage(mine, mine->owner, 120.0f, 200.0f);
+                            mine->inuse = qfalse;
+                            mine->solid = SOLID_NOT;
+                            mine->svflags |= SVF_NOCLIENT;
+                            gi.linkentity(mine);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /* Coop revive: downed player bleedout timer */
