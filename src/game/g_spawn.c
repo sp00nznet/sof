@@ -278,6 +278,7 @@ static void SP_func_floodlight(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_barrier(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_crate(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_vent(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_laser_trip(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_cover_point(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_trigger_monster_spawn(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_fallback_point(edict_t *ent, epair_t *pairs, int num_pairs);
@@ -590,6 +591,10 @@ static spawn_func_t spawn_funcs[] = {
     /* Breakable vent cover */
     { "func_vent",                  SP_func_vent },
     { "misc_vent",                  SP_func_vent },
+
+    /* Laser tripwire */
+    { "func_laser_trip",            SP_func_laser_trip },
+    { "trigger_laser",              SP_func_laser_trip },
 
     /* AI cover node */
     { "cover_point",                SP_cover_point },
@@ -3032,6 +3037,32 @@ static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
                 t->health -= explosion_dmg;
                 if (t->health <= 0 && t->die)
                     t->die(t, self, attacker, explosion_dmg, self->s.origin);
+            }
+        }
+    }
+
+    /* Chain reaction: trigger nearby explosive barrels */
+    {
+        extern game_export_t globals;
+        int ci;
+        for (ci = 1; ci < globals.num_edicts; ci++) {
+            edict_t *other = &globals.edicts[ci];
+            vec3_t cdiff;
+            float cdist;
+            if (!other->inuse || other == self || other->health <= 0)
+                continue;
+            if (!other->die || other->takedamage != DAMAGE_YES)
+                continue;
+            if (!other->classname || Q_stricmp(other->classname, "func_explosive") != 0)
+                continue;
+            VectorSubtract(other->s.origin, self->s.origin, cdiff);
+            cdist = VectorLength(cdiff);
+            if (cdist < 256.0f) {
+                /* Detonate nearby barrel with slight delay via damage */
+                int chain_dmg = other->health + 10;
+                other->health -= chain_dmg;
+                if (other->health <= 0 && other->die)
+                    other->die(other, self, attacker, chain_dmg, self->s.origin);
             }
         }
     }
@@ -7332,6 +7363,96 @@ static void SP_func_portcullis(edict_t *ent, epair_t *pairs, int num_pairs)
     gi.dprintf("  func_portcullis at (%.0f %.0f %.0f) lip=%.0f speed=%.0f\n",
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
                lip, ent->speed);
+}
+
+/* ==========================================================================
+   func_laser_trip — Laser tripwire beam. Fires an invisible trace from
+   its origin along its angle direction. When an entity breaks the beam,
+   fires its targets (alarm, trap, explosion, etc). Can be toggled.
+   Keys: "angle" = beam direction (yaw), "dmg" = optional damage on trip,
+         "target" = entities to fire when tripped, "wait" = rearm delay
+   ========================================================================== */
+
+static void laser_trip_think(edict_t *self)
+{
+    vec3_t beam_dir, beam_end;
+    trace_t tr;
+    float yaw;
+
+    self->nextthink = level.time + 0.1f;
+
+    if (self->count == 0)  /* disabled */
+        return;
+
+    yaw = self->s.angles[1] * 3.14159f / 180.0f;
+    beam_dir[0] = cosf(yaw);
+    beam_dir[1] = sinf(yaw);
+    beam_dir[2] = 0;
+
+    VectorMA(self->s.origin, 1024.0f, beam_dir, beam_end);
+    tr = gi.trace(self->s.origin, NULL, NULL, beam_end, self, MASK_PLAYERSOLID);
+
+    /* Draw faint red laser beam */
+    R_AddTracer(self->s.origin, tr.endpos, 1.0f, 0.0f, 0.0f);
+
+    if (tr.fraction < 1.0f && tr.ent &&
+        (tr.ent->client || (tr.ent->svflags & SVF_MONSTER))) {
+        /* Beam broken! */
+        if (self->target)
+            G_UseTargets(self, self->target);
+
+        /* Optional damage */
+        if (self->dmg > 0 && tr.ent->takedamage && tr.ent->health > 0) {
+            tr.ent->health -= self->dmg;
+            if (tr.ent->health <= 0 && tr.ent->die)
+                tr.ent->die(tr.ent, self, self, self->dmg, tr.endpos);
+        }
+
+        /* Alarm sound */
+        {
+            int snd = gi.soundindex("world/alarm.wav");
+            if (snd)
+                gi.sound(self, CHAN_VOICE, snd, 1.0f, ATTN_NORM, 0);
+        }
+
+        /* Disable until rearm */
+        self->count = 0;
+        if (self->wait > 0)
+            self->nextthink = level.time + self->wait;
+    }
+}
+
+static void laser_trip_use(edict_t *self, edict_t *other, edict_t *activator)
+{
+    (void)other; (void)activator;
+    self->count = !self->count;  /* toggle on/off */
+    gi.dprintf("laser_trip %s\n", self->count ? "armed" : "disarmed");
+}
+
+static void SP_func_laser_trip(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *v;
+
+    ent->classname = "func_laser_trip";
+    ent->solid = SOLID_NOT;
+    ent->movetype = MOVETYPE_NONE;
+    ent->svflags |= SVF_NOCLIENT;
+
+    v = ED_FindValue(pairs, num_pairs, "dmg");
+    ent->dmg = v ? atoi(v) : 0;
+
+    v = ED_FindValue(pairs, num_pairs, "wait");
+    ent->wait = v ? (float)atof(v) : 3.0f;
+
+    ent->count = 1;  /* starts armed */
+    ent->think = laser_trip_think;
+    ent->nextthink = level.time + 1.0f;
+    ent->use = laser_trip_use;
+
+    gi.linkentity(ent);
+    gi.dprintf("  func_laser_trip at (%.0f %.0f %.0f) angle=%.0f dmg=%d\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->s.angles[1], ent->dmg);
 }
 
 /* ==========================================================================

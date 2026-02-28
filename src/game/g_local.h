@@ -541,6 +541,12 @@ struct gclient_s {
     /* Melee combo */
     int             melee_combo;           /* consecutive knife hits (resets on miss/timeout) */
     float           melee_combo_time;      /* level.time of last knife hit */
+
+    /* Bipod deployment */
+    qboolean        bipod_deployed;        /* machinegun bipod deployed on surface */
+
+    /* Weapon camo/skin */
+    int             weapon_camo[WEAP_COUNT]; /* cosmetic skin index per weapon (0=default) */
 };
 
 /* ==========================================================================

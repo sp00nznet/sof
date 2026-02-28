@@ -1411,6 +1411,53 @@ static void ClientCommand(edict_t *ent)
         return;
     }
 
+    /* Bipod deploy: toggle machinegun bipod for accuracy/recoil bonus */
+    if (Q_stricmp(cmd, "deploy") == 0 || Q_stricmp(cmd, "bipod") == 0) {
+        int w = ent->client->pers_weapon;
+        if (ent->deadflag)
+            return;
+        if (w != WEAP_MACHINEGUN && w != WEAP_ASSAULT) {
+            gi.cprintf(ent, PRINT_ALL, "Only machineguns and assault rifles can deploy a bipod.\n");
+            return;
+        }
+        if (ent->client->bipod_deployed) {
+            ent->client->bipod_deployed = qfalse;
+            gi.cprintf(ent, PRINT_ALL, "Bipod retracted.\n");
+        } else {
+            /* Must be crouching or prone to deploy */
+            if (ent->client->viewheight >= 20.0f && !ent->client->prone) {
+                gi.cprintf(ent, PRINT_ALL, "Crouch or go prone to deploy bipod.\n");
+                return;
+            }
+            ent->client->bipod_deployed = qtrue;
+            ent->client->recoil_accum = 0;  /* reset recoil on deploy */
+            gi.cprintf(ent, PRINT_ALL, "Bipod deployed — reduced recoil and spread.\n");
+            {
+                int snd = gi.soundindex("weapons/bipod_deploy.wav");
+                if (snd)
+                    gi.sound(ent, CHAN_ITEM, snd, 1.0f, ATTN_NORM, 0);
+            }
+        }
+        return;
+    }
+
+    /* Weapon camo: cycle cosmetic skin for current weapon */
+    if (Q_stricmp(cmd, "camo") == 0 || Q_stricmp(cmd, "skin") == 0) {
+        int w = ent->client->pers_weapon;
+        if (w > 0 && w < WEAP_COUNT) {
+            ent->client->weapon_camo[w] = (ent->client->weapon_camo[w] + 1) % 5;
+            {
+                static const char *camo_names[] = {
+                    "Default", "Desert", "Woodland", "Arctic", "Urban"
+                };
+                gi.cprintf(ent, PRINT_ALL, "%s camo: %s\n",
+                           weapon_names[w],
+                           camo_names[ent->client->weapon_camo[w]]);
+            }
+        }
+        return;
+    }
+
     if (Q_stricmp(cmd, "plantc4") == 0 || Q_stricmp(cmd, "c4") == 0) {
         if (ent->deadflag)
             return;
@@ -3212,6 +3259,12 @@ static void G_FireHitscan(edict_t *ent)
         /* Prone: maximum stability */
         if (ent->client->prone)
             spread *= 0.4f;
+
+        /* Bipod deployed: near-zero recoil and tight spread */
+        if (ent->client->bipod_deployed) {
+            spread *= 0.3f;
+            ent->client->recoil_accum *= 0.2f;
+        }
 
         /* Moving increases spread (check velocity magnitude) */
         {
@@ -5233,6 +5286,17 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
             client->viewangles[2] = lean_angle;  /* roll */
         } else {
             client->viewangles[2] = 0;
+        }
+    }
+
+    /* Auto-retract bipod when standing up or moving */
+    if (client->bipod_deployed && !ent->deadflag) {
+        float speed_sq = ent->velocity[0] * ent->velocity[0] +
+                         ent->velocity[1] * ent->velocity[1];
+        if (speed_sq > 50.0f * 50.0f ||
+            (client->viewheight >= 20.0f && !client->prone)) {
+            client->bipod_deployed = qfalse;
+            gi.cprintf(ent, PRINT_ALL, "Bipod retracted.\n");
         }
     }
 
