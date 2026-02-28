@@ -31,6 +31,8 @@ static void AI_FormationSpread(edict_t *self);
 static void AI_MedicThink(edict_t *self);
 static void AI_TryBreach(edict_t *self);
 static void AI_LeapfrogAdvance(edict_t *self);
+static void AI_BlindFire(edict_t *self);
+static void AI_DragWounded(edict_t *self);
 void AI_AllyDied(vec3_t death_origin);
 
 /* Monster sound indices — precached in monster_start */
@@ -1130,6 +1132,12 @@ static void ai_think_chase(edict_t *self)
             self->nextthink = level.time + FRAMETIME;
             return;
         }
+    }
+
+    /* Blind fire: shoot around corners without exposing */
+    if ((self->ai_flags & AI_LOST_SIGHT) && self->max_health >= 60 &&
+        self->move_angles[2] < level.time) {
+        AI_BlindFire(self);
     }
 
     /* Coordinated breach: try to breach doors between us and enemy */
@@ -2249,6 +2257,12 @@ static void AI_MedicThink(edict_t *self)
     }
 
     if (best_patient) {
+        /* If patient is critically wounded and under fire, drag to cover first */
+        if (best_patient->health < best_patient->max_health * 0.3f &&
+            best_patient->enemy && best_dist < 128.0f) {
+            AI_DragWounded(self);
+        }
+
         /* Move toward wounded ally */
         AI_MoveToward(self, best_patient->s.origin, AI_CHASE_SPEED);
 
@@ -2661,5 +2675,123 @@ void AI_HearGunshot(vec3_t origin, edict_t *shooter, qboolean silenced)
         e->count = AI_STATE_ALERT;
         VectorCopy(origin, e->move_origin);  /* remember sound location */
         e->nextthink = level.time + 0.3f + ((float)(rand() % 50)) * 0.01f;
+    }
+}
+
+/* ==========================================================================
+   AI Blind Fire — shoot around corners/cover without exposing.
+   Monster stays behind cover and fires toward last known enemy position
+   with heavily reduced accuracy. Creates suppressive pressure.
+   ========================================================================== */
+
+static void AI_BlindFire(edict_t *self)
+{
+    vec3_t aim_dir, aim_end, offset;
+    trace_t bftr;
+
+    if (!self->enemy || !self->enemy->inuse)
+        return;
+
+    /* Only blind fire if we can't see the enemy */
+    if (AI_Visible(self, self->enemy))
+        return;
+
+    /* Fire toward last known position with heavy spread */
+    VectorSubtract(self->move_origin, self->s.origin, aim_dir);
+    VectorNormalize(aim_dir);
+
+    /* Offset the firing position sideways (shooting around corner) */
+    offset[0] = aim_dir[1] * 16.0f;  /* perpendicular offset */
+    offset[1] = -aim_dir[0] * 16.0f;
+    offset[2] = 8.0f;  /* slight upward */
+
+    /* Very inaccurate — blind firing */
+    aim_dir[0] += ((float)(rand() % 200) - 100.0f) * 0.003f;
+    aim_dir[1] += ((float)(rand() % 200) - 100.0f) * 0.003f;
+    aim_dir[2] += ((float)(rand() % 100) - 50.0f) * 0.002f;
+
+    {
+        vec3_t fire_origin;
+        VectorAdd(self->s.origin, offset, fire_origin);
+        VectorMA(fire_origin, 1024.0f, aim_dir, aim_end);
+        bftr = gi.trace(fire_origin, NULL, NULL, aim_end, self, MASK_SHOT);
+        R_AddTracer(fire_origin, bftr.endpos, 1.0f, 0.7f, 0.3f);
+    }
+
+    if (snd_monster_fire)
+        gi.sound(self, CHAN_WEAPON, snd_monster_fire, 0.8f, ATTN_NORM, 0);
+
+    /* Can still hit if unlucky for the player */
+    if (bftr.ent && bftr.ent->takedamage && bftr.ent->health > 0) {
+        int bf_dmg = (self->dmg ? self->dmg : 8) / 3;  /* 1/3 damage */
+        if (bf_dmg < 1) bf_dmg = 1;
+        bftr.ent->health -= bf_dmg;
+        R_ParticleEffect(bftr.endpos, bftr.plane.normal, 1, 3);
+        if (bftr.ent->client) {
+            bftr.ent->client->pers_health = bftr.ent->health;
+            bftr.ent->client->blend[0] = 1.0f;
+            bftr.ent->client->blend[3] = 0.1f;
+        }
+    }
+
+    /* Fire 2-3 shots then pause */
+    self->move_angles[2] = level.time + 0.2f + ((float)(rand() % 30)) * 0.01f;
+}
+
+/* ==========================================================================
+   AI Drag Wounded — medic-type monsters drag downed allies to cover.
+   Finds nearest wounded ally and pulls them toward a safe location.
+   ========================================================================== */
+
+static void AI_DragWounded(edict_t *self)
+{
+    extern game_export_t globals;
+    edict_t *wounded = NULL;
+    float best_dist = 512.0f;
+    int di;
+
+    /* Find nearest wounded ally */
+    for (di = 1; di < globals.num_edicts; di++) {
+        edict_t *a = &globals.edicts[di];
+        vec3_t dd;
+        float d;
+        if (a == self || !a->inuse)
+            continue;
+        if (!(a->svflags & SVF_MONSTER))
+            continue;
+        /* Ally must be alive but low HP */
+        if (a->health <= 0 || a->health > a->max_health * 0.3f)
+            continue;
+        VectorSubtract(a->s.origin, self->s.origin, dd);
+        d = VectorLength(dd);
+        if (d < best_dist) {
+            best_dist = d;
+            wounded = a;
+        }
+    }
+
+    if (!wounded)
+        return;
+
+    /* Move toward the wounded ally */
+    AI_MoveToward(self, wounded->s.origin, AI_CHASE_SPEED * 0.8f);
+
+    /* When close enough, drag ally backward (away from enemy) */
+    if (best_dist < 48.0f && self->enemy) {
+        vec3_t away, drag_dest;
+        VectorSubtract(wounded->s.origin, self->enemy->s.origin, away);
+        VectorNormalize(away);
+        VectorMA(wounded->s.origin, 64.0f, away, drag_dest);
+        /* Slide wounded toward cover */
+        VectorSubtract(drag_dest, wounded->s.origin, away);
+        VectorNormalize(away);
+        wounded->velocity[0] = away[0] * 100.0f;
+        wounded->velocity[1] = away[1] * 100.0f;
+        /* Heal slightly while dragging */
+        if (wounded->health < wounded->max_health) {
+            wounded->health += 2;
+            if (wounded->health > wounded->max_health)
+                wounded->health = wounded->max_health;
+        }
     }
 }

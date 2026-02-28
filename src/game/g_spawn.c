@@ -279,6 +279,7 @@ static void SP_func_barrier(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_crate(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_vent(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_laser_trip(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_floor_break(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_cover_point(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_trigger_monster_spawn(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_fallback_point(edict_t *ent, epair_t *pairs, int num_pairs);
@@ -595,6 +596,10 @@ static spawn_func_t spawn_funcs[] = {
     /* Laser tripwire */
     { "func_laser_trip",            SP_func_laser_trip },
     { "trigger_laser",              SP_func_laser_trip },
+
+    /* Destructible floor */
+    { "func_floor_break",           SP_func_floor_break },
+    { "func_breakable_floor",       SP_func_floor_break },
 
     /* AI cover node */
     { "cover_point",                SP_cover_point },
@@ -7453,6 +7458,175 @@ static void SP_func_laser_trip(edict_t *ent, epair_t *pairs, int num_pairs)
     gi.dprintf("  func_laser_trip at (%.0f %.0f %.0f) angle=%.0f dmg=%d\n",
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
                ent->s.angles[1], ent->dmg);
+}
+
+/* ==========================================================================
+   func_floor_break — Destructible floor that collapses when damaged.
+   Entities standing on it fall through. Plays crumble particles and sound.
+   Keys: "health" = damage to break (default 50), "dmg" = fall damage to
+         entities on top when it breaks
+   ========================================================================== */
+
+static void floor_break_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
+                             int damage, vec3_t point)
+{
+    extern game_export_t globals;
+    int i;
+    (void)inflictor; (void)damage; (void)point;
+
+    /* Crumble particles */
+    {
+        vec3_t down = {0, 0, -1};
+        R_ParticleEffect(self->s.origin, down, 0, 20);  /* dust/debris */
+        R_ParticleEffect(self->s.origin, down, 11, 10); /* stone chunks */
+    }
+
+    /* Crumble sound */
+    {
+        int snd = gi.soundindex("world/crumble.wav");
+        if (snd)
+            gi.sound(self, CHAN_BODY, snd, 1.0f, ATTN_NORM, 0);
+    }
+
+    /* Damage entities standing on top */
+    {
+        vec3_t top_mins, top_maxs;
+        edict_t *touch[32];
+        int num;
+        VectorSet(top_mins, self->s.origin[0] - 64, self->s.origin[1] - 64,
+                            self->s.origin[2]);
+        VectorSet(top_maxs, self->s.origin[0] + 64, self->s.origin[1] + 64,
+                            self->s.origin[2] + 32);
+        num = gi.BoxEdicts(top_mins, top_maxs, touch, 32, AREA_SOLID);
+        for (i = 0; i < num; i++) {
+            if (!touch[i] || touch[i] == self)
+                continue;
+            if (touch[i]->client || (touch[i]->svflags & SVF_MONSTER)) {
+                /* Apply fall damage and let them drop */
+                int fall_dmg = self->dmg > 0 ? self->dmg : 20;
+                touch[i]->health -= fall_dmg;
+                if (touch[i]->client)
+                    touch[i]->client->pers_health = touch[i]->health;
+                if (touch[i]->health <= 0 && touch[i]->die)
+                    touch[i]->die(touch[i], self, attacker, fall_dmg, self->s.origin);
+            }
+        }
+    }
+
+    /* Fire targets */
+    if (self->target)
+        G_UseTargets(self, self->target);
+
+    /* Remove self — floor is gone */
+    self->solid = SOLID_NOT;
+    self->takedamage = DAMAGE_NO;
+    self->svflags |= SVF_NOCLIENT;
+    gi.unlinkentity(self);
+}
+
+static void SP_func_floor_break(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *v;
+
+    ent->classname = "func_floor_break";
+    ent->solid = SOLID_BSP;
+    ent->movetype = MOVETYPE_PUSH;
+
+    v = ED_FindValue(pairs, num_pairs, "health");
+    ent->health = v ? atoi(v) : 50;
+    ent->max_health = ent->health;
+
+    v = ED_FindValue(pairs, num_pairs, "dmg");
+    ent->dmg = v ? atoi(v) : 20;
+
+    ent->takedamage = DAMAGE_YES;
+    ent->die = floor_break_die;
+
+    gi.linkentity(ent);
+    gi.dprintf("  func_floor_break at (%.0f %.0f %.0f) health=%d dmg=%d\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->health, ent->dmg);
+}
+
+/* ==========================================================================
+   Environmental Fire Spread — fire hazards spread to nearby flammable
+   entities (barrels, crates, other hazards). Uses a think function that
+   checks for flammable neighbors and ignites them.
+   ========================================================================== */
+
+static void fire_spread_think(edict_t *self)
+{
+    extern game_export_t globals;
+    int i;
+
+    self->nextthink = level.time + 2.0f;  /* check every 2 seconds */
+
+    /* Look for nearby flammable entities */
+    for (i = 1; i < globals.num_edicts; i++) {
+        edict_t *e = &globals.edicts[i];
+        vec3_t diff;
+        float dist;
+
+        if (!e->inuse || e == self || e->health <= 0)
+            continue;
+        if (!e->takedamage)
+            continue;
+
+        VectorSubtract(e->s.origin, self->s.origin, diff);
+        dist = VectorLength(diff);
+        if (dist > 192.0f)
+            continue;
+
+        /* Set nearby damageable entities on fire */
+        if (e->classname &&
+            (Q_stricmp(e->classname, "func_explosive") == 0 ||
+             Q_stricmp(e->classname, "func_crate") == 0)) {
+            /* Deal fire tick damage */
+            int fire_dmg = self->dmg > 0 ? self->dmg / 2 : 5;
+            e->health -= fire_dmg;
+
+            /* Fire particles on the victim */
+            {
+                vec3_t up = {0, 0, 1};
+                R_ParticleEffect(e->s.origin, up, 4, 6);  /* fire particles */
+            }
+
+            if (e->health <= 0 && e->die)
+                e->die(e, self, self, fire_dmg, self->s.origin);
+        }
+
+        /* Damage players in the fire zone */
+        if (e->client && !e->deadflag) {
+            int fire_dmg = self->dmg > 0 ? self->dmg : 10;
+            e->health -= fire_dmg;
+            e->client->pers_health = e->health;
+            e->client->burn_end = level.time + 2.0f;
+            e->client->burn_next_tick = level.time + 0.5f;
+            e->client->blend[0] = 1.0f;
+            e->client->blend[1] = 0.3f;
+            e->client->blend[2] = 0.0f;
+            e->client->blend[3] = 0.3f;
+            if (e->health <= 0 && e->die)
+                e->die(e, self, self, fire_dmg, e->s.origin);
+        }
+    }
+}
+
+/* Attach fire spread behavior to trigger_hazard entities with "fire" message */
+void G_InitFireSpread(void)
+{
+    extern game_export_t globals;
+    int i;
+    for (i = 1; i < globals.num_edicts; i++) {
+        edict_t *e = &globals.edicts[i];
+        if (!e->inuse)
+            continue;
+        if (e->classname && Q_stricmp(e->classname, "trigger_hazard") == 0 &&
+            e->message && (strstr(e->message, "fire") || strstr(e->message, "flame"))) {
+            e->think = fire_spread_think;
+            e->nextthink = level.time + 3.0f;  /* start spreading after 3s */
+        }
+    }
 }
 
 /* ==========================================================================
