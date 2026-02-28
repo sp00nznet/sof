@@ -2343,6 +2343,17 @@ static void T_RadiusDamage(edict_t *inflictor, edict_t *attacker,
             if (dist < radius * 0.6f && t->health > 0) {
                 t->client->concussion_end = level.time + 2.0f;  /* 2s of sway */
             }
+
+            /* Camera shake from nearby explosion — proportional to proximity */
+            if (t->health > 0) {
+                float shake_int = (1.0f - dist / radius) * 0.8f;
+                float shake_dur = (1.0f - dist / radius) * 0.4f;
+                if (shake_int > 0.1f) {
+                    t->client->kick_angles[0] += gi.flrand(-shake_int * 5.0f, shake_int * 5.0f);
+                    t->client->kick_angles[1] += gi.flrand(-shake_int * 3.0f, shake_int * 3.0f);
+                    SCR_AddScreenShake(shake_int, shake_dur);
+                }
+            }
         }
 
         if (t->health <= 0 && t->die) {
@@ -2664,6 +2675,18 @@ static void gib_think(edict_t *self)
         gi.unlinkentity(self);
         return;
     }
+
+    /* Blood trail while flying */
+    if (self->dmg == 0) {  /* not yet landed */
+        float speed_sq = self->velocity[0] * self->velocity[0] +
+                         self->velocity[1] * self->velocity[1] +
+                         self->velocity[2] * self->velocity[2];
+        if (speed_sq > 100.0f * 100.0f) {
+            vec3_t trail_down = {0, 0, -1};
+            R_ParticleEffect(self->s.origin, trail_down, 1, 1);
+        }
+    }
+
     self->nextthink = level.time + 0.1f;
 }
 
@@ -5093,6 +5116,16 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
                 if (client->stamina > 100.0f) client->stamina = 100.0f;
             }
         }
+    }
+
+    /* Sprint FOV — subtle FOV increase while sprinting for speed sensation */
+    if (client->sprinting && !client->zoomed) {
+        if (client->fov < 100.0f)
+            client->fov += 60.0f * level.frametime;
+        if (client->fov > 100.0f) client->fov = 100.0f;
+    } else if (!client->zoomed && client->fov > 90.0f) {
+        client->fov -= 60.0f * level.frametime;
+        if (client->fov < 90.0f) client->fov = 90.0f;
     }
 
     /* Holstered weapon — 15% movement speed boost */

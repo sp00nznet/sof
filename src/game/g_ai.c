@@ -448,6 +448,47 @@ static qboolean AI_SeekCover(edict_t *self)
     VectorCopy(self->enemy->s.origin, enemy_eye);
     enemy_eye[2] += 20;
 
+    /* First pass: check placed cover_point entities */
+    {
+        extern game_export_t globals;
+        for (i = 1; i < globals.num_edicts; i++) {
+            edict_t *cp = &globals.edicts[i];
+            vec3_t diff;
+            float dist;
+            trace_t tr_move, tr_vis;
+
+            if (!cp->inuse || !cp->classname ||
+                Q_stricmp(cp->classname, "cover_point") != 0)
+                continue;
+
+            VectorSubtract(cp->s.origin, self->s.origin, diff);
+            dist = VectorLength(diff);
+            if (dist > 512.0f || dist < 32.0f) continue;
+
+            /* Can we walk there? */
+            tr_move = gi.trace(self->s.origin, self->mins, self->maxs,
+                               cp->s.origin, self, MASK_MONSTERSOLID);
+            if (tr_move.fraction < 0.8f) continue;
+
+            /* Would we be hidden from enemy there? */
+            tr_vis = gi.trace(cp->s.origin, NULL, NULL, enemy_eye,
+                              self, MASK_OPAQUE);
+            if (tr_vis.fraction >= 1.0f) continue;
+
+            if (dist < best_dist) {
+                best_dist = dist;
+                VectorCopy(cp->s.origin, best_pos);
+                found = qtrue;
+            }
+        }
+        if (found) {
+            VectorCopy(best_pos, self->move_origin);
+            return qtrue;
+        }
+    }
+
+    /* Fallback: test 8 compass directions */
+    best_dist = 999999.0f;
     for (i = 0; i < 8; i++) {
         trace_t tr_move, tr_vis;
         float angle = (float)i * 45.0f * 3.14159265f / 180.0f;

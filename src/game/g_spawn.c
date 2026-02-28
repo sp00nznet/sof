@@ -275,6 +275,7 @@ static void SP_func_portcullis(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_floodlight(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_barrier(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_crate(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_cover_point(edict_t *ent, epair_t *pairs, int num_pairs);
 static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
                            int damage, vec3_t point);
 
@@ -572,6 +573,10 @@ static spawn_func_t spawn_funcs[] = {
     /* Destroyable crate */
     { "func_crate",                 SP_func_crate },
     { "misc_crate",                 SP_func_crate },
+
+    /* AI cover node */
+    { "cover_point",                SP_cover_point },
+    { "info_cover",                 SP_cover_point },
 
     /* Weapons (SoF) */
     { "weapon_knife",               SP_item_pickup },
@@ -6771,6 +6776,23 @@ static void SP_func_crate(edict_t *ent, epair_t *pairs, int num_pairs)
     gi.dprintf("  func_crate at (%.0f %.0f %.0f) hp=%d item=%s\n",
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
                ent->health, ent->target ? ent->target : "none");
+}
+
+/* ==========================================================================
+   cover_point — AI cover node. Placed in maps to indicate good cover
+   positions. AI_SeekCover will prefer these over random directions.
+   ========================================================================== */
+
+static void SP_cover_point(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+    ent->classname = "cover_point";
+    ent->solid = SOLID_NOT;
+    ent->movetype = MOVETYPE_NONE;
+    ent->svflags |= SVF_NOCLIENT;  /* invisible marker */
+    gi.linkentity(ent);
+    gi.dprintf("  cover_point at (%.0f %.0f %.0f)\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
 }
 
 /* ==========================================================================
