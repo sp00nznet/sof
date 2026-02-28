@@ -45,6 +45,7 @@ extern void SP_monster_guard(edict_t *ent, void *pairs, int num_pairs);
 extern void SP_monster_sniper(edict_t *ent, void *pairs, int num_pairs);
 extern void SP_monster_boss(edict_t *ent, void *pairs, int num_pairs);
 extern void SP_monster_medic(edict_t *ent, void *pairs, int num_pairs);
+extern void SP_monster_dog(edict_t *ent, void *pairs, int num_pairs);
 
 /* Forward declarations for precache functions */
 static void door_precache_sounds(void);
@@ -280,6 +281,7 @@ static void SP_func_crate(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_vent(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_laser_trip(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_floor_break(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_wall_break(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_cover_point(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_trigger_monster_spawn(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_fallback_point(edict_t *ent, epair_t *pairs, int num_pairs);
@@ -398,6 +400,8 @@ static spawn_func_t spawn_funcs[] = {
     { "monster_sniper",             (void (*)(edict_t *, epair_t *, int))SP_monster_sniper },
     { "monster_boss",               (void (*)(edict_t *, epair_t *, int))SP_monster_boss },
     { "monster_medic",              (void (*)(edict_t *, epair_t *, int))SP_monster_medic },
+    { "monster_dog",                (void (*)(edict_t *, epair_t *, int))SP_monster_dog },
+    { "monster_patrol_dog",         (void (*)(edict_t *, epair_t *, int))SP_monster_dog },
     /* Q2-compatible monster names */
     { "monster_soldier_light",      (void (*)(edict_t *, epair_t *, int))SP_monster_soldier_light },
     { "monster_infantry",           (void (*)(edict_t *, epair_t *, int))SP_monster_soldier },
@@ -600,6 +604,10 @@ static spawn_func_t spawn_funcs[] = {
     /* Destructible floor */
     { "func_floor_break",           SP_func_floor_break },
     { "func_breakable_floor",       SP_func_floor_break },
+
+    /* Destructible wall */
+    { "func_wall_break",            SP_func_wall_break },
+    { "func_breakable_wall",        SP_func_wall_break },
 
     /* AI cover node */
     { "cover_point",                SP_cover_point },
@@ -7546,6 +7554,72 @@ static void SP_func_floor_break(edict_t *ent, epair_t *pairs, int num_pairs)
     gi.dprintf("  func_floor_break at (%.0f %.0f %.0f) health=%d dmg=%d\n",
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
                ent->health, ent->dmg);
+}
+
+/* ==========================================================================
+   func_wall_break — Destructible thin wall/partition. When shot enough,
+   shatters into debris, opening a passage. Surface material determines
+   particle type (plaster dust, wood splinters, etc).
+   Keys: "health" = damage to break (default 40)
+   ========================================================================== */
+
+static void wall_break_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
+                            int damage, vec3_t point)
+{
+    (void)inflictor; (void)damage; (void)point;
+
+    /* Debris particles — spray outward from impact */
+    {
+        vec3_t spray;
+        VectorSet(spray, (float)(rand() % 3 - 1),
+                         (float)(rand() % 3 - 1), 1.0f);
+        R_ParticleEffect(self->s.origin, spray, 0, 24);   /* dust cloud */
+        R_ParticleEffect(self->s.origin, spray, 11, 12);  /* chunks */
+    }
+
+    /* Break sound */
+    {
+        int snd = gi.soundindex("world/wall_break.wav");
+        if (snd)
+            gi.sound(self, CHAN_BODY, snd, 1.0f, ATTN_NORM, 0);
+    }
+
+    /* AI alert: nearby monsters hear the wall break */
+    {
+        extern void AI_HearGunshot(vec3_t origin, edict_t *shooter, qboolean silenced);
+        AI_HearGunshot(self->s.origin, attacker, qfalse);
+    }
+
+    /* Fire targets */
+    if (self->target)
+        G_UseTargets(self, self->target);
+
+    /* Remove wall */
+    self->solid = SOLID_NOT;
+    self->takedamage = DAMAGE_NO;
+    self->svflags |= SVF_NOCLIENT;
+    gi.unlinkentity(self);
+}
+
+static void SP_func_wall_break(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *v;
+
+    ent->classname = "func_wall_break";
+    ent->solid = SOLID_BSP;
+    ent->movetype = MOVETYPE_PUSH;
+
+    v = ED_FindValue(pairs, num_pairs, "health");
+    ent->health = v ? atoi(v) : 40;
+    ent->max_health = ent->health;
+
+    ent->takedamage = DAMAGE_YES;
+    ent->die = wall_break_die;
+
+    gi.linkentity(ent);
+    gi.dprintf("  func_wall_break at (%.0f %.0f %.0f) health=%d\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->health);
 }
 
 /* ==========================================================================

@@ -1237,6 +1237,19 @@ static void ai_think_attack(edict_t *self)
     if (self->s.frame < FRAME_ATTACK_START || self->s.frame > FRAME_ATTACK_END)
         self->s.frame = FRAME_ATTACK_START;
 
+    /* Sniper scope glint: visible lens flare when sniper aims at player */
+    if (self->classname && Q_stricmp(self->classname, "monster_sniper") == 0 &&
+        AI_Visible(self, self->enemy) && self->enemy->client) {
+        vec3_t glint_pos;
+        VectorCopy(self->s.origin, glint_pos);
+        glint_pos[2] += 24.0f;  /* eye height */
+        /* Bright white-yellow glint */
+        R_AddDlight(glint_pos, 1.0f, 0.95f, 0.7f, 60.0f, 0.15f);
+        /* Pulsing effect: only visible every other frame */
+        if (((int)(level.time * 10.0f)) % 3 == 0)
+            R_AddDlight(glint_pos, 1.0f, 1.0f, 1.0f, 120.0f, 0.1f);
+    }
+
     /* If target moved out of range, chase */
     if (dist > AI_ATTACK_RANGE * 1.2f) {
         self->count = AI_STATE_CHASE;
@@ -1501,6 +1514,13 @@ static void ai_think_attack(edict_t *self)
     }
     if (self->patrol_wait > level.time) {
         /* Still reloading — wait */
+        self->nextthink = level.time + FRAMETIME;
+        return;
+    }
+
+    /* Dogs are melee only — rush toward enemy instead of shooting */
+    if (self->ai_flags & 0x0400) {
+        AI_MoveToward(self, self->enemy->s.origin, AI_CHASE_SPEED * 2.0f);
         self->nextthink = level.time + FRAMETIME;
         return;
     }
@@ -2231,6 +2251,28 @@ void SP_monster_medic(edict_t *ent, void *pairs, int num_pairs)
     ent->ai_flags |= 0x0200;  /* AI_MEDIC flag */
     monster_start(ent, 80, 5, AI_CHASE_SPEED * 0.9f);
     ent->yaw_speed = 12.0f;
+}
+
+/*
+ * SP_monster_dog - Patrol dog enemy type
+ * Fast, low HP, melee-only bite attack. Chases aggressively.
+ */
+void SP_monster_dog(edict_t *ent, void *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+
+    gi.dprintf("  Spawning patrol dog at (%.0f %.0f %.0f)\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
+
+    ent->classname = "monster_dog";
+    monster_start(ent, 40, 15, AI_CHASE_SPEED * 2.0f);  /* fast, fragile */
+    ent->yaw_speed = 30.0f;  /* agile */
+    /* Smaller bounding box for a dog */
+    VectorSet(ent->mins, -12, -12, -8);
+    VectorSet(ent->maxs, 12, 12, 20);
+    /* Dogs are melee only — use short attack range */
+    ent->dmg_radius = 64;  /* bite range marker */
+    ent->ai_flags |= 0x0400;  /* AI_DOG flag — melee only */
 }
 
 /* AI Medic behavior — called from monster_think for medic-flagged monsters */

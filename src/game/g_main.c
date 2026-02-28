@@ -53,6 +53,9 @@ static void G_SpawnGibs(edict_t *ent, int count);
 static void G_DamageDirectionToPlayer(edict_t *player, vec3_t source);
 static void G_ExplosionShakeNearby(vec3_t origin, float max_intensity,
                                     float duration, float max_range);
+static void G_FreeEdict(edict_t *ent);
+static void thrown_knife_touch(edict_t *self, edict_t *other, void *plane,
+                                csurface_t *surf);
 static int weapon_damage[WEAP_COUNT];
 
 /* ==========================================================================
@@ -385,6 +388,56 @@ void G_SaveTransitionState(void)
     level_transition.score = player->client->score;
 
     gi.dprintf("Transition state saved\n");
+}
+
+/* G_FreeEdict — Remove an entity from the game */
+static void G_FreeEdict(edict_t *ent)
+{
+    ent->solid = SOLID_NOT;
+    ent->inuse = qfalse;
+    ent->classname = "freed";
+    gi.unlinkentity(ent);
+}
+
+/* thrown_knife_touch — Thrown knife impact callback */
+static void thrown_knife_touch(edict_t *self, edict_t *other, void *plane,
+                                csurface_t *surf)
+{
+    (void)plane; (void)surf;
+
+    if (!other || other == self->owner)
+        return;
+
+    if (other->takedamage && other->health > 0) {
+        int throw_dmg = self->dmg > 0 ? self->dmg : 60;
+        other->health -= throw_dmg;
+        R_ParticleEffect(self->s.origin, self->velocity, 1, 6);
+        if (other->client) {
+            other->client->pers_health = other->health;
+            other->client->blend[0] = 1.0f;
+            other->client->blend[3] = 0.3f;
+        }
+        if (other->health <= 0 && other->die) {
+            other->die(other, self, self->owner, throw_dmg, self->s.origin);
+            if (self->owner && self->owner->client) {
+                self->owner->client->kills++;
+                self->owner->client->score += 15;
+                SCR_AddScorePopup(15);
+                SCR_AddPickupMessage("KNIFE THROW KILL!");
+            }
+        }
+    } else {
+        /* Hit world — stick in place */
+        {
+            int snd = gi.soundindex("weapons/knife_hit.wav");
+            if (snd)
+                gi.positioned_sound(self->s.origin, NULL, CHAN_AUTO,
+                                    snd, 1.0f, ATTN_NORM, 0);
+        }
+        R_ParticleEffect(self->s.origin, self->velocity, 12, 3);
+    }
+
+    G_FreeEdict(self);
 }
 
 static void SpawnEntities(const char *mapname, const char *entstring,
@@ -3323,6 +3376,40 @@ static void G_FireHitscan(edict_t *ent)
 
         /* Weapon-specific parameters */
         if (weap == WEAP_KNIFE) {
+            if (player_alt_fire) {
+                /* Alt-fire: throw knife as projectile */
+                edict_t *thrown;
+                extern edict_t *G_AllocEdict(void);
+                thrown = G_AllocEdict();
+                if (thrown) {
+                    thrown->classname = "thrown_knife";
+                    thrown->solid = SOLID_BBOX;
+                    thrown->movetype = MOVETYPE_TOSS;
+                    VectorCopy(start, thrown->s.origin);
+                    VectorScale(forward, 1200.0f, thrown->velocity);
+                    thrown->velocity[2] += 40.0f;  /* slight arc */
+                    VectorSet(thrown->mins, -2, -2, -2);
+                    VectorSet(thrown->maxs, 2, 2, 2);
+                    thrown->dmg = 60;  /* high damage thrown knife */
+                    thrown->owner = ent;
+                    thrown->clipmask = MASK_SHOT;
+                    thrown->nextthink = level.time + 5.0f;  /* despawn after 5s */
+                    thrown->think = G_FreeEdict;
+                    thrown->touch = thrown_knife_touch;
+                    gi.linkentity(thrown);
+                    /* Throw sound */
+                    {
+                        int snd = gi.soundindex("weapons/knife/swing.wav");
+                        if (snd)
+                            gi.sound(ent, CHAN_WEAPON, snd, 1.0f, ATTN_NORM, 0);
+                    }
+                    /* Switch to next weapon after throw */
+                    ent->client->pers_weapon = WEAP_PISTOL1;
+                    ent->weapon_index = WEAP_PISTOL1;
+                    ent->client->weapon_change_time = level.time + 0.5f;
+                }
+                return;
+            }
             trace_range = 96;  /* melee range */
         } else if (weap == WEAP_SHOTGUN) {
             if (player_alt_fire) {
