@@ -936,6 +936,15 @@ static void ai_think_chase(edict_t *self)
     if (self->s.frame < FRAME_RUN_START || self->s.frame > FRAME_RUN_END)
         self->s.frame = FRAME_RUN_START;
 
+    /* Difficulty-based aggression: harder AI closes distance faster */
+    {
+        extern cvar_t *skill;
+        int sk = skill ? (int)skill->value : 1;
+        float chase_mult = 1.0f;
+        if (sk <= 0) chase_mult = 0.75f;        /* easy: cautious approach */
+        else if (sk == 2) chase_mult = 1.15f;    /* hard: pushes forward */
+        else if (sk >= 3) chase_mult = 1.35f;    /* nightmare: aggressive */
+
     /* Flanking: offset approach angle based on entity index to spread out */
     if (self->max_health >= 80 && dist > 128.0f) {
         extern game_export_t globals;
@@ -959,7 +968,7 @@ static void ai_think_chase(edict_t *self)
                        (to_enemy[0] * sinf(rad) + to_enemy[1] * cosf(rad)) * -64.0f;
         flank_pos[2] = self->s.origin[2];
 
-        AI_MoveToward(self, flank_pos, AI_CHASE_SPEED);
+        AI_MoveToward(self, flank_pos, AI_CHASE_SPEED * chase_mult);
 
         /* Flanking callout — shout periodically when flanking */
         if (level.time > self->move_angles[0] + 3.0f) {
@@ -970,8 +979,9 @@ static void ai_think_chase(edict_t *self)
         }
     } else {
         /* Direct chase toward enemy or last known position */
-        AI_MoveToward(self, self->move_origin, AI_CHASE_SPEED);
+        AI_MoveToward(self, self->move_origin, AI_CHASE_SPEED * chase_mult);
     }
+    } /* end difficulty aggression block */
 
     /* Push apart from nearby allies to avoid clumping */
     AI_FormationSpread(self);

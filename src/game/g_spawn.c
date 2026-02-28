@@ -274,6 +274,7 @@ static void SP_func_spotlight(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_portcullis(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_floodlight(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_barrier(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_crate(edict_t *ent, epair_t *pairs, int num_pairs);
 static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
                            int damage, vec3_t point);
 
@@ -567,6 +568,10 @@ static spawn_func_t spawn_funcs[] = {
     /* Barrier / bollard */
     { "func_barrier",               SP_func_barrier },
     { "func_bollard",               SP_func_barrier },
+
+    /* Destroyable crate */
+    { "func_crate",                 SP_func_crate },
+    { "misc_crate",                 SP_func_crate },
 
     /* Weapons (SoF) */
     { "weapon_knife",               SP_item_pickup },
@@ -6695,6 +6700,77 @@ static void SP_func_barrier(edict_t *ent, epair_t *pairs, int num_pairs)
     gi.linkentity(ent);
     gi.dprintf("  func_barrier at (%.0f %.0f %.0f) lip=%.0f\n",
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2], lip);
+}
+
+/* ==========================================================================
+   func_crate — Destroyable crate that drops an item on destruction.
+   Keys: "health" = hit points (default 40), "item" = classname of dropped item
+   ========================================================================== */
+
+static void crate_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
+                       int damage, vec3_t point)
+{
+    vec3_t up = {0, 0, 1};
+    (void)inflictor; (void)attacker; (void)damage; (void)point;
+
+    /* Break particles */
+    R_ParticleEffect(self->s.origin, up, 11, 16);  /* debris chunks */
+    R_ParticleEffect(self->s.origin, up, 13, 8);   /* dust */
+
+    /* Break sound */
+    {
+        int snd = gi.soundindex("world/crate_break.wav");
+        if (snd) gi.sound(self, CHAN_BODY, snd, 1.0f, ATTN_NORM, 0);
+    }
+
+    /* Drop item if specified */
+    if (self->target) {
+        edict_t *drop = G_AllocEdict();
+        if (drop) {
+            drop->classname = self->target;
+            VectorCopy(self->s.origin, drop->s.origin);
+            drop->s.origin[2] += 16;
+            drop->solid = SOLID_TRIGGER;
+            drop->movetype = MOVETYPE_TOSS;
+            VectorSet(drop->mins, -16, -16, 0);
+            VectorSet(drop->maxs, 16, 16, 16);
+            drop->velocity[2] = 100.0f;
+            gi.linkentity(drop);
+        }
+    }
+
+    /* Remove crate */
+    self->solid = SOLID_NOT;
+    self->svflags |= SVF_NOCLIENT;
+    self->takedamage = DAMAGE_NO;
+    gi.linkentity(self);
+}
+
+static void SP_func_crate(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *v;
+
+    ent->classname = "func_crate";
+    ent->solid = SOLID_BBOX;
+    ent->movetype = MOVETYPE_NONE;
+    ent->takedamage = DAMAGE_YES;
+    ent->die = crate_die;
+
+    v = ED_FindValue(pairs, num_pairs, "health");
+    ent->health = v ? atoi(v) : 40;
+    ent->max_health = ent->health;
+
+    /* "item" key stored in target for drop on death */
+    v = ED_FindValue(pairs, num_pairs, "item");
+    if (v) ent->target = (char *)v;
+
+    VectorSet(ent->mins, -16, -16, 0);
+    VectorSet(ent->maxs, 16, 16, 32);
+
+    gi.linkentity(ent);
+    gi.dprintf("  func_crate at (%.0f %.0f %.0f) hp=%d item=%s\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->health, ent->target ? ent->target : "none");
 }
 
 /* ==========================================================================

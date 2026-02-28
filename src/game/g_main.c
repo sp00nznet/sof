@@ -3048,6 +3048,15 @@ static void G_FireHitscan(edict_t *ent)
         }
     }
 
+    /* Muzzle smoke — lingering wisps after firing heavy weapons */
+    if (weap == WEAP_SHOTGUN || weap == WEAP_SNIPER || weap == WEAP_SLUGGER ||
+        weap == WEAP_ROCKET) {
+        vec3_t smoke_org, smoke_up;
+        VectorMA(start, 20, forward, smoke_org);
+        VectorSet(smoke_up, 0, 0, 0.5f);
+        R_ParticleEffect(smoke_org, smoke_up, 10, 3);  /* smoke wisps */
+    }
+
     /* Weapon fire sound — silencer reduces volume */
     if (weap > 0 && weap < WEAP_COUNT && snd_weapons[weap]) {
         float vol = 1.0f;
@@ -4608,9 +4617,19 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
         }
     }
 
-    /* Recoil decay — spread recovers when not firing */
+    /* Recoil decay — per-weapon recovery rate (light weapons recover faster) */
     if (client->recoil_accum > 0) {
-        client->recoil_accum -= 2.5f * level.frametime;  /* recover in ~0.4s */
+        float recovery = 2.5f;
+        int w = client->pers_weapon;
+        if (w == WEAP_MACHINEGUN || w == WEAP_MPISTOL)
+            recovery = 4.0f;   /* SMGs: fast recovery */
+        else if (w == WEAP_PISTOL1 || w == WEAP_PISTOL2)
+            recovery = 3.5f;   /* pistols: quick reset */
+        else if (w == WEAP_SNIPER || w == WEAP_SLUGGER)
+            recovery = 1.5f;   /* heavy: slow recovery */
+        else if (w == WEAP_SHOTGUN)
+            recovery = 2.0f;   /* shotgun: moderate */
+        client->recoil_accum -= recovery * level.frametime;
         if (client->recoil_accum < 0) client->recoil_accum = 0;
     }
 
