@@ -305,6 +305,7 @@ static void SP_trigger_toxic(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_trigger_fire_pit(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_misc_weapon_bench(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_rope_swing(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_steam_vent(edict_t *ent, epair_t *pairs, int num_pairs);
 static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
                            int damage, vec3_t point);
 
@@ -754,6 +755,10 @@ static spawn_func_t spawn_funcs[] = {
     /* Rope swing */
     { "func_rope_swing",            SP_func_rope_swing },
     { "misc_rope_swing",            SP_func_rope_swing },
+
+    /* Steam vent hazard */
+    { "func_steam_vent",            SP_func_steam_vent },
+    { "misc_steam_vent",            SP_func_steam_vent },
 
     /* Sentinel */
     { NULL, NULL }
@@ -8873,6 +8878,89 @@ static void SP_func_rope_swing(edict_t *ent, epair_t *pairs, int num_pairs)
     gi.linkentity(ent);
     gi.dprintf("  func_rope_swing at (%.0f %.0f %.0f)\n",
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
+}
+
+/* ==========================================================================
+   Steam Vent — periodic steam blast that pushes entities upward.
+   Erupts on a timer, dealing burn damage and launching anything above it.
+   ========================================================================== */
+
+static void steam_vent_think(edict_t *self)
+{
+    int i;
+    edict_t *ent;
+    float cycle_pos;
+
+    self->nextthink = level.time + 0.1f;
+
+    /* Cycle: active for 'wait' seconds, dormant for 'delay' seconds */
+    if (self->wait <= 0) self->wait = 1.5f;
+    if (self->delay <= 0) self->delay = 3.0f;
+
+    cycle_pos = (float)fmod(level.time, self->wait + self->delay);
+    if (cycle_pos > self->wait)
+        return; /* dormant phase */
+
+    /* Steam visual — white particle burst upward */
+    {
+        vec3_t steam_up = {0, 0, 1};
+        R_ParticleEffect(self->s.origin, steam_up, 14, 20);  /* white/grey steam */
+    }
+
+    /* Check for entities above the vent */
+    for (i = 0; i < globals.num_edicts; i++) {
+        ent = &globals.edicts[i];
+        if (!ent->inuse || ent->health <= 0)
+            continue;
+        if (ent == self)
+            continue;
+
+        /* Must be within horizontal range and above the vent */
+        {
+            float dx = ent->s.origin[0] - self->s.origin[0];
+            float dy = ent->s.origin[1] - self->s.origin[1];
+            float dz = ent->s.origin[2] - self->s.origin[2];
+            float hdist = (float)sqrt(dx * dx + dy * dy);
+
+            if (hdist > 48.0f || dz < -16.0f || dz > 256.0f)
+                continue;
+
+            /* Push upward */
+            ent->velocity[2] += 400.0f;
+
+            /* Burn damage with debounce */
+            if (ent->dmg_debounce_time < level.time) {
+                int steam_dmg = self->dmg > 0 ? self->dmg : 8;
+                ent->health -= steam_dmg;
+                ent->dmg_debounce_time = level.time + 0.5f;
+
+                if (ent->client)
+                    ent->client->pers_health = ent->health;
+
+                if (ent->health <= 0 && ent->die)
+                    ent->die(ent, self, self, steam_dmg, self->s.origin);
+                else if (ent->pain)
+                    ent->pain(ent, self, 0, steam_dmg);
+            }
+        }
+    }
+}
+
+static void SP_func_steam_vent(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+    ent->classname = "func_steam_vent";
+    ent->solid = SOLID_NOT;
+    ent->movetype = MOVETYPE_NONE;
+    if (ent->dmg <= 0) ent->dmg = 8;
+    ent->think = steam_vent_think;
+    ent->nextthink = level.time + 1.0f;
+    ent->s.modelindex = gi.modelindex("models/objects/steam/tris.md2");
+    gi.linkentity(ent);
+    gi.dprintf("  func_steam_vent at (%.0f %.0f %.0f) dmg=%d wait=%.1f delay=%.1f\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->dmg, ent->wait > 0 ? ent->wait : 1.5f,
+               ent->delay > 0 ? ent->delay : 3.0f);
 }
 
 /* ==========================================================================

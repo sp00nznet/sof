@@ -3089,6 +3089,119 @@ static void ClientCommand(edict_t *ent)
         return;
     }
 
+    /* Parachute deploy: slow descent when falling */
+    if (Q_stricmp(cmd, "parachute") == 0 || Q_stricmp(cmd, "chute") == 0) {
+        if (ent->deadflag)
+            return;
+        if (ent->groundentity) {
+            gi.cprintf(ent, PRINT_ALL, "Can't deploy chute on ground.\n");
+            return;
+        }
+        if (ent->velocity[2] > -50.0f) {
+            gi.cprintf(ent, PRINT_ALL, "Not falling fast enough.\n");
+            return;
+        }
+        /* Deploy parachute: set a flag via gravity field */
+        ent->gravity = 0.15f;  /* greatly reduced gravity */
+        ent->velocity[2] = -80.0f;  /* cap fall speed */
+        gi.cprintf(ent, PRINT_ALL, "Parachute deployed!\n");
+        SCR_AddPickupMessage("CHUTE DEPLOYED");
+        {
+            int snd = gi.soundindex("world/parachute_open.wav");
+            if (snd) gi.sound(ent, CHAN_AUTO, snd, 1.0f, ATTN_NORM, 0);
+        }
+        return;
+    }
+
+    /* Tranquilizer dart: silent ranged sleep weapon */
+    if (Q_stricmp(cmd, "tranq") == 0 || Q_stricmp(cmd, "dart") == 0) {
+        if (ent->deadflag)
+            return;
+        if (ent->client->weapon_change_time > level.time)
+            return;
+        {
+            vec3_t dart_fwd, dart_start, dart_end;
+            trace_t dart_tr;
+            G_AngleVectors(ent->client->viewangles, dart_fwd, NULL, NULL);
+            VectorCopy(ent->s.origin, dart_start);
+            dart_start[2] += ent->client->viewheight;
+            VectorMA(dart_start, 512.0f, dart_fwd, dart_end);
+            dart_tr = gi.trace(dart_start, NULL, NULL, dart_end, ent, MASK_SHOT);
+
+            /* Silent: no loud fire sound, just a quiet puff */
+            {
+                int snd = gi.soundindex("weapons/silencer_fire.wav");
+                if (snd) gi.sound(ent, CHAN_WEAPON, snd, 0.3f, ATTN_NORM, 0);
+            }
+
+            if (dart_tr.fraction < 1.0f && dart_tr.ent &&
+                dart_tr.ent->health > 0 && (dart_tr.ent->svflags & SVF_MONSTER)) {
+                edict_t *target = dart_tr.ent;
+                /* Put to sleep: frozen for 12 seconds */
+                target->enemy = NULL;
+                target->count = 5;  /* AI_STATE_PAIN */
+                target->nextthink = level.time + 12.0f;
+                VectorClear(target->velocity);
+                /* Dart impact particle */
+                R_ParticleEffect(dart_tr.endpos, dart_tr.plane.normal, 1, 2);
+                gi.cprintf(ent, PRINT_ALL, "Target tranquilized!\n");
+                SCR_AddPickupMessage("TRANQUILIZED");
+                ent->client->score += 30;
+                SCR_AddScorePopup(30);
+            } else {
+                /* Dart hit wall — show impact */
+                if (dart_tr.fraction < 1.0f)
+                    R_ParticleEffect(dart_tr.endpos, dart_tr.plane.normal, 0, 1);
+            }
+            ent->client->weapon_change_time = level.time + 1.5f; /* slow fire rate */
+        }
+        return;
+    }
+
+    /* Player taunt/emote: social commands */
+    if (Q_stricmp(cmd, "taunt") == 0 || Q_stricmp(cmd, "emote") == 0) {
+        if (ent->deadflag)
+            return;
+        if (ent->client->weapon_change_time > level.time)
+            return;
+        {
+            int taunt_type = rand() % 4;
+            static const char *taunt_messages[] = {
+                "Come get some!", "Is that all you got?",
+                "Over here, cowards!", "You call that a fight?"
+            };
+            static const char *taunt_sounds[] = {
+                "player/taunt1.wav", "player/taunt2.wav",
+                "player/taunt3.wav", "player/grunt.wav"
+            };
+            gi.cprintf(ent, PRINT_ALL, "%s\n", taunt_messages[taunt_type]);
+            {
+                int snd = gi.soundindex(taunt_sounds[taunt_type]);
+                if (snd) gi.sound(ent, CHAN_VOICE, snd, 1.0f, ATTN_NORM, 0);
+            }
+            /* Taunt attracts nearby AI attention */
+            {
+                int ti;
+                for (ti = 1; ti < globals.num_edicts; ti++) {
+                    edict_t *m = &globals.edicts[ti];
+                    vec3_t td;
+                    if (!m->inuse || m->health <= 0)
+                        continue;
+                    if (!(m->svflags & SVF_MONSTER))
+                        continue;
+                    VectorSubtract(m->s.origin, ent->s.origin, td);
+                    if (VectorLength(td) < 500.0f && !m->enemy) {
+                        m->enemy = ent;
+                        VectorCopy(ent->s.origin, m->move_origin);
+                        m->count = 1; /* AI_STATE_ALERT */
+                    }
+                }
+            }
+            ent->client->weapon_change_time = level.time + 1.0f;
+        }
+        return;
+    }
+
     /* AI negotiation: force nearby wounded enemies to surrender */
     if (Q_stricmp(cmd, "negotiate") == 0 || Q_stricmp(cmd, "surrender") == 0) {
         if (ent->deadflag)
@@ -6009,8 +6122,13 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
     }
 
     /* Reset double jump when landing */
-    if (ent->groundentity)
+    if (ent->groundentity) {
         client->double_jump_used = false;
+        /* Reset parachute gravity on landing */
+        if (ent->gravity < 1.0f && ent->gravity > 0) {
+            ent->gravity = 0;  /* 0 = default gravity */
+        }
+    }
 
     /* Wall-run: sprint + airborne + near wall = horizontal run along wall */
     if (!ent->groundentity && !ent->deadflag && client->sprinting &&
