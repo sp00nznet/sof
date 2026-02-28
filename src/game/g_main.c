@@ -3202,6 +3202,26 @@ static void ClientCommand(edict_t *ent)
         return;
     }
 
+    /* Jetpack: toggle thrust-based vertical flight */
+    if (Q_stricmp(cmd, "jetpack") == 0 || Q_stricmp(cmd, "thrust") == 0) {
+        if (ent->deadflag)
+            return;
+        if (!ent->client->jetpack_on) {
+            if (ent->client->jetpack_fuel <= 0)
+                ent->client->jetpack_fuel = 100.0f;
+            ent->client->jetpack_on = true;
+            gi.cprintf(ent, PRINT_ALL, "Jetpack engaged!\n");
+            {
+                int snd = gi.soundindex("world/steam1.wav");
+                if (snd) gi.sound(ent, CHAN_ITEM, snd, 1.0f, ATTN_NORM, 0);
+            }
+        } else {
+            ent->client->jetpack_on = false;
+            gi.cprintf(ent, PRINT_ALL, "Jetpack disengaged.\n");
+        }
+        return;
+    }
+
     /* AI negotiation: force nearby wounded enemies to surrender */
     if (Q_stricmp(cmd, "negotiate") == 0 || Q_stricmp(cmd, "surrender") == 0) {
         if (ent->deadflag)
@@ -6127,6 +6147,32 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
         /* Reset parachute gravity on landing */
         if (ent->gravity < 1.0f && ent->gravity > 0) {
             ent->gravity = 0;  /* 0 = default gravity */
+        }
+    }
+
+    /* Jetpack thrust: hold jump while jetpack is on to fly upward */
+    if (client->jetpack_on && !ent->deadflag && client->jetpack_fuel > 0) {
+        if (ucmd->upmove > 0) {
+            /* Consume fuel and apply thrust */
+            client->jetpack_fuel -= 0.1f * 15.0f; /* 15 fuel/sec at 10Hz */
+            if (ent->velocity[2] < 300.0f)
+                ent->velocity[2] += 80.0f;
+            ent->gravity = 0.3f; /* reduced gravity while thrusting */
+            /* Flame particles below player */
+            {
+                vec3_t jp_pos, jp_down = {0, 0, -1};
+                VectorCopy(ent->s.origin, jp_pos);
+                jp_pos[2] -= 24.0f;
+                R_ParticleEffect(jp_pos, jp_down, 4, 8); /* fire particles */
+            }
+        } else {
+            ent->gravity = 0.5f; /* gentle descent when not thrusting */
+        }
+        if (client->jetpack_fuel <= 0) {
+            client->jetpack_fuel = 0;
+            client->jetpack_on = false;
+            ent->gravity = 0; /* restore default */
+            gi.cprintf(ent, PRINT_ALL, "Jetpack fuel depleted!\n");
         }
     }
 

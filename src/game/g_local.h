@@ -556,6 +556,10 @@ struct gclient_s {
     /* Thermal vision */
     qboolean        thermal_on;            /* thermal vision mode active */
     float           thermal_battery;       /* battery remaining (0-100) */
+
+    /* Jetpack */
+    qboolean        jetpack_on;            /* jetpack currently active */
+    float           jetpack_fuel;          /* fuel remaining (0-100) */
 };
 
 /* ==========================================================================

@@ -306,6 +306,9 @@ static void SP_trigger_fire_pit(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_misc_weapon_bench(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_rope_swing(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_steam_vent(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_trampoline(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_fan(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_crusher(edict_t *ent, epair_t *pairs, int num_pairs);
 static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
                            int damage, vec3_t point);
 
@@ -759,6 +762,20 @@ static spawn_func_t spawn_funcs[] = {
     /* Steam vent hazard */
     { "func_steam_vent",            SP_func_steam_vent },
     { "misc_steam_vent",            SP_func_steam_vent },
+
+    /* Bounce pad / trampoline */
+    { "func_trampoline",            SP_func_trampoline },
+    { "func_bounce_pad",            SP_func_trampoline },
+    { "misc_bounce_pad",            SP_func_trampoline },
+
+    /* Wind tunnel / fan */
+    { "func_fan",                   SP_func_fan },
+    { "func_wind_tunnel",           SP_func_fan },
+    { "misc_fan",                   SP_func_fan },
+
+    /* Crusher trap */
+    { "func_crusher",               SP_func_crusher },
+    { "func_crush_wall",            SP_func_crusher },
 
     /* Sentinel */
     { NULL, NULL }
@@ -8961,6 +8978,273 @@ static void SP_func_steam_vent(edict_t *ent, epair_t *pairs, int num_pairs)
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
                ent->dmg, ent->wait > 0 ? ent->wait : 1.5f,
                ent->delay > 0 ? ent->delay : 3.0f);
+}
+
+/* ==========================================================================
+   Trampoline / Bounce Pad — launches entities upward on contact.
+   "speed" key sets launch velocity (default 600). "dmg" = 0 (no damage).
+   ========================================================================== */
+
+static void trampoline_touch(edict_t *self, edict_t *other, void *plane,
+                              csurface_t *surf)
+{
+    float launch;
+    (void)plane; (void)surf;
+    if (!other || other->health <= 0)
+        return;
+
+    launch = self->speed > 0 ? self->speed : 600.0f;
+    other->velocity[2] = launch;
+    other->groundentity = NULL;
+
+    /* Boing sound */
+    {
+        int snd = gi.soundindex("world/bounce1.wav");
+        if (snd) gi.sound(self, CHAN_AUTO, snd, 1.0f, ATTN_NORM, 0);
+    }
+
+    /* Spring particle effect */
+    {
+        vec3_t bounce_up = {0, 0, 1};
+        R_ParticleEffect(self->s.origin, bounce_up, 6, 16);
+    }
+
+    if (other->client) {
+        other->client->double_jump_used = false;
+        SCR_AddPickupMessage("BOUNCE!");
+    }
+}
+
+static void SP_func_trampoline(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+    ent->classname = "func_trampoline";
+    ent->solid = SOLID_TRIGGER;
+    ent->movetype = MOVETYPE_NONE;
+    ent->touch = trampoline_touch;
+    if (ent->speed <= 0) ent->speed = 600.0f;
+    VectorSet(ent->mins, -32, -32, -4);
+    VectorSet(ent->maxs, 32, 32, 4);
+    ent->s.modelindex = gi.modelindex("models/objects/pad/tris.md2");
+    gi.linkentity(ent);
+    gi.dprintf("  func_trampoline at (%.0f %.0f %.0f) speed=%.0f\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->speed);
+}
+
+/* ==========================================================================
+   Fan / Wind Tunnel — applies continuous directional force to entities.
+   "speed" = force strength (default 400). Direction is entity's angle.
+   ========================================================================== */
+
+static void fan_think(edict_t *self)
+{
+    int i;
+    edict_t *ent;
+    vec3_t push_dir;
+    float ang;
+
+    self->nextthink = level.time + 0.1f;
+
+    /* Direction based on entity angles (default: straight up) */
+    ang = self->s.angles[1] * (3.14159265f / 180.0f);
+    if (self->s.angles[0] != 0 || self->s.angles[1] != 0) {
+        push_dir[0] = (float)cos(ang);
+        push_dir[1] = (float)sin(ang);
+        push_dir[2] = 0;
+    } else {
+        push_dir[0] = 0;
+        push_dir[1] = 0;
+        push_dir[2] = 1; /* default: upward */
+    }
+
+    for (i = 0; i < globals.num_edicts; i++) {
+        ent = &globals.edicts[i];
+        if (!ent->inuse || ent == self)
+            continue;
+        if (!ent->client && !(ent->svflags & SVF_MONSTER))
+            continue;
+        if (ent->health <= 0)
+            continue;
+
+        /* Check if entity is within the fan's area of effect */
+        {
+            float dx = ent->s.origin[0] - self->s.origin[0];
+            float dy = ent->s.origin[1] - self->s.origin[1];
+            float dz = ent->s.origin[2] - self->s.origin[2];
+            float dist = (float)sqrt(dx * dx + dy * dy + dz * dz);
+            float force;
+
+            if (dist > 256.0f)
+                continue;
+
+            /* Force falls off with distance */
+            force = (self->speed > 0 ? self->speed : 400.0f) * (1.0f - dist / 256.0f);
+            ent->velocity[0] += push_dir[0] * force * 0.1f;
+            ent->velocity[1] += push_dir[1] * force * 0.1f;
+            ent->velocity[2] += push_dir[2] * force * 0.1f;
+
+            if (push_dir[2] > 0.5f)
+                ent->groundentity = NULL;
+        }
+    }
+
+    /* Wind particle effect */
+    {
+        R_ParticleEffect(self->s.origin, push_dir, 8, 6);
+    }
+}
+
+static void SP_func_fan(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+    ent->classname = "func_fan";
+    ent->solid = SOLID_NOT;
+    ent->movetype = MOVETYPE_NONE;
+    if (ent->speed <= 0) ent->speed = 400.0f;
+    ent->think = fan_think;
+    ent->nextthink = level.time + 1.0f;
+    ent->s.modelindex = gi.modelindex("models/objects/fan/tris.md2");
+    gi.linkentity(ent);
+    gi.dprintf("  func_fan at (%.0f %.0f %.0f) speed=%.0f\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->speed);
+}
+
+/* ==========================================================================
+   Crusher — oscillating brush trap that moves between two positions.
+   Deals heavy damage on contact. Uses "speed" for move rate, "dmg" for damage.
+   "wait" = pause time at each end (default 1.0s).
+   ========================================================================== */
+
+static void crusher_touch(edict_t *self, edict_t *other, void *plane,
+                           csurface_t *surf)
+{
+    int crush_dmg;
+    (void)plane; (void)surf;
+    if (!other || other->health <= 0)
+        return;
+    if (other->dmg_debounce_time > level.time)
+        return;
+    other->dmg_debounce_time = level.time + 0.3f;
+
+    crush_dmg = self->dmg > 0 ? self->dmg : 50;
+    other->health -= crush_dmg;
+
+    if (other->client) {
+        other->client->pers_health = other->health;
+        SCR_AddScreenShake(0.3f, 0.3f);
+    }
+
+    /* Squish sound */
+    {
+        int snd = gi.soundindex("world/crush1.wav");
+        if (snd) gi.sound(self, CHAN_AUTO, snd, 1.0f, ATTN_NORM, 0);
+    }
+
+    if (other->health <= 0 && other->die)
+        other->die(other, self, self, crush_dmg, self->s.origin);
+    else if (other->pain)
+        other->pain(other, self, 0, crush_dmg);
+}
+
+static void crusher_think(edict_t *self)
+{
+    float spd = self->speed > 0 ? self->speed : 100.0f;
+    float travel;
+
+    self->nextthink = level.time + 0.1f;
+
+    /* move_origin = start pos, move_angles = end pos (set at spawn) */
+    /* self->count tracks direction: 0 = moving to end, 1 = moving to start */
+    /* self->random = pause timer */
+
+    if (self->random > level.time)
+        return; /* paused at endpoint */
+
+    {
+        vec3_t target;
+        vec3_t dir;
+        float dist;
+
+        if (self->count == 0)
+            VectorCopy(self->move_angles, target);
+        else
+            VectorCopy(self->move_origin, target);
+
+        VectorSubtract(target, self->s.origin, dir);
+        dist = VectorLength(dir);
+
+        if (dist < 2.0f) {
+            /* Reached destination, pause and reverse */
+            VectorCopy(target, self->s.origin);
+            self->count = self->count ? 0 : 1;
+            self->random = level.time + (self->wait > 0 ? self->wait : 1.0f);
+
+            /* Impact sound */
+            {
+                int snd = gi.soundindex("world/metal_hit.wav");
+                if (snd) gi.sound(self, CHAN_AUTO, snd, 0.8f, ATTN_NORM, 0);
+            }
+            /* Dust particles on impact */
+            {
+                vec3_t crush_up = {0, 0, 1};
+                R_ParticleEffect(self->s.origin, crush_up, 0, 12);
+            }
+
+            VectorCopy(self->s.origin, self->s.old_origin);
+            gi.linkentity(self);
+            return;
+        }
+
+        VectorNormalize(dir);
+        travel = spd * 0.1f;
+        if (travel > dist) travel = dist;
+        self->s.origin[0] += dir[0] * travel;
+        self->s.origin[1] += dir[1] * travel;
+        self->s.origin[2] += dir[2] * travel;
+        VectorCopy(self->s.origin, self->s.old_origin);
+        gi.linkentity(self);
+    }
+}
+
+static void SP_func_crusher(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    float lip;
+    (void)pairs; (void)num_pairs;
+    ent->classname = "func_crusher";
+    ent->solid = SOLID_BBOX;
+    ent->movetype = MOVETYPE_NONE;
+    ent->touch = crusher_touch;
+    if (ent->dmg <= 0) ent->dmg = 50;
+    if (ent->speed <= 0) ent->speed = 100.0f;
+
+    /* Store start position */
+    VectorCopy(ent->s.origin, ent->move_origin);
+
+    /* End position: move downward by "lip" units (default 128) */
+    lip = 128.0f;
+    {
+        int pi;
+        for (pi = 0; pi < num_pairs; pi++) {
+            if (Q_stricmp(pairs[pi].key, "lip") == 0)
+                lip = (float)atof(pairs[pi].value);
+        }
+    }
+    VectorCopy(ent->s.origin, ent->move_angles);
+    ent->move_angles[2] -= lip; /* crush downward */
+
+    ent->count = 0; /* start moving toward end */
+    ent->think = crusher_think;
+    ent->nextthink = level.time + 2.0f;
+
+    VectorSet(ent->mins, -32, -32, -16);
+    VectorSet(ent->maxs, 32, 32, 16);
+    ent->s.modelindex = gi.modelindex("models/objects/crusher/tris.md2");
+    gi.linkentity(ent);
+    gi.dprintf("  func_crusher at (%.0f %.0f %.0f) dmg=%d speed=%.0f lip=%.0f\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->dmg, ent->speed, lip);
 }
 
 /* ==========================================================================
