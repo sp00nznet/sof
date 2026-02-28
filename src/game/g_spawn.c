@@ -282,6 +282,7 @@ static void SP_func_vent(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_laser_trip(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_floor_break(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_wall_break(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_drawbridge(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_cover_point(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_trigger_monster_spawn(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_fallback_point(edict_t *ent, epair_t *pairs, int num_pairs);
@@ -608,6 +609,10 @@ static spawn_func_t spawn_funcs[] = {
     /* Destructible wall */
     { "func_wall_break",            SP_func_wall_break },
     { "func_breakable_wall",        SP_func_wall_break },
+
+    /* Drawbridge */
+    { "func_drawbridge",            SP_func_drawbridge },
+    { "func_bridge",                SP_func_drawbridge },
 
     /* AI cover node */
     { "cover_point",                SP_cover_point },
@@ -7620,6 +7625,89 @@ static void SP_func_wall_break(edict_t *ent, epair_t *pairs, int num_pairs)
     gi.dprintf("  func_wall_break at (%.0f %.0f %.0f) health=%d\n",
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
                ent->health);
+}
+
+/* ==========================================================================
+   func_drawbridge — Rotating bridge/ramp that lowers and raises.
+   Rotates around its origin on the X axis. When triggered, toggles
+   between raised (90 degrees) and lowered (0 degrees).
+   Keys: "speed" = rotation speed (default 60 deg/sec)
+   ========================================================================== */
+
+static void drawbridge_lower(edict_t *self)
+{
+    float target_angle = 0;
+    float diff = self->s.angles[0] - target_angle;
+
+    if (fabsf(diff) < 2.0f) {
+        self->s.angles[0] = target_angle;
+        self->avelocity[0] = 0;
+        self->moveinfo.state = 0;  /* lowered */
+        /* Sound */
+        {
+            int snd = gi.soundindex("world/metal_clang.wav");
+            if (snd) gi.sound(self, CHAN_BODY, snd, 0.8f, ATTN_NORM, 0);
+        }
+        return;
+    }
+
+    self->avelocity[0] = -self->speed;
+    self->nextthink = level.time + 0.1f;
+    self->think = drawbridge_lower;
+}
+
+static void drawbridge_raise(edict_t *self)
+{
+    float target_angle = 90.0f;
+    float diff = target_angle - self->s.angles[0];
+
+    if (fabsf(diff) < 2.0f) {
+        self->s.angles[0] = target_angle;
+        self->avelocity[0] = 0;
+        self->moveinfo.state = 1;  /* raised */
+        {
+            int snd = gi.soundindex("world/metal_clang.wav");
+            if (snd) gi.sound(self, CHAN_BODY, snd, 0.8f, ATTN_NORM, 0);
+        }
+        return;
+    }
+
+    self->avelocity[0] = self->speed;
+    self->nextthink = level.time + 0.1f;
+    self->think = drawbridge_raise;
+}
+
+static void drawbridge_use(edict_t *self, edict_t *other, edict_t *activator)
+{
+    (void)other; (void)activator;
+    if (self->moveinfo.state == 0) {
+        /* Currently lowered — raise it */
+        drawbridge_raise(self);
+    } else {
+        /* Currently raised — lower it */
+        drawbridge_lower(self);
+    }
+}
+
+static void SP_func_drawbridge(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *v;
+
+    ent->classname = "func_drawbridge";
+    ent->solid = SOLID_BSP;
+    ent->movetype = MOVETYPE_PUSH;
+
+    v = ED_FindValue(pairs, num_pairs, "speed");
+    ent->speed = v ? (float)atof(v) : 60.0f;
+
+    ent->moveinfo.state = 1;  /* starts raised */
+    ent->s.angles[0] = 90.0f;
+    ent->use = drawbridge_use;
+
+    gi.linkentity(ent);
+    gi.dprintf("  func_drawbridge at (%.0f %.0f %.0f) speed=%.0f\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->speed);
 }
 
 /* ==========================================================================

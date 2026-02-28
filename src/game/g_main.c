@@ -2434,12 +2434,30 @@ static void T_RadiusDamage(edict_t *inflictor, edict_t *attacker,
         if (t->client && t->client->invuln_time > level.time)
             continue;
 
-        /* Armor absorbs for players */
+        /* Armor absorbs for players (with degradation) */
         if (t->client && t->client->armor > 0) {
-            int absorb = (int)(dmg_applied * 0.66f);
-            if (absorb > t->client->armor) absorb = t->client->armor;
-            t->client->armor -= absorb;
-            dmg_applied -= absorb;
+            /* Absorption rate depends on armor type */
+            float absorb_pct = 0.66f;
+            if (t->client->armor_type == 1) absorb_pct = 0.4f;   /* light */
+            else if (t->client->armor_type == 2) absorb_pct = 0.6f; /* medium */
+            else if (t->client->armor_type == 3) absorb_pct = 0.8f; /* heavy */
+            {
+                int absorb = (int)(dmg_applied * absorb_pct);
+                if (absorb > t->client->armor) absorb = t->client->armor;
+                t->client->armor -= absorb;
+                dmg_applied -= absorb;
+                /* Armor degradation: downgrade type at threshold */
+                if (t->client->armor_type > 0 &&
+                    t->client->armor < t->client->armor_max / 3) {
+                    t->client->armor_type--;
+                    SCR_AddPickupMessage("Armor damaged!");
+                    {
+                        int snd = gi.soundindex("player/armor_break.wav");
+                        if (snd)
+                            gi.sound(t, CHAN_ITEM, snd, 1.0f, ATTN_NORM, 0);
+                    }
+                }
+            }
         }
 
         t->health -= (int)dmg_applied;
@@ -2522,6 +2540,45 @@ static void T_RadiusDamage(edict_t *inflictor, edict_t *attacker,
                 attacker->client->xp += 20;
                 SCR_AddScorePopup(15);
                 SCR_AddPickupMessage("ENVIRONMENTAL KILL!");
+            }
+        }
+    }
+
+    /* AI Panic Flee: nearby monsters flee from explosions */
+    {
+        int pi;
+        vec3_t blast_origin;
+        VectorCopy(inflictor->s.origin, blast_origin);
+        for (pi = 1; pi < globals.num_edicts; pi++) {
+            edict_t *m = &globals.edicts[pi];
+            vec3_t pdiff;
+            float pdist;
+            if (!m->inuse || m->health <= 0)
+                continue;
+            if (!(m->svflags & SVF_MONSTER))
+                continue;
+            VectorSubtract(m->s.origin, blast_origin, pdiff);
+            pdist = VectorLength(pdiff);
+            if (pdist < 384.0f && pdist > 16.0f) {
+                /* Light soldiers (max_health < 100) panic and flee */
+                if (m->max_health < 100) {
+                    vec3_t flee_dir;
+                    VectorNormalize(pdiff);
+                    VectorCopy(pdiff, flee_dir);
+                    /* Sprint away from explosion */
+                    m->velocity[0] = flee_dir[0] * 400.0f;
+                    m->velocity[1] = flee_dir[1] * 400.0f;
+                    m->count = 3;  /* AI_STATE_CHASE = 3 */
+                    /* Move to a point far from explosion */
+                    VectorMA(m->s.origin, 256.0f, flee_dir, m->move_origin);
+                    m->nextthink = level.time + 0.1f;
+                    /* Panic callout */
+                    {
+                        int snd = gi.soundindex("npc/panic.wav");
+                        if (snd)
+                            gi.sound(m, CHAN_VOICE, snd, 1.0f, ATTN_NORM, 0);
+                    }
+                }
             }
         }
     }

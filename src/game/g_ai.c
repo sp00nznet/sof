@@ -1237,6 +1237,38 @@ static void ai_think_attack(edict_t *self)
     if (self->s.frame < FRAME_ATTACK_START || self->s.frame > FRAME_ATTACK_END)
         self->s.frame = FRAME_ATTACK_START;
 
+    /* Sniper overwatch: snipers prioritize targets approaching allies */
+    if (self->classname && Q_stricmp(self->classname, "monster_sniper") == 0 &&
+        dist > 512.0f) {
+        /* Check if enemy is moving toward a nearby ally */
+        extern game_export_t globals;
+        int oi;
+        for (oi = 1; oi < globals.num_edicts; oi++) {
+            edict_t *ally = &globals.edicts[oi];
+            vec3_t to_ally, enemy_vel;
+            float closing_dot;
+            if (ally == self || !ally->inuse || ally->health <= 0)
+                continue;
+            if (!(ally->svflags & SVF_MONSTER))
+                continue;
+            VectorSubtract(ally->s.origin, self->s.origin, to_ally);
+            if (VectorLength(to_ally) > 600.0f)
+                continue;
+            /* Check if enemy is closing on this ally */
+            VectorSubtract(ally->s.origin, self->enemy->s.origin, to_ally);
+            VectorCopy(self->enemy->velocity, enemy_vel);
+            enemy_vel[2] = 0; to_ally[2] = 0;
+            VectorNormalize(to_ally);
+            VectorNormalize(enemy_vel);
+            closing_dot = DotProduct(enemy_vel, to_ally);
+            if (closing_dot > 0.5f) {
+                /* Enemy approaching ally — fire immediately (break fire rate) */
+                self->move_angles[2] = 0;  /* clear fire cooldown */
+                break;
+            }
+        }
+    }
+
     /* Sniper scope glint: visible lens flare when sniper aims at player */
     if (self->classname && Q_stricmp(self->classname, "monster_sniper") == 0 &&
         AI_Visible(self, self->enemy) && self->enemy->client) {
