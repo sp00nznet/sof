@@ -267,6 +267,7 @@ static void SP_trigger_hazard(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_zipline(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_elevator_call(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_crane(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_generator(edict_t *ent, epair_t *pairs, int num_pairs);
 static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
                            int damage, vec3_t point);
 
@@ -533,6 +534,10 @@ static spawn_func_t spawn_funcs[] = {
 
     /* Conveyor belt (alias) */
     { "trigger_conveyor",           SP_func_conveyor_real },
+
+    /* Power generator */
+    { "func_generator",             SP_func_generator },
+    { "misc_generator",             SP_func_generator },
 
     /* Weapons (SoF) */
     { "weapon_knife",               SP_item_pickup },
@@ -6238,6 +6243,91 @@ static void SP_func_crane(edict_t *ent, epair_t *pairs, int num_pairs)
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
                ent->move_origin[0], ent->move_origin[1], ent->move_origin[2],
                ent->speed);
+}
+
+/* ==========================================================================
+   func_generator — Power generator that fires targets when destroyed
+   When killed, all entities matching the "target" field are triggered.
+   Visually sparks while taking damage, explodes on death.
+   Keys: "health" = generator HP, "target" = entities to disable on destruction
+   ========================================================================== */
+
+static void generator_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
+                           int damage, vec3_t point)
+{
+    extern void R_ParticleEffect(vec3_t org, vec3_t dir, int type, int count);
+    extern void R_AddDlight(vec3_t origin, float r, float g, float b,
+                             float intensity, float duration);
+    vec3_t up = {0, 0, 1};
+
+    (void)inflictor; (void)damage; (void)point;
+
+    R_ParticleEffect(self->s.origin, up, 2, 24);
+    R_ParticleEffect(self->s.origin, up, 10, 16);
+    R_AddDlight(self->s.origin, 1.0f, 0.5f, 0.0f, 500.0f, 0.8f);
+
+    {
+        int snd = gi.soundindex("world/explode.wav");
+        if (snd)
+            gi.positioned_sound(self->s.origin, NULL, CHAN_AUTO, snd, 1.0f, ATTN_NORM, 0);
+    }
+
+    /* Fire targets — connected entities get triggered */
+    if (self->target)
+        G_UseTargets(attacker, self->target);
+
+    self->solid = SOLID_NOT;
+    self->takedamage = 0;
+    self->s.modelindex = 0;
+    gi.linkentity(self);
+}
+
+static void generator_pain(edict_t *self, edict_t *other, float kick, int damage)
+{
+    extern void R_ParticleEffect(vec3_t org, vec3_t dir, int type, int count);
+    vec3_t up = {0, 0, 1};
+    (void)other; (void)kick; (void)damage;
+
+    /* Sparks when hit */
+    R_ParticleEffect(self->s.origin, up, 12, 6);
+    {
+        int snd = gi.soundindex("world/spark.wav");
+        if (snd)
+            gi.positioned_sound(self->s.origin, NULL, CHAN_AUTO, snd, 0.7f, ATTN_NORM, 0);
+    }
+}
+
+static void SP_func_generator(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *v;
+
+    ent->classname = "func_generator";
+    ent->solid = SOLID_BBOX;
+    ent->movetype = MOVETYPE_NONE;
+    ent->takedamage = DAMAGE_YES;
+    ent->die = generator_die;
+    ent->pain = generator_pain;
+
+    v = ED_FindValue(pairs, num_pairs, "health");
+    ent->health = v ? atoi(v) : 150;
+    ent->max_health = ent->health;
+
+    v = ED_FindValue(pairs, num_pairs, "target");
+    if (v && v[0])
+        ent->target = (char *)v;
+
+    v = ED_FindValue(pairs, num_pairs, "model");
+    if (v && v[0])
+        ent->s.modelindex = gi.modelindex(v);
+
+    VectorSet(ent->mins, -16, -16, 0);
+    VectorSet(ent->maxs, 16, 16, 32);
+
+    gi.linkentity(ent);
+
+    gi.dprintf("  func_generator at (%.0f %.0f %.0f) hp=%d target='%s'\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->health, ent->target ? ent->target : "none");
 }
 
 /* ==========================================================================

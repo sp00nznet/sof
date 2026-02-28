@@ -531,6 +531,9 @@ struct gclient_s {
     /* Weapon mastery: per-weapon kills track mastery level */
     int             weapon_kills[WEAP_COUNT]; /* kills with each weapon */
     int             weapon_mastery[WEAP_COUNT]; /* 0-3 mastery tier */
+
+    /* Armor type: 0=none, 1=light (40%), 2=medium (60%), 3=heavy (80%) */
+    int             armor_type;
 };
 
 /* ==========================================================================

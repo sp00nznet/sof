@@ -1049,6 +1049,35 @@ static void ai_think_attack(edict_t *self)
         return;
     }
 
+    /* Berserker mode: tough monsters go berserk when critically wounded */
+    if (self->max_health >= 120 && health_pct < 0.15f && health_pct > 0) {
+        /* Charge directly at the enemy, firing rapidly */
+        AI_MoveToward(self, self->enemy->s.origin, AI_CHASE_SPEED * 2.0f);
+        if (self->move_angles[2] < level.time) {
+            vec3_t aim_dir, aim_end;
+            trace_t btr;
+            VectorSubtract(self->enemy->s.origin, self->s.origin, aim_dir);
+            VectorNormalize(aim_dir);
+            /* Wild but fast fire */
+            aim_dir[0] += ((float)(rand() % 100) - 50.0f) * 0.003f;
+            aim_dir[1] += ((float)(rand() % 100) - 50.0f) * 0.003f;
+            VectorMA(self->s.origin, 1024.0f, aim_dir, aim_end);
+            btr = gi.trace(self->s.origin, NULL, NULL, aim_end, self, MASK_SHOT);
+            R_AddTracer(self->s.origin, btr.endpos, 1.0f, 0.3f, 0.3f);
+            if (snd_monster_fire)
+                gi.sound(self, CHAN_WEAPON, snd_monster_fire, 1.0f, ATTN_NORM, 0);
+            if (btr.ent && btr.ent->takedamage && btr.ent->health > 0) {
+                btr.ent->health -= 12;  /* increased damage in berserker */
+                R_ParticleEffect(btr.endpos, btr.plane.normal, 1, 6);
+                if (btr.ent->health <= 0 && btr.ent->die)
+                    btr.ent->die(btr.ent, self, self, 12, btr.endpos);
+            }
+            self->move_angles[2] = level.time + 0.15f;  /* very fast fire rate */
+        }
+        self->nextthink = level.time + FRAMETIME;
+        return;
+    }
+
     /* Blind fire from cover: fire around corners with very low accuracy */
     if (self->max_health >= 60 && health_pct < 0.5f &&
         self->move_angles[2] < level.time) {

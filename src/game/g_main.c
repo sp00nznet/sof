@@ -1784,6 +1784,27 @@ static void ClientCommand(edict_t *ent)
         return;
     }
 
+    /* Player emote — animations/voice lines */
+    if (Q_stricmp(cmd, "emote") == 0) {
+        const char *emote_name = gi.argc() >= 3 ? gi.argv(2) : "wave";
+        if (Q_stricmp(emote_name, "wave") == 0) {
+            gi.cprintf(ent, PRINT_ALL, "%s waves.\n", ent->client->pers_netname);
+            SCR_AddPickupMessage("*wave*");
+        } else if (Q_stricmp(emote_name, "salute") == 0) {
+            gi.cprintf(ent, PRINT_ALL, "%s salutes.\n", ent->client->pers_netname);
+            SCR_AddPickupMessage("*salute*");
+        } else if (Q_stricmp(emote_name, "nod") == 0) {
+            gi.cprintf(ent, PRINT_ALL, "%s nods.\n", ent->client->pers_netname);
+            SCR_AddPickupMessage("*nod*");
+        } else if (Q_stricmp(emote_name, "no") == 0) {
+            gi.cprintf(ent, PRINT_ALL, "%s shakes head.\n", ent->client->pers_netname);
+            SCR_AddPickupMessage("*no*");
+        } else {
+            gi.cprintf(ent, PRINT_ALL, "Emotes: wave, salute, nod, no\n");
+        }
+        return;
+    }
+
     /* Compass — show facing direction and objective distance */
     if (Q_stricmp(cmd, "compass") == 0 || Q_stricmp(cmd, "bearing") == 0) {
         float yaw = ent->client->viewangles[1];
@@ -3311,10 +3332,19 @@ static void G_FireHitscan(edict_t *ent)
                 if (tr.ent->client && tr.ent->client->shield_end > level.time)
                     zone_dmg = (int)(zone_dmg * tr.ent->client->shield_mult);
 
-                /* Armor absorbs 66% of damage — unless AP rounds bypass it */
+                /* Armor absorbs damage based on type — AP rounds bypass */
                 if (tr.ent->client && tr.ent->client->armor > 0 &&
                     !(ent->client && ent->client->ap_rounds)) {
-                    int armor_absorb = (int)(zone_dmg * 0.66f);
+                    /* Absorption: light=40%, medium=60%, heavy=80%, default=66% */
+                    float absorb_pct;
+                    int armor_absorb;
+                    switch (tr.ent->client->armor_type) {
+                    case 1:  absorb_pct = 0.40f; break;  /* light */
+                    case 2:  absorb_pct = 0.60f; break;  /* medium */
+                    case 3:  absorb_pct = 0.80f; break;  /* heavy */
+                    default: absorb_pct = 0.66f; break;
+                    }
+                    armor_absorb = (int)(zone_dmg * absorb_pct);
                     if (armor_absorb > tr.ent->client->armor)
                         armor_absorb = tr.ent->client->armor;
                     tr.ent->client->armor -= armor_absorb;
