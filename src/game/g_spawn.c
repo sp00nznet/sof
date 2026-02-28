@@ -265,6 +265,7 @@ static void SP_trigger_music(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_cage(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_trigger_hazard(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_zipline(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_elevator_call(edict_t *ent, epair_t *pairs, int num_pairs);
 static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
                            int damage, vec3_t point);
 
@@ -520,6 +521,10 @@ static spawn_func_t spawn_funcs[] = {
     /* Zipline */
     { "func_zipline",               SP_func_zipline },
     { "misc_zipline",               SP_func_zipline },
+
+    /* Elevator call button */
+    { "func_elevator_call",         SP_func_elevator_call },
+    { "func_call_button",           SP_func_elevator_call },
 
     /* Weapons (SoF) */
     { "weapon_knife",               SP_item_pickup },
@@ -6055,6 +6060,80 @@ static void SP_func_zipline(edict_t *ent, epair_t *pairs, int num_pairs)
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
                ent->move_origin[0], ent->move_origin[1], ent->move_origin[2],
                ent->speed);
+}
+
+/* ==========================================================================
+   func_elevator_call — Elevator call button
+   When used, finds the targeted func_plat/func_door and fires its use function.
+   Plays a button sound and has a cooldown to prevent spam.
+   Keys: "target" = name of elevator entity, "wait" = cooldown between uses
+   ========================================================================== */
+
+static void elevator_call_use(edict_t *self, edict_t *other, edict_t *activator)
+{
+    extern game_export_t globals;
+    int i;
+
+    (void)other;
+
+    if (!activator || !activator->client)
+        return;
+
+    /* Cooldown check */
+    if (level.time < self->dmg_debounce_time) {
+        gi.cprintf(activator, PRINT_ALL, "Elevator is on its way...\n");
+        return;
+    }
+
+    /* Find and activate the targeted elevator */
+    if (self->target && self->target[0]) {
+        for (i = 1; i < globals.num_edicts; i++) {
+            edict_t *e = &globals.edicts[i];
+            if (e->inuse && e->targetname && e->targetname[0] &&
+                Q_stricmp(e->targetname, self->target) == 0) {
+                if (e->use)
+                    e->use(e, self, activator);
+                break;
+            }
+        }
+    }
+
+    self->dmg_debounce_time = level.time + self->wait;
+
+    /* Button press sound + visual */
+    {
+        int snd = gi.soundindex("world/button.wav");
+        if (snd)
+            gi.sound(self, CHAN_AUTO, snd, 1.0f, ATTN_NORM, 0);
+    }
+
+    gi.cprintf(activator, PRINT_ALL, "Called elevator.\n");
+}
+
+static void SP_func_elevator_call(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *v;
+
+    ent->classname = "func_elevator_call";
+    ent->solid = SOLID_BBOX;
+    ent->movetype = MOVETYPE_NONE;
+    ent->use = elevator_call_use;
+
+    v = ED_FindValue(pairs, num_pairs, "target");
+    if (v && v[0])
+        ent->target = (char *)v;
+
+    v = ED_FindValue(pairs, num_pairs, "wait");
+    ent->wait = v ? (float)atof(v) : 3.0f;  /* 3s default cooldown */
+
+    VectorSet(ent->mins, -8, -8, 0);
+    VectorSet(ent->maxs, 8, 8, 16);
+
+    gi.linkentity(ent);
+
+    gi.dprintf("  func_elevator_call at (%.0f %.0f %.0f) target='%s'\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->target ? ent->target : "none");
 }
 
 /* ==========================================================================

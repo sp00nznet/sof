@@ -1121,20 +1121,28 @@ static void ClientCommand(edict_t *ent)
         /* Show detailed weapon info */
         if (w > 0 && w < WEAP_COUNT) {
             int att = ent->client->attachments[w];
-            gi.cprintf(ent, PRINT_ALL,
-                "--- %s ---\n"
-                "Ammo: %d/%d  Mag: %d\n"
-                "Damage: %d  Heat: %.0f%%\n"
-                "Attachments:%s%s%s%s\n",
-                weapon_names[w],
-                ent->client->ammo[w], ent->client->ammo_max[w],
-                ent->client->magazine[w],
-                weapon_damage[w],
-                ent->client->weapon_heat * 100.0f,
-                (att & ATTACH_SILENCER) ? " Silencer" : "",
-                (att & ATTACH_SCOPE) ? " Scope" : "",
-                (att & ATTACH_EXTMAG) ? " ExtMag" : "",
-                (att & ATTACH_LASER) ? " Laser" : "");
+            {
+                float cond = ent->client->weapon_condition[w];
+                if (cond <= 0) cond = 1.0f;
+                gi.cprintf(ent, PRINT_ALL,
+                    "--- %s ---\n"
+                    "Ammo: %d/%d  Mag: %d\n"
+                    "Damage: %d  Heat: %.0f%%\n"
+                    "Condition: %.0f%%  Draw: %.2fs\n"
+                    "Attachments:%s%s%s%s%s\n",
+                    weapon_names[w],
+                    ent->client->ammo[w], ent->client->ammo_max[w],
+                    ent->client->magazine[w],
+                    weapon_damage[w],
+                    ent->client->weapon_heat * 100.0f,
+                    cond * 100.0f,
+                    weapon_draw_time[w],
+                    (att & ATTACH_SILENCER) ? " Silencer" : "",
+                    (att & ATTACH_SCOPE) ? " Scope" : "",
+                    (att & ATTACH_EXTMAG) ? " ExtMag" : "",
+                    (att & ATTACH_LASER) ? " Laser" : "",
+                    (att & ATTACH_BAYONET) ? " Bayonet" : "");
+            }
         }
         return;
     }
@@ -1627,6 +1635,35 @@ static void ClientCommand(edict_t *ent)
     }
 
     /* Ping/mark — place a marker at crosshair location for team awareness */
+    /* Player statistics display */
+    if (Q_stricmp(cmd, "stats") == 0 || Q_stricmp(cmd, "score") == 0) {
+        float accuracy = (ent->client->shots_fired > 0) ?
+            (float)ent->client->shots_hit / (float)ent->client->shots_fired * 100.0f : 0;
+        float kd = (ent->client->deaths > 0) ?
+            (float)ent->client->kills / (float)ent->client->deaths : (float)ent->client->kills;
+        static const char *rank_names[] = {
+            "Recruit", "Private", "Corporal", "Sergeant",
+            "Lieutenant", "Captain", "Major", "Colonel",
+            "Commander", "General"
+        };
+        gi.cprintf(ent, PRINT_ALL,
+            "=== Player Statistics ===\n"
+            "Rank: %s (Level %d)\n"
+            "XP: %d  Score: %d\n"
+            "Kills: %d  Deaths: %d  K/D: %.2f\n"
+            "Headshots: %d\n"
+            "Accuracy: %.1f%% (%d/%d)\n"
+            "Health: %d/%d  Armor: %d\n"
+            "========================\n",
+            rank_names[ent->client->rank], ent->client->rank,
+            ent->client->xp, ent->client->score,
+            ent->client->kills, ent->client->deaths, kd,
+            ent->client->headshots,
+            accuracy, ent->client->shots_hit, ent->client->shots_fired,
+            ent->health, ent->max_health, ent->client->armor);
+        return;
+    }
+
     /* Weapon maintenance — restore weapon condition */
     if (Q_stricmp(cmd, "maintain") == 0 || Q_stricmp(cmd, "clean") == 0) {
         int w = ent->client->pers_weapon;

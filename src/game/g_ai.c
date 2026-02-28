@@ -721,6 +721,37 @@ static void ai_think_alert(edict_t *self)
 
     AI_FaceEnemy(self);
 
+    /* Call out enemy position to nearby allies */
+    {
+        extern game_export_t globals;
+        int ci;
+        for (ci = 1; ci < globals.num_edicts; ci++) {
+            edict_t *ally = &globals.edicts[ci];
+            vec3_t adiff;
+            float adist;
+            if (ally == self || !ally->inuse || ally->health <= 0)
+                continue;
+            if (!(ally->svflags & SVF_MONSTER))
+                continue;
+            if (ally->enemy) continue;  /* already engaged */
+            VectorSubtract(ally->s.origin, self->s.origin, adiff);
+            adist = VectorLength(adiff);
+            if (adist < 800.0f) {
+                /* Alert nearby idle allies to the enemy position */
+                ally->enemy = self->enemy;
+                ally->count = AI_STATE_ALERT;
+                VectorCopy(self->enemy->s.origin, ally->move_origin);
+                ally->nextthink = level.time + 0.2f + ((float)(rand() % 30)) * 0.01f;
+            }
+        }
+        /* Callout sound */
+        {
+            int snd = gi.soundindex("npc/alert.wav");
+            if (snd)
+                gi.sound(self, CHAN_VOICE, snd, 1.0f, ATTN_NORM, 0);
+        }
+    }
+
     /* After a brief alert, start chasing */
     self->count = AI_STATE_CHASE;
     self->nextthink = level.time + FRAMETIME;
