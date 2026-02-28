@@ -840,6 +840,110 @@ static void RunFrame(void)
             }
         }
 
+        /* Mortar strike: timed artillery bombardment */
+        if (ent->classname && Q_stricmp(ent->classname, "mortar_strike") == 0) {
+            if (ent->count > 0 && level.time >= ent->wait) {
+                /* Impact! Random offset around target */
+                vec3_t impact;
+                vec3_t impact_up = {0, 0, 1};
+                float radius = (float)ent->dmg_radius;
+                int mi;
+
+                VectorCopy(ent->s.origin, impact);
+                impact[0] += (float)(rand() % 120 - 60);
+                impact[1] += (float)(rand() % 120 - 60);
+
+                /* Explosion effects */
+                R_ParticleEffect(impact, impact_up, 3, 30);
+                R_AddDlight(impact, 1.0f, 0.7f, 0.3f, 400.0f, 0.6f);
+                SCR_AddScreenShake(0.5f, 0.4f);
+                {
+                    int snd = gi.soundindex("weapons/explosion.wav");
+                    if (snd)
+                        gi.positioned_sound(impact, ent, CHAN_AUTO,
+                                            snd, 1.0f, ATTN_NONE, 0);
+                }
+
+                /* Radius damage */
+                for (mi = 1; mi < globals.num_edicts; mi++) {
+                    edict_t *v = &globals.edicts[mi];
+                    vec3_t md;
+                    float mdist;
+                    if (!v->inuse || v->health <= 0 || !v->takedamage)
+                        continue;
+                    VectorSubtract(v->s.origin, impact, md);
+                    mdist = VectorLength(md);
+                    if (mdist < radius) {
+                        int m_dmg = (int)(ent->dmg * (1.0f - mdist / radius));
+                        if (m_dmg < 1) m_dmg = 1;
+                        v->health -= m_dmg;
+                        v->velocity[2] += 200.0f; /* knockup */
+                        if (v->client)
+                            v->client->pers_health = v->health;
+                        if (v->health <= 0 && v->die)
+                            v->die(v, ent, ent->owner, m_dmg, impact);
+                        else if (v->pain)
+                            v->pain(v, ent, 0, m_dmg);
+                    }
+                }
+
+                ent->count--;
+                ent->wait = level.time + ent->delay; /* next shell */
+
+                if (ent->count <= 0) {
+                    ent->inuse = qfalse;
+                    gi.unlinkentity(ent);
+                }
+            }
+        }
+
+        /* Holographic decoy: flickering visual + AI magnet, expire on timer or death */
+        if (ent->classname && Q_stricmp(ent->classname, "decoy_hologram") == 0) {
+            if (ent->health <= 0 || level.time >= ent->wait) {
+                /* Decoy destroyed or expired — flicker out */
+                vec3_t dc_up = {0, 0, 1};
+                R_ParticleEffect(ent->s.origin, dc_up, 5, 10);
+                R_AddDlight(ent->s.origin, 0.5f, 0.5f, 1.0f, 100.0f, 0.3f);
+                ent->inuse = qfalse;
+                gi.unlinkentity(ent);
+            } else {
+                /* Holographic shimmer effect */
+                if ((level.framenum % 3) == 0) {
+                    R_AddDlight(ent->s.origin, 0.3f, 0.5f, 0.8f, 40.0f,
+                                level.frametime + 0.05f);
+                }
+            }
+        }
+
+        /* Squad follower: NPCs set to follow player move toward them */
+        if (ent->count == 99 && ent->owner && ent->owner->inuse &&
+            ent->owner->client && ent->health > 0) {
+            vec3_t follow_dir;
+            float follow_dist;
+            VectorSubtract(ent->owner->s.origin, ent->s.origin, follow_dir);
+            follow_dist = VectorLength(follow_dir);
+            if (follow_dist > 96.0f) {
+                /* Move toward player */
+                VectorNormalize(follow_dir);
+                ent->velocity[0] = follow_dir[0] * 150.0f;
+                ent->velocity[1] = follow_dir[1] * 150.0f;
+                /* Face the player */
+                ent->ideal_yaw = atan2f(follow_dir[1], follow_dir[0]) * 180.0f / 3.14159f;
+                {
+                    float yaw_diff = ent->ideal_yaw - ent->s.angles[1];
+                    while (yaw_diff > 180) yaw_diff -= 360;
+                    while (yaw_diff < -180) yaw_diff += 360;
+                    if (yaw_diff > ent->yaw_speed) yaw_diff = ent->yaw_speed;
+                    if (yaw_diff < -ent->yaw_speed) yaw_diff = -ent->yaw_speed;
+                    ent->s.angles[1] += yaw_diff;
+                }
+            } else {
+                /* Close enough — stop */
+                ent->velocity[0] = 0;
+                ent->velocity[1] = 0;
+            }
+        }
+
         /* Run physics based on movetype */
         G_RunEntity(ent);
     }
@@ -1991,27 +2095,56 @@ static void ClientCommand(edict_t *ent)
         return;
     }
 
-    /* Bayonet melee — quick melee with bayonet attachment on assault/machinegun */
-    if (Q_stricmp(cmd, "bayonet") == 0 || Q_stricmp(cmd, "melee") == 0) {
+    /* Bayonet melee / bayonet charge — quick melee or sprint lunge */
+    if (Q_stricmp(cmd, "bayonet") == 0 || Q_stricmp(cmd, "melee") == 0 ||
+        Q_stricmp(cmd, "charge") == 0) {
         int w = ent->client->pers_weapon;
         if (w > 0 && w < WEAP_COUNT &&
             (ent->client->attachments[w] & ATTACH_BAYONET)) {
             vec3_t fwd_b, start_b, end_b;
             trace_t tr_b;
+            qboolean is_charge = ent->client->sprinting;
+            float reach = is_charge ? 128.0f : 80.0f;
+
+            /* Bayonet charge: lunge forward when sprinting */
+            if (is_charge) {
+                G_AngleVectors(ent->client->viewangles, fwd_b, NULL, NULL);
+                ent->velocity[0] = fwd_b[0] * 500.0f;
+                ent->velocity[1] = fwd_b[1] * 500.0f;
+                ent->velocity[2] = 50.0f; /* slight upward for momentum */
+                SCR_AddPickupMessage("BAYONET CHARGE!");
+                {
+                    int snd = gi.soundindex("player/grunt.wav");
+                    if (snd) gi.sound(ent, CHAN_VOICE, snd, 1.0f, ATTN_NORM, 0);
+                }
+            }
 
             G_AngleVectors(ent->client->viewangles, fwd_b, NULL, NULL);
             VectorCopy(ent->s.origin, start_b);
             start_b[2] += ent->client->viewheight;
-            VectorMA(start_b, 80.0f, fwd_b, end_b);
+            VectorMA(start_b, reach, fwd_b, end_b);
 
             tr_b = gi.trace(start_b, NULL, NULL, end_b, ent, MASK_SHOT);
             if (tr_b.fraction < 1.0f && tr_b.ent &&
                 tr_b.ent->takedamage && tr_b.ent->health > 0) {
-                int bay_dmg = 45;  /* bayonet does more than knife */
+                int bay_dmg = is_charge ? 135 : 45; /* 3x damage on charge */
                 tr_b.ent->health -= bay_dmg;
-                R_ParticleEffect(tr_b.endpos, tr_b.plane.normal, 1, 10);
+                R_ParticleEffect(tr_b.endpos, tr_b.plane.normal, 1, is_charge ? 20 : 10);
                 SCR_AddDamageNumber(bay_dmg, 0, 0);
                 SCR_TriggerHitMarker();
+                /* Charge knockback: massive push */
+                if (is_charge) {
+                    tr_b.ent->velocity[0] += fwd_b[0] * 400.0f;
+                    tr_b.ent->velocity[1] += fwd_b[1] * 400.0f;
+                    tr_b.ent->velocity[2] += 150.0f;
+                    /* Stagger AI */
+                    if (tr_b.ent->svflags & SVF_MONSTER) {
+                        tr_b.ent->count = 5; /* AI_STATE_PAIN */
+                        tr_b.ent->nextthink = level.time + 1.5f;
+                    }
+                }
+                if (tr_b.ent->client)
+                    tr_b.ent->client->pers_health = tr_b.ent->health;
                 if (tr_b.ent->health <= 0 && tr_b.ent->die)
                     tr_b.ent->die(tr_b.ent, ent, ent, bay_dmg, tr_b.endpos);
             }
@@ -2019,7 +2152,7 @@ static void ClientCommand(edict_t *ent)
                 int snd = gi.soundindex("weapons/knife_hit.wav");
                 if (snd) gi.sound(ent, CHAN_WEAPON, snd, 1.0f, ATTN_NORM, 0);
             }
-            ent->client->weapon_change_time = level.time + 0.5f; /* melee cooldown */
+            ent->client->weapon_change_time = level.time + (is_charge ? 0.8f : 0.5f);
         } else {
             gi.cprintf(ent, PRINT_ALL, "No bayonet attached to this weapon.\n");
         }
@@ -2816,6 +2949,154 @@ static void ClientCommand(edict_t *ent)
                            mastery_names[ent->client->weapon_mastery[mi]],
                            ent->client->weapon_kills[mi]);
             }
+        }
+        return;
+    }
+
+    /* Mortar strike: call in artillery bombardment at aimed position */
+    if (Q_stricmp(cmd, "mortar") == 0 || Q_stricmp(cmd, "airstrike") == 0) {
+        if (ent->deadflag)
+            return;
+        /* Cooldown: reuse move_angles[0] (voice cooldown) */
+        if (ent->move_angles[0] > level.time) {
+            gi.cprintf(ent, PRINT_ALL, "Mortar strike not ready (%.0fs).\n",
+                       ent->move_angles[0] - level.time);
+            return;
+        }
+        {
+            vec3_t mk_fwd, mk_rt, mk_up, mk_start, mk_end;
+            trace_t mk_tr;
+            edict_t *marker;
+
+            G_AngleVectors(ent->client->viewangles, mk_fwd, mk_rt, mk_up);
+            VectorCopy(ent->s.origin, mk_start);
+            mk_start[2] += ent->client->viewheight;
+            VectorMA(mk_start, 2048, mk_fwd, mk_end);
+            mk_tr = gi.trace(mk_start, NULL, NULL, mk_end, ent, MASK_SHOT);
+
+            marker = G_AllocEdict();
+            if (marker) {
+                marker->classname = "mortar_strike";
+                VectorCopy(mk_tr.endpos, marker->s.origin);
+                marker->movetype = MOVETYPE_NONE;
+                marker->solid = SOLID_NOT;
+                marker->owner = ent;
+                marker->dmg = 100; /* damage per shell */
+                marker->dmg_radius = 250;
+                marker->count = 5; /* number of shells */
+                marker->wait = level.time + 3.0f; /* 3s delay before first impact */
+                marker->delay = 0.4f; /* time between shells */
+                gi.linkentity(marker);
+
+                gi.cprintf(ent, PRINT_ALL, "Mortar strike incoming — 3 seconds!\n");
+                SCR_AddPickupMessage("MORTAR STRIKE CALLED");
+                {
+                    int snd = gi.soundindex("world/radio_static.wav");
+                    if (snd)
+                        gi.sound(ent, CHAN_VOICE, snd, 1.0f, ATTN_NORM, 0);
+                }
+                ent->move_angles[0] = level.time + 60.0f; /* 60s cooldown */
+            }
+        }
+        return;
+    }
+
+    /* Holographic decoy: spawn a fake player entity to draw AI fire */
+    if (Q_stricmp(cmd, "decoy") == 0 || Q_stricmp(cmd, "hologram") == 0) {
+        if (ent->deadflag)
+            return;
+        {
+            vec3_t dc_fwd, dc_rt, dc_up, dc_pos;
+            edict_t *decoy;
+
+            G_AngleVectors(ent->client->viewangles, dc_fwd, dc_rt, dc_up);
+            VectorCopy(ent->s.origin, dc_pos);
+            VectorMA(dc_pos, 64, dc_fwd, dc_pos);
+
+            decoy = G_AllocEdict();
+            if (decoy) {
+                decoy->classname = "decoy_hologram";
+                VectorCopy(dc_pos, decoy->s.origin);
+                VectorCopy(ent->s.angles, decoy->s.angles);
+                decoy->movetype = MOVETYPE_NONE;
+                decoy->solid = SOLID_BBOX;
+                decoy->takedamage = DAMAGE_YES;
+                decoy->health = 50;
+                decoy->max_health = 50;
+                decoy->owner = ent;
+                decoy->wait = level.time + 15.0f; /* lasts 15 seconds */
+                VectorCopy(ent->mins, decoy->mins);
+                VectorCopy(ent->maxs, decoy->maxs);
+                decoy->s.modelindex = ent->s.modelindex;
+                gi.linkentity(decoy);
+
+                /* Redirect nearby AI to attack the decoy */
+                {
+                    int di;
+                    for (di = 1; di < globals.num_edicts; di++) {
+                        edict_t *m = &globals.edicts[di];
+                        vec3_t dd;
+                        float ddist;
+                        if (!m->inuse || m->health <= 0)
+                            continue;
+                        if (!(m->svflags & SVF_MONSTER))
+                            continue;
+                        VectorSubtract(m->s.origin, decoy->s.origin, dd);
+                        ddist = VectorLength(dd);
+                        if (ddist < 500.0f && m->enemy == ent) {
+                            m->enemy = decoy;
+                            VectorCopy(decoy->s.origin, m->move_origin);
+                        }
+                    }
+                }
+
+                gi.cprintf(ent, PRINT_ALL, "Holographic decoy deployed!\n");
+                SCR_AddPickupMessage("DECOY ACTIVE");
+                {
+                    int snd = gi.soundindex("items/decoy_on.wav");
+                    if (snd)
+                        gi.sound(decoy, CHAN_ITEM, snd, 0.8f, ATTN_NORM, 0);
+                }
+            }
+        }
+        return;
+    }
+
+    /* Squad follow: recruit nearby friendlies to follow the player */
+    if (Q_stricmp(cmd, "squad") == 0 || Q_stricmp(cmd, "follow") == 0) {
+        if (ent->deadflag)
+            return;
+        {
+            int recruited = 0;
+            int si;
+            for (si = 1; si < globals.num_edicts; si++) {
+                edict_t *npc = &globals.edicts[si];
+                vec3_t sd;
+                float sdist;
+                if (!npc->inuse || npc->health <= 0)
+                    continue;
+                if (!npc->classname)
+                    continue;
+                /* Only recruit hostages and civilians */
+                if (Q_stricmp(npc->classname, "monster_hostage") != 0 &&
+                    Q_stricmp(npc->classname, "monster_civilian") != 0 &&
+                    Q_stricmp(npc->classname, "info_npc") != 0)
+                    continue;
+                VectorSubtract(npc->s.origin, ent->s.origin, sd);
+                sdist = VectorLength(sd);
+                if (sdist < 256.0f) {
+                    /* Set this NPC to follow the player */
+                    npc->enemy = NULL;
+                    npc->owner = ent; /* follow target */
+                    npc->count = 99; /* special state: following player */
+                    npc->yaw_speed = 20.0f;
+                    recruited++;
+                }
+            }
+            if (recruited > 0)
+                gi.cprintf(ent, PRINT_ALL, "%d friendlies following you.\n", recruited);
+            else
+                gi.cprintf(ent, PRINT_ALL, "No friendlies nearby to recruit.\n");
         }
         return;
     }
