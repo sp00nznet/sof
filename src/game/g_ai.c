@@ -482,12 +482,30 @@ static void AI_Dodge(edict_t *self)
 
     /* Player aiming within ~15 degrees of this monster */
     if (dot > 0.96f && dist < 600.0f) {
-        /* Dodge: quick strafe sideways */
-        int dir = (rand() & 1) ? 1 : -1;
-        AI_Strafe(self, dir);
-        /* Extra speed burst for dodge */
-        self->velocity[0] *= 1.8f;
-        self->velocity[1] *= 1.8f;
+        /* Combat roll: skilled monsters (HP >= 80) do a full roll instead of strafe */
+        if (self->max_health >= 80 && self->health < self->max_health) {
+            int dir = (rand() & 1) ? 1 : -1;
+            vec3_t roll_dir, right;
+            /* Calculate perpendicular direction for roll */
+            right[0] = -to_me[1];
+            right[1] = to_me[0];
+            right[2] = 0;
+            VectorScale(right, (float)dir * 250.0f, roll_dir);
+            self->velocity[0] = roll_dir[0];
+            self->velocity[1] = roll_dir[1];
+            self->velocity[2] = 60.0f;  /* slight hop during roll */
+            /* Roll animation — rapid frame cycle */
+            self->s.frame = FRAME_PAIN1_START;
+            /* Invulnerable briefly during roll */
+            self->dmg_debounce_time = level.time + 0.4f;
+        } else {
+            /* Standard dodge: quick strafe sideways */
+            int dir = (rand() & 1) ? 1 : -1;
+            AI_Strafe(self, dir);
+            /* Extra speed burst for dodge */
+            self->velocity[0] *= 1.8f;
+            self->velocity[1] *= 1.8f;
+        }
     }
 }
 
@@ -975,6 +993,31 @@ static void ai_think_chase(edict_t *self)
             }
             if (fb_found) {
                 AI_MoveToward(self, fb_pos, AI_CHASE_SPEED * 1.3f);
+                /* Retreat callout to allies */
+                if (self->move_angles[0] < level.time - 3.0f) {
+                    self->move_angles[0] = level.time;
+                    {
+                        int snd = gi.soundindex("npc/retreat.wav");
+                        if (snd)
+                            gi.sound(self, CHAN_VOICE, snd, 1.0f, ATTN_NORM, 0);
+                    }
+                }
+                /* Lay suppressive fire while retreating */
+                if (AI_Visible(self, self->enemy) &&
+                    self->move_angles[2] < level.time) {
+                    vec3_t aim_dir, aim_end;
+                    trace_t rtr;
+                    VectorSubtract(self->enemy->s.origin, self->s.origin, aim_dir);
+                    VectorNormalize(aim_dir);
+                    aim_dir[0] += ((float)(rand() % 80) - 40.0f) * 0.002f;
+                    aim_dir[1] += ((float)(rand() % 80) - 40.0f) * 0.002f;
+                    VectorMA(self->s.origin, 1024.0f, aim_dir, aim_end);
+                    rtr = gi.trace(self->s.origin, NULL, NULL, aim_end, self, MASK_SHOT);
+                    R_AddTracer(self->s.origin, rtr.endpos, 1.0f, 0.7f, 0.3f);
+                    if (snd_monster_fire)
+                        gi.sound(self, CHAN_WEAPON, snd_monster_fire, 0.7f, ATTN_NORM, 0);
+                    self->move_angles[2] = level.time + 0.25f;
+                }
             } else if (AI_SeekCover(self)) {
                 AI_MoveToward(self, self->move_origin, AI_CHASE_SPEED * 1.2f);
             } else {

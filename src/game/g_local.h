@@ -547,6 +547,9 @@ struct gclient_s {
 
     /* Weapon camo/skin */
     int             weapon_camo[WEAP_COUNT]; /* cosmetic skin index per weapon (0=default) */
+
+    /* Idle auto-inspect */
+    float           last_action_time;      /* level.time of last fire/move/action */
 };
 
 /* ==========================================================================

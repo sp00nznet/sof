@@ -4594,6 +4594,35 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
         ent->maxs[2] = 16;
         /* Slight camera tilt during slide */
         client->kick_angles[0] += slide_frac * 2.0f;
+        /* Slide kick: damage enemies we collide with while sliding */
+        {
+            vec3_t kick_end;
+            trace_t kick_tr;
+            VectorMA(ent->s.origin, 48.0f, client->slide_dir, kick_end);
+            kick_tr = gi.trace(ent->s.origin, ent->mins, ent->maxs,
+                               kick_end, ent, MASK_SHOT);
+            if (kick_tr.ent && kick_tr.ent->takedamage &&
+                kick_tr.ent->health > 0 &&
+                kick_tr.fraction < 0.8f) {
+                int kick_dmg = 25;
+                kick_tr.ent->health -= kick_dmg;
+                R_ParticleEffect(kick_tr.endpos, client->slide_dir, 1, 4);
+                SCR_AddDamageNumber(kick_dmg, 0, 0);
+                if (kick_tr.ent->health <= 0 && kick_tr.ent->die) {
+                    kick_tr.ent->die(kick_tr.ent, ent, ent, kick_dmg,
+                                     kick_tr.endpos);
+                    client->score += 10;
+                    SCR_AddScorePopup(10);
+                    SCR_AddPickupMessage("SLIDE KICK!");
+                }
+                /* Knockback the target */
+                kick_tr.ent->velocity[0] += client->slide_dir[0] * 200.0f;
+                kick_tr.ent->velocity[1] += client->slide_dir[1] * 200.0f;
+                kick_tr.ent->velocity[2] += 100.0f;
+                /* End slide early on contact */
+                client->slide_end = level.time;
+            }
+        }
     } else if (client->sprinting && (ucmd->buttons & BUTTON_CROUCH) &&
                ucmd->forwardmove > 0 && ent->groundentity &&
                client->stamina > 20.0f) {
@@ -4813,6 +4842,22 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
         float dip = sinf(swap_t * 8.0f) * 2.0f;
         client->kick_angles[0] += dip;      /* pitch wobble */
         client->kick_origin[2] -= dip * 2;  /* weapon drops down then comes up */
+    }
+
+    /* Track last action time for idle detection */
+    {
+        float speed_sq = ent->velocity[0] * ent->velocity[0] +
+                         ent->velocity[1] * ent->velocity[1];
+        if (speed_sq > 100.0f || (ucmd->buttons & (BUTTON_ATTACK | BUTTON_SPRINT)))
+            client->last_action_time = level.time;
+    }
+
+    /* Idle auto-inspect: automatically inspect weapon after 8 seconds idle */
+    if (!ent->deadflag && client->inspect_end <= level.time &&
+        client->last_action_time > 0 &&
+        level.time - client->last_action_time > 8.0f) {
+        client->inspect_end = level.time + 2.0f;
+        client->last_action_time = level.time;  /* prevent re-trigger */
     }
 
     /* Weapon inspect animation: sway weapon while inspecting */
