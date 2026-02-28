@@ -33,6 +33,7 @@ static void AI_TryBreach(edict_t *self);
 static void AI_LeapfrogAdvance(edict_t *self);
 static void AI_BlindFire(edict_t *self);
 static void AI_DragWounded(edict_t *self);
+void AI_SetupRappel(edict_t *ent);
 void AI_AllyDied(vec3_t death_origin);
 
 /* Monster sound indices — precached in monster_start */
@@ -2117,6 +2118,11 @@ static void monster_start(edict_t *ent, int health, int damage,
     ent->nextthink = level.time + 0.5f + ((float)(rand() % 100)) * 0.01f;
 
     gi.linkentity(ent);
+
+    /* Check for rappel spawn modifier (style bit 4) */
+    if (ent->style & 0x10) {
+        AI_SetupRappel(ent);
+    }
 }
 
 /*
@@ -2794,4 +2800,79 @@ static void AI_DragWounded(edict_t *self)
                 wounded->health = wounded->max_health;
         }
     }
+}
+
+/* ==========================================================================
+   AI Rappel — monsters descend from above on ropes for dynamic entries.
+   Spawned with "rappel" key, starts high up and descends toward ground.
+   Once landed, transitions to normal AI behavior.
+   ========================================================================== */
+
+static void rappel_think(edict_t *self)
+{
+    trace_t ground_tr;
+    vec3_t below;
+
+    VectorCopy(self->s.origin, below);
+    below[2] -= 16.0f;
+    ground_tr = gi.trace(self->s.origin, self->mins, self->maxs, below,
+                         self, MASK_MONSTERSOLID);
+
+    if (ground_tr.fraction < 1.0f) {
+        /* Landed — transition to normal AI */
+        self->movetype = MOVETYPE_STEP;
+        self->gravity = 1.0f;
+        self->think = monster_think;
+        self->count = AI_STATE_ALERT;  /* immediately alert on landing */
+        self->nextthink = level.time + 0.3f;
+        self->velocity[2] = 0;
+
+        /* Landing sound and dust */
+        {
+            vec3_t up = {0, 0, 1};
+            R_ParticleEffect(self->s.origin, up, 13, 6);  /* dust */
+            {
+                int snd = gi.soundindex("player/land.wav");
+                if (snd)
+                    gi.sound(self, CHAN_BODY, snd, 1.0f, ATTN_NORM, 0);
+            }
+        }
+
+        /* Find nearest enemy to engage */
+        {
+            extern game_export_t globals;
+            edict_t *player = &globals.edicts[1];
+            if (player && player->inuse && player->health > 0) {
+                self->enemy = player;
+                VectorCopy(player->s.origin, self->move_origin);
+            }
+        }
+        return;
+    }
+
+    /* Still descending — slide down rope */
+    self->velocity[2] = -200.0f;  /* descend speed */
+    self->nextthink = level.time + FRAMETIME;
+
+    /* Rope visual: draw line from start height to current position */
+    {
+        vec3_t rope_top;
+        VectorCopy(self->s.origin, rope_top);
+        rope_top[2] += 128.0f;
+        R_AddTracer(rope_top, self->s.origin, 0.3f, 0.3f, 0.3f);
+    }
+}
+
+void AI_SetupRappel(edict_t *ent)
+{
+    /* Move entity up to a rappel start height */
+    ent->s.origin[2] += 256.0f;
+    ent->movetype = MOVETYPE_FLY;  /* ignore gravity during descent */
+    ent->gravity = 0;
+    ent->think = rappel_think;
+    ent->nextthink = level.time + 1.0f;  /* brief delay before descending */
+    ent->velocity[2] = 0;
+    gi.linkentity(ent);
+    gi.dprintf("  AI rappel setup for %s at height %.0f\n",
+               ent->classname, ent->s.origin[2]);
 }

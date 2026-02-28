@@ -488,6 +488,44 @@ static void RunFrame(void)
     /* Update persistent decals */
     G_UpdateDecals();
 
+    /* Weather lightning: random strikes during rain storms */
+    if (level.weather == 1 && level.weather_density >= 0.5f) {
+        /* Random chance per frame: ~once every 10-20 seconds at 10Hz */
+        if ((rand() % 150) == 0) {
+            edict_t *player = &g_edicts[1];
+            if (player && player->inuse && player->client) {
+                vec3_t strike_pos;
+                /* Lightning strikes at random position near player */
+                strike_pos[0] = player->s.origin[0] + (float)(rand() % 2000 - 1000);
+                strike_pos[1] = player->s.origin[1] + (float)(rand() % 2000 - 1000);
+                strike_pos[2] = player->s.origin[2] + 512.0f;
+                /* Bright white flash */
+                R_AddDlight(strike_pos, 1.0f, 1.0f, 1.0f, 2000.0f, 0.3f);
+                /* Screen flash for player */
+                player->client->blend[0] = 0.9f;
+                player->client->blend[1] = 0.9f;
+                player->client->blend[2] = 1.0f;
+                player->client->blend[3] = 0.4f;
+                /* Thunder sound after brief delay */
+                {
+                    int snd = gi.soundindex("world/thunder.wav");
+                    if (snd)
+                        gi.positioned_sound(strike_pos, NULL, CHAN_AUTO,
+                                            snd, 1.0f, ATTN_NONE, 0);
+                }
+                /* Shake if close */
+                {
+                    vec3_t diff;
+                    float dist;
+                    VectorSubtract(player->s.origin, strike_pos, diff);
+                    dist = VectorLength(diff);
+                    if (dist < 500.0f)
+                        SCR_AddScreenShake(0.3f, 0.2f);
+                }
+            }
+        }
+    }
+
     /* Process active vote */
     if (level.vote_active) {
         if (level.time >= level.vote_end) {
@@ -3401,6 +3439,20 @@ static void G_FireHitscan(edict_t *ent)
                 }
             }
 
+            /* Stealth kill: bonus damage against unaware enemies (any weapon) */
+            if (tr.ent->svflags & SVF_MONSTER) {
+                /* Target is unaware if it has no enemy and is idle */
+                if (!tr.ent->enemy && tr.ent->count == 0) {  /* AI_STATE_IDLE=0 */
+                    damage *= 3;  /* triple damage on unaware targets */
+                    if (ent->client) {
+                        ent->client->score += 20;
+                        ent->client->xp += 10;
+                        SCR_AddScorePopup(20);
+                        SCR_AddPickupMessage("STEALTH KILL!");
+                    }
+                }
+            }
+
             /* Melee combo: consecutive knife hits deal escalating damage */
             if (weap == WEAP_KNIFE && ent->client) {
                 if (level.time - ent->client->melee_combo_time < 1.5f)
@@ -4322,6 +4374,44 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
     /* Reset double jump when landing */
     if (ent->groundentity)
         client->double_jump_used = false;
+
+    /* Mantling/vaulting: climb over low obstacles when jumping near a ledge */
+    if (!ent->groundentity && !ent->deadflag && ucmd->forwardmove > 0 &&
+        ent->velocity[2] > -100.0f && ent->velocity[2] < 200.0f) {
+        vec3_t fwd_check, wall_end, ledge_start, ledge_end;
+        trace_t wall_tr, ledge_tr;
+        float yaw = ent->s.angles[1] * 3.14159f / 180.0f;
+        fwd_check[0] = cosf(yaw) * 32.0f;
+        fwd_check[1] = sinf(yaw) * 32.0f;
+        fwd_check[2] = 0;
+        /* Check for wall at waist height */
+        VectorCopy(ent->s.origin, wall_end);
+        wall_end[0] += fwd_check[0];
+        wall_end[1] += fwd_check[1];
+        wall_tr = gi.trace(ent->s.origin, NULL, NULL, wall_end, ent, MASK_SOLID);
+        if (wall_tr.fraction < 1.0f) {
+            /* Wall found — check if there's open space above (ledge) */
+            VectorCopy(ent->s.origin, ledge_start);
+            ledge_start[2] += 48.0f;  /* check above head */
+            VectorCopy(ledge_start, ledge_end);
+            ledge_end[0] += fwd_check[0] * 2.0f;
+            ledge_end[1] += fwd_check[1] * 2.0f;
+            ledge_tr = gi.trace(ledge_start, NULL, NULL, ledge_end, ent, MASK_SOLID);
+            if (ledge_tr.fraction >= 0.8f) {
+                /* Open space above — mantle up! */
+                ent->velocity[2] = 320.0f;  /* boost upward */
+                ent->velocity[0] = fwd_check[0] * 4.0f;
+                ent->velocity[1] = fwd_check[1] * 4.0f;
+                VectorCopy(ent->velocity, client->ps.velocity);
+                /* Mantle sound */
+                {
+                    int snd = gi.soundindex("player/land.wav");
+                    if (snd)
+                        gi.sound(ent, CHAN_BODY, snd, 0.6f, ATTN_NORM, 0);
+                }
+            }
+        }
+    }
 
     /* Dash/dodge: double-tap movement direction for quick dodge */
     if (client->dash_end > level.time) {
