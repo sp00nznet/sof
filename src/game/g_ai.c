@@ -29,6 +29,7 @@ extern edict_t *G_DropItem(vec3_t origin, const char *classname);
 /* Forward declarations */
 static void AI_FormationSpread(edict_t *self);
 static void AI_MedicThink(edict_t *self);
+static void AI_TryBreach(edict_t *self);
 void AI_AllyDied(vec3_t death_origin);
 
 /* Monster sound indices — precached in monster_start */
@@ -1051,6 +1052,10 @@ static void ai_think_chase(edict_t *self)
 
     /* Push apart from nearby allies to avoid clumping */
     AI_FormationSpread(self);
+
+    /* Coordinated breach: try to breach doors between us and enemy */
+    if ((self->ai_flags & AI_LOST_SIGHT) && self->max_health >= 60)
+        AI_TryBreach(self);
 
     /* If lost sight, consider throwing grenade at last known position */
     if (self->ai_flags & AI_LOST_SIGHT) {
@@ -2181,6 +2186,133 @@ static void AI_MedicThink(edict_t *self)
 }
 
 /* ==========================================================================
+   AI Coordinated Breach — monsters stack up near doors and breach together
+   When 2+ monsters are near a closed door, they coordinate:
+   one kicks it open while others rush through.
+   ========================================================================== */
+
+#define AI_BREACH_STACK_DIST  128.0f  /* distance to door for stack-up */
+#define AI_BREACH_ALLY_DIST   200.0f  /* distance to check for stacked allies */
+#define AI_BREACH_MIN_SQUAD   2       /* min monsters to initiate breach */
+
+static void AI_TryBreach(edict_t *self)
+{
+    extern game_export_t globals;
+    int i;
+    edict_t *target_door = NULL;
+    float best_door_dist = AI_BREACH_STACK_DIST;
+
+    /* Only soldiers tough enough to coordinate (not light troops) */
+    if (self->max_health < 60)
+        return;
+    /* Cooldown: don't breach too often */
+    if (self->move_angles[0] > level.time - 5.0f)
+        return;
+
+    /* Find nearest closed door between us and enemy */
+    if (!self->enemy)
+        return;
+
+    for (i = 1; i < globals.num_edicts; i++) {
+        edict_t *door = &globals.edicts[i];
+        vec3_t diff;
+        float dist;
+
+        if (!door->inuse || !door->classname)
+            continue;
+        if (Q_stricmp(door->classname, "func_door") != 0 &&
+            Q_stricmp(door->classname, "func_door_secret") != 0)
+            continue;
+        /* Only target closed doors */
+        if (door->moveinfo.state != MSTATE_BOTTOM)
+            continue;
+
+        VectorSubtract(door->s.origin, self->s.origin, diff);
+        dist = VectorLength(diff);
+        if (dist < best_door_dist) {
+            /* Door must be between us and enemy */
+            vec3_t to_enemy;
+            float dot;
+            VectorSubtract(self->enemy->s.origin, self->s.origin, to_enemy);
+            VectorNormalize(to_enemy);
+            VectorNormalize(diff);
+            dot = DotProduct(to_enemy, diff);
+            if (dot > 0.3f) {
+                best_door_dist = dist;
+                target_door = door;
+            }
+        }
+    }
+
+    if (!target_door)
+        return;
+
+    /* Count allies stacked near this door */
+    {
+        int squad_count = 1;  /* count self */
+        for (i = 1; i < globals.num_edicts; i++) {
+            edict_t *ally = &globals.edicts[i];
+            vec3_t adiff;
+            float adist;
+
+            if (ally == self || !ally->inuse || ally->health <= 0)
+                continue;
+            if (!(ally->svflags & SVF_MONSTER))
+                continue;
+            VectorSubtract(ally->s.origin, target_door->s.origin, adiff);
+            adist = VectorLength(adiff);
+            if (adist < AI_BREACH_ALLY_DIST)
+                squad_count++;
+        }
+
+        if (squad_count >= AI_BREACH_MIN_SQUAD) {
+            /* BREACH! Kick the door open */
+            if (target_door->use)
+                target_door->use(target_door, self, self);
+
+            /* Breach sound */
+            {
+                int snd = gi.soundindex("npc/breach.wav");
+                if (snd)
+                    gi.sound(self, CHAN_VOICE, snd, 1.0f, ATTN_NORM, 0);
+            }
+
+            /* All nearby allies rush through */
+            for (i = 1; i < globals.num_edicts; i++) {
+                edict_t *ally = &globals.edicts[i];
+                vec3_t adiff;
+                float adist;
+
+                if (ally == self || !ally->inuse || ally->health <= 0)
+                    continue;
+                if (!(ally->svflags & SVF_MONSTER))
+                    continue;
+                VectorSubtract(ally->s.origin, target_door->s.origin, adiff);
+                adist = VectorLength(adiff);
+                if (adist < AI_BREACH_ALLY_DIST && ally->enemy) {
+                    /* Rush toward enemy through door */
+                    AI_MoveToward(ally, ally->enemy->s.origin,
+                                  AI_CHASE_SPEED * 1.5f);
+                    ally->count = AI_STATE_CHASE;
+                    ally->nextthink = level.time + FRAMETIME;
+                }
+            }
+
+            self->move_angles[0] = level.time;  /* breach cooldown */
+
+            /* Rush through ourselves */
+            if (self->enemy) {
+                AI_MoveToward(self, self->enemy->s.origin,
+                              AI_CHASE_SPEED * 1.5f);
+            }
+        } else {
+            /* Not enough allies — stack up and wait */
+            AI_MoveToward(self, target_door->s.origin, AI_CHASE_SPEED * 0.5f);
+        }
+    }
+}
+
+/* ==========================================================================
    AI Formation — spread apart when multiple monsters chase same target
    ========================================================================== */
 
@@ -2299,6 +2431,54 @@ void AI_AllyDied(vec3_t death_origin)
 
 #define AI_HEAR_RANGE_LOUD  1200.0f  /* normal gunfire */
 #define AI_HEAR_RANGE_QUIET  400.0f  /* silenced weapon */
+
+/* ==========================================================================
+   AI Footstep Hearing — surface material affects detection range
+   Metal/grate surfaces are louder; dirt/grass are quieter.
+   Sprinting doubles detection range; crouching halves it.
+   ========================================================================== */
+
+#define AI_HEAR_FOOTSTEP_BASE  400.0f  /* base hearing range for footsteps */
+
+void AI_HearFootstep(vec3_t origin, edict_t *walker, float volume_mult)
+{
+    extern game_export_t globals;
+    float hear_range = AI_HEAR_FOOTSTEP_BASE * volume_mult;
+    int i;
+
+    for (i = 1; i < globals.num_edicts; i++) {
+        edict_t *e = &globals.edicts[i];
+        vec3_t diff;
+        float dist;
+
+        if (e == walker || !e->inuse || e->health <= 0)
+            continue;
+        if (!(e->svflags & SVF_MONSTER))
+            continue;
+        if (e->enemy)  /* already in combat */
+            continue;
+        /* Only idle monsters react to footsteps */
+        if (e->count != AI_STATE_IDLE)
+            continue;
+
+        VectorSubtract(e->s.origin, origin, diff);
+        dist = VectorLength(diff);
+        if (dist > hear_range)
+            continue;
+
+        /* Closer footsteps: alert immediately; far ones: investigate */
+        if (dist < hear_range * 0.3f) {
+            e->enemy = walker;
+            e->count = AI_STATE_ALERT;
+        } else {
+            /* Heard something — search the area */
+            e->count = AI_STATE_SEARCH;
+            VectorCopy(origin, e->move_origin);
+            e->patrol_wait = level.time + 3.0f;
+        }
+        e->nextthink = level.time + 0.5f + ((float)(rand() % 40)) * 0.01f;
+    }
+}
 
 void AI_HearGunshot(vec3_t origin, edict_t *shooter, qboolean silenced)
 {

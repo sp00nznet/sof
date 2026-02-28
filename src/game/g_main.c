@@ -3614,6 +3614,18 @@ static void G_FireHitscan(edict_t *ent)
                         ent->client->adrenaline_mult = 1.5f;
                     }
 
+                    /* Extended kill cam: multi-kills trigger longer slow-mo */
+                    if (ent->client->streak_count >= 3) {
+                        /* Triple+: dramatic slow-mo with zoom effect */
+                        float cam_duration = 0.6f + ent->client->streak_count * 0.15f;
+                        if (cam_duration > 2.0f) cam_duration = 2.0f;
+                        ent->client->headshot_cam_end = level.time + cam_duration;
+                        level.time_scale = 0.25f;  /* deeper slow-mo */
+                        /* Dramatic lighting at kill point */
+                        R_AddDlight(tr.endpos, 1.0f, 0.3f, 0.1f, 500.0f, cam_duration);
+                        SCR_AddScreenShake(0.5f, cam_duration);
+                    }
+
                     /* Kill feed notification */
                     {
                         const char *victim_name = tr.ent->classname ?
@@ -4476,6 +4488,23 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
                 VectorSet(foot_dir, 0, 0, 1);
                 R_ParticleEffect(foot_pos, foot_dir, 13,
                                  speed > 250.0f ? 3 : 1);
+            }
+
+            /* Alert nearby AI based on footstep volume and movement speed */
+            {
+                extern void AI_HearFootstep(vec3_t origin, edict_t *walker,
+                                            float volume_mult);
+                float alert_mult = vol;  /* surface volume as base */
+                /* Sprinting doubles alerting range */
+                if (client->sprinting)
+                    alert_mult *= 2.0f;
+                /* Crouching halves alerting range */
+                if (client->ps.pm_flags & PMF_DUCKED)
+                    alert_mult *= 0.5f;
+                /* Prone nearly silent */
+                if (client->prone)
+                    alert_mult *= 0.15f;
+                AI_HearFootstep(ent->s.origin, ent, alert_mult);
             }
 
             /* Faster footsteps at higher speed */

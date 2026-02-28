@@ -272,6 +272,7 @@ static void SP_func_trap_floor(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_modstation(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_spotlight(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_portcullis(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_door_secret(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_floodlight(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_barrier(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_crate(edict_t *ent, epair_t *pairs, int num_pairs);
@@ -559,6 +560,10 @@ static spawn_func_t spawn_funcs[] = {
 
     /* Spotlight (dynamic light version) */
     { "func_spotlight",             SP_func_spotlight },
+
+    /* Secret door */
+    { "func_door_secret",           SP_func_door_secret },
+    { "func_secret",                SP_func_door_secret },
 
     /* Portcullis / gate */
     { "func_portcullis",            SP_func_portcullis },
@@ -6874,6 +6879,227 @@ static void SP_fallback_point(edict_t *ent, epair_t *pairs, int num_pairs)
     gi.linkentity(ent);
     gi.dprintf("  fallback_point at (%.0f %.0f %.0f)\n",
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
+}
+
+/* ==========================================================================
+   func_door_secret — Hidden door that slides open on use, then closes.
+   Classic id Tech secret door: first moves backward (into frame), then
+   slides sideways to reveal the passage. Uses "angle" for slide direction.
+   Keys: "speed" = movement speed (default 50), "wait" = time before
+         closing (-1 = stay open), "dmg" = crush damage
+   ========================================================================== */
+
+static void secret_door_close(edict_t *self);
+
+static void secret_door_close_done(edict_t *self)
+{
+    self->moveinfo.state = MSTATE_BOTTOM;
+    VectorCopy(self->moveinfo.start_origin, self->s.origin);
+    self->velocity[0] = self->velocity[1] = self->velocity[2] = 0;
+    gi.linkentity(self);
+}
+
+static void secret_door_close_slide(edict_t *self)
+{
+    /* Slide back to start */
+    vec3_t diff;
+    float dist;
+
+    VectorSubtract(self->moveinfo.start_origin, self->s.origin, diff);
+    dist = VectorLength(diff);
+
+    if (dist < 2.0f) {
+        secret_door_close_done(self);
+        return;
+    }
+
+    VectorNormalize(diff);
+    VectorScale(diff, self->speed, self->velocity);
+    self->think = secret_door_close_slide;
+    self->nextthink = level.time + 0.1f;
+}
+
+static void secret_door_close_retract(edict_t *self)
+{
+    /* Move back from retracted position toward start (via slide) */
+    vec3_t diff;
+    float dist;
+    vec3_t retract_pos;
+
+    /* Retract position: start - forward*16 */
+    VectorMA(self->moveinfo.start_origin, -16.0f, self->moveinfo.dir, retract_pos);
+
+    VectorSubtract(retract_pos, self->s.origin, diff);
+    dist = VectorLength(diff);
+
+    if (dist < 2.0f) {
+        /* Retracted — now slide back to start */
+        VectorCopy(retract_pos, self->s.origin);
+        self->velocity[0] = self->velocity[1] = self->velocity[2] = 0;
+        gi.linkentity(self);
+
+        /* Push forward to original position */
+        VectorSubtract(self->moveinfo.start_origin, self->s.origin, diff);
+        VectorNormalize(diff);
+        VectorScale(diff, self->speed, self->velocity);
+        self->think = secret_door_close_slide;
+        self->nextthink = level.time + 0.1f;
+        return;
+    }
+
+    VectorNormalize(diff);
+    VectorScale(diff, self->speed, self->velocity);
+    self->think = secret_door_close_retract;
+    self->nextthink = level.time + 0.1f;
+}
+
+static void secret_door_wait(edict_t *self)
+{
+    /* Start closing */
+    self->moveinfo.state = MSTATE_DOWN;
+    {
+        int snd = gi.soundindex("world/door_close.wav");
+        if (snd)
+            gi.sound(self, CHAN_BODY, snd, 0.7f, ATTN_STATIC, 0);
+    }
+    secret_door_close_retract(self);
+}
+
+static void secret_door_slide_done(edict_t *self)
+{
+    self->moveinfo.state = MSTATE_TOP;
+    VectorCopy(self->moveinfo.end_origin, self->s.origin);
+    self->velocity[0] = self->velocity[1] = self->velocity[2] = 0;
+    gi.linkentity(self);
+
+    if (self->wait >= 0) {
+        self->think = secret_door_wait;
+        self->nextthink = level.time + (self->wait > 0 ? self->wait : 5.0f);
+    }
+}
+
+static void secret_door_slide(edict_t *self)
+{
+    /* Slide in the configured direction */
+    vec3_t diff;
+    float dist;
+
+    VectorSubtract(self->moveinfo.end_origin, self->s.origin, diff);
+    dist = VectorLength(diff);
+
+    if (dist < 2.0f) {
+        secret_door_slide_done(self);
+        return;
+    }
+
+    VectorNormalize(diff);
+    VectorScale(diff, self->speed, self->velocity);
+    self->think = secret_door_slide;
+    self->nextthink = level.time + 0.1f;
+}
+
+static void secret_door_retract_done(edict_t *self)
+{
+    /* Retracted — now slide sideways */
+    self->velocity[0] = self->velocity[1] = self->velocity[2] = 0;
+    gi.linkentity(self);
+    secret_door_slide(self);
+}
+
+static void secret_door_retract(edict_t *self)
+{
+    /* Move backward (into wall frame) 16 units */
+    vec3_t retract_target, diff;
+    float dist;
+
+    VectorMA(self->moveinfo.start_origin, -16.0f, self->moveinfo.dir, retract_target);
+
+    VectorSubtract(retract_target, self->s.origin, diff);
+    dist = VectorLength(diff);
+
+    if (dist < 2.0f) {
+        VectorCopy(retract_target, self->s.origin);
+        secret_door_retract_done(self);
+        return;
+    }
+
+    VectorNormalize(diff);
+    VectorScale(diff, self->speed * 0.5f, self->velocity);
+    self->think = secret_door_retract;
+    self->nextthink = level.time + 0.1f;
+}
+
+static void secret_door_use(edict_t *self, edict_t *other, edict_t *activator)
+{
+    (void)other; (void)activator;
+    if (self->moveinfo.state != MSTATE_BOTTOM)
+        return;  /* already opening or open */
+
+    self->moveinfo.state = MSTATE_UP;
+    {
+        int snd = gi.soundindex("world/secret.wav");
+        if (snd)
+            gi.sound(self, CHAN_BODY, snd, 0.7f, ATTN_STATIC, 0);
+    }
+
+    /* Count as found secret */
+    level.found_secrets++;
+
+    secret_door_retract(self);
+}
+
+static void SP_func_door_secret(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *v;
+    float angle, slide_dist;
+
+    ent->classname = "func_door_secret";
+    ent->solid = SOLID_BSP;
+    ent->movetype = MOVETYPE_PUSH;
+    ent->use = secret_door_use;
+
+    v = ED_FindValue(pairs, num_pairs, "speed");
+    ent->speed = v ? (float)atof(v) : 50.0f;
+
+    v = ED_FindValue(pairs, num_pairs, "wait");
+    ent->wait = v ? (float)atof(v) : 5.0f;
+
+    v = ED_FindValue(pairs, num_pairs, "dmg");
+    ent->dmg = v ? atoi(v) : 2;
+
+    v = ED_FindValue(pairs, num_pairs, "angle");
+    angle = v ? (float)atof(v) : 0.0f;
+
+    /* Compute slide direction from angle */
+    ent->moveinfo.dir[0] = cosf(angle * 3.14159265f / 180.0f);
+    ent->moveinfo.dir[1] = sinf(angle * 3.14159265f / 180.0f);
+    ent->moveinfo.dir[2] = 0;
+
+    /* Slide distance based on entity size (default 128) */
+    slide_dist = ent->size[0] > ent->size[1] ? ent->size[0] : ent->size[1];
+    if (slide_dist < 64.0f) slide_dist = 128.0f;
+
+    VectorCopy(ent->s.origin, ent->moveinfo.start_origin);
+    /* End position: retracted 16 units back, then slid sideways */
+    VectorMA(ent->s.origin, -16.0f, ent->moveinfo.dir, ent->moveinfo.end_origin);
+    {
+        /* Slide perpendicular to the door's facing direction */
+        vec3_t right;
+        right[0] = -ent->moveinfo.dir[1];
+        right[1] = ent->moveinfo.dir[0];
+        right[2] = 0;
+        VectorMA(ent->moveinfo.end_origin, slide_dist, right, ent->moveinfo.end_origin);
+    }
+
+    ent->moveinfo.state = MSTATE_BOTTOM;
+
+    /* Count as a secret */
+    level.total_secrets++;
+
+    gi.linkentity(ent);
+    gi.dprintf("  func_door_secret at (%.0f %.0f %.0f) speed=%.0f angle=%.0f\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->speed, angle);
 }
 
 /* ==========================================================================
