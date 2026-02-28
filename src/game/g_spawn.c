@@ -272,6 +272,7 @@ static void SP_func_trap_floor(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_modstation(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_spotlight(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_portcullis(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_floodlight(edict_t *ent, epair_t *pairs, int num_pairs);
 static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
                            int damage, vec3_t point);
 
@@ -557,6 +558,10 @@ static spawn_func_t spawn_funcs[] = {
     /* Portcullis / gate */
     { "func_portcullis",            SP_func_portcullis },
     { "func_gate",                  SP_func_portcullis },
+
+    /* Floodlight */
+    { "func_floodlight",            SP_func_floodlight },
+    { "light_flood",                SP_func_floodlight },
 
     /* Weapons (SoF) */
     { "weapon_knife",               SP_item_pickup },
@@ -6540,6 +6545,64 @@ static void SP_func_spotlight(edict_t *ent, epair_t *pairs, int num_pairs)
     gi.dprintf("  func_spotlight at (%.0f %.0f %.0f) speed=%.1f intensity=%d\n",
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
                ent->speed, ent->dmg);
+}
+
+/* ==========================================================================
+   func_floodlight — Togglable area light that illuminates surroundings.
+   Keys: "light" = intensity (default 400), "_color" = R G B, "style" = 0/1 on/off
+   Activated by use (toggle).
+   ========================================================================== */
+
+static void floodlight_think(edict_t *self)
+{
+    extern void R_AddDlight(vec3_t origin, float r, float g, float b,
+                             float intensity, float duration);
+    if (self->count) {  /* on */
+        R_AddDlight(self->s.origin,
+                    self->move_angles[0], self->move_angles[1], self->move_angles[2],
+                    self->dmg > 0 ? (float)self->dmg : 400.0f, 0.15f);
+    }
+    self->nextthink = level.time + 0.1f;
+}
+
+static void floodlight_use(edict_t *self, edict_t *other, edict_t *activator)
+{
+    (void)other; (void)activator;
+    self->count = !self->count;  /* toggle */
+    if (self->count) {
+        int snd = gi.soundindex("world/switch_on.wav");
+        if (snd) gi.sound(self, CHAN_BODY, snd, 0.7f, ATTN_STATIC, 0);
+    }
+}
+
+static void SP_func_floodlight(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *v;
+
+    ent->classname = "func_floodlight";
+    ent->solid = SOLID_NOT;
+    ent->movetype = MOVETYPE_NONE;
+    ent->use = floodlight_use;
+    ent->think = floodlight_think;
+    ent->nextthink = level.time + 1.0f;
+
+    v = ED_FindValue(pairs, num_pairs, "light");
+    ent->dmg = v ? atoi(v) : 400;
+
+    v = ED_FindValue(pairs, num_pairs, "_color");
+    if (v)
+        sscanf(v, "%f %f %f",
+               &ent->move_angles[0], &ent->move_angles[1], &ent->move_angles[2]);
+    else
+        VectorSet(ent->move_angles, 1.0f, 1.0f, 0.95f);
+
+    v = ED_FindValue(pairs, num_pairs, "style");
+    ent->count = v ? atoi(v) : 1;  /* starts on by default */
+
+    gi.linkentity(ent);
+    gi.dprintf("  func_floodlight at (%.0f %.0f %.0f) intensity=%d %s\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->dmg, ent->count ? "ON" : "OFF");
 }
 
 /* ==========================================================================

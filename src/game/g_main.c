@@ -2350,6 +2350,15 @@ static void T_RadiusDamage(edict_t *inflictor, edict_t *attacker,
             if (t->health < -40)
                 G_SpawnGibs(t, 4 + gi.irand(0, 4));
             t->die(t, inflictor, attacker, (int)dmg_applied, inflictor->s.origin);
+
+            /* Environmental kill bonus — extra score when inflictor is a prop/barrel */
+            if (attacker && attacker->client && inflictor != attacker &&
+                (t->svflags & SVF_MONSTER)) {
+                attacker->client->score += 15;
+                attacker->client->xp += 20;
+                SCR_AddScorePopup(15);
+                SCR_AddPickupMessage("ENVIRONMENTAL KILL!");
+            }
         }
     }
 }
@@ -3694,6 +3703,27 @@ static void G_FireHitscan(edict_t *ent)
                             }
                         }
                     }
+                    /* Ricochet flinch — nearby AI duck when bullet zips past */
+                    {
+                        extern game_export_t globals;
+                        int ri;
+                        for (ri = 1; ri < globals.num_edicts; ri++) {
+                            edict_t *npc = &globals.edicts[ri];
+                            vec3_t rd;
+                            float rdist;
+                            if (!npc->inuse || npc->health <= 0)
+                                continue;
+                            if (!(npc->svflags & SVF_MONSTER))
+                                continue;
+                            VectorSubtract(npc->s.origin, tr.endpos, rd);
+                            rdist = VectorLength(rd);
+                            if (rdist < 128.0f) {
+                                /* Flinch: brief duck */
+                                npc->s.frame = 54;  /* FRAME_PAIN1_START */
+                                npc->nextthink = level.time + 0.3f;
+                            }
+                        }
+                    }
                 } /* end do_ricochet */
                 } /* end hard surface check */
 
@@ -4177,8 +4207,13 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
         float speed = (float)sqrt(ent->velocity[0] * ent->velocity[0] +
                                    ent->velocity[1] * ent->velocity[1]);
         if (speed > 40.0f) {
+            /* Weapon weight affects bob: heavier = slower, more pronounced */
+            float wt = G_WeapDrawTime(client->pers_weapon);  /* draw time as weight proxy */
+            float weight_scale = wt / 0.5f;  /* 1.0 at 0.5s draw, heavier > 1 */
             float bob_scale = (speed > 200.0f) ? 0.8f : speed / 250.0f;
             float bob_freq = (speed > 200.0f) ? 12.0f : 8.0f;
+            bob_scale *= (0.7f + 0.3f * weight_scale);  /* heavier = bigger bob */
+            bob_freq /= (0.8f + 0.2f * weight_scale);   /* heavier = slower cycle */
             client->bob_time += level.frametime * bob_freq;
             client->viewheight += (int)(sinf(client->bob_time) * bob_scale);
 
