@@ -527,6 +527,10 @@ struct gclient_s {
     /* Zipline: currently riding a zipline */
     edict_t         *zipline_ent;       /* NULL if not riding */
     float           zipline_progress;   /* 0..1 travel progress */
+
+    /* Weapon mastery: per-weapon kills track mastery level */
+    int             weapon_kills[WEAP_COUNT]; /* kills with each weapon */
+    int             weapon_mastery[WEAP_COUNT]; /* 0-3 mastery tier */
 };
 
 /* ==========================================================================

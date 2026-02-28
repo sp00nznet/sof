@@ -531,6 +531,9 @@ static spawn_func_t spawn_funcs[] = {
     { "func_crane",                 SP_func_crane },
     { "misc_crane",                 SP_func_crane },
 
+    /* Conveyor belt (alias) */
+    { "trigger_conveyor",           SP_func_conveyor_real },
+
     /* Weapons (SoF) */
     { "weapon_knife",               SP_item_pickup },
     { "weapon_pistol1",             SP_item_pickup },

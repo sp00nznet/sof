@@ -1784,6 +1784,50 @@ static void ClientCommand(edict_t *ent)
         return;
     }
 
+    /* Compass — show facing direction and objective distance */
+    if (Q_stricmp(cmd, "compass") == 0 || Q_stricmp(cmd, "bearing") == 0) {
+        float yaw = ent->client->viewangles[1];
+        const char *dir;
+        /* Normalize yaw to 0-360 */
+        while (yaw < 0) yaw += 360.0f;
+        while (yaw >= 360.0f) yaw -= 360.0f;
+
+        if (yaw >= 337.5f || yaw < 22.5f) dir = "North";
+        else if (yaw < 67.5f) dir = "Northeast";
+        else if (yaw < 112.5f) dir = "East";
+        else if (yaw < 157.5f) dir = "Southeast";
+        else if (yaw < 202.5f) dir = "South";
+        else if (yaw < 247.5f) dir = "Southwest";
+        else if (yaw < 292.5f) dir = "West";
+        else dir = "Northwest";
+
+        gi.cprintf(ent, PRINT_ALL, "Compass: %s (%.0f°)\n", dir, yaw);
+        gi.cprintf(ent, PRINT_ALL, "Position: (%.0f, %.0f, %.0f)\n",
+                   ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
+        if (level.objective_active && level.objective_text[0]) {
+            gi.cprintf(ent, PRINT_ALL, "Objective: %s\n", level.objective_text);
+        }
+        return;
+    }
+
+    /* Weapon mastery info */
+    if (Q_stricmp(cmd, "mastery") == 0) {
+        int mi;
+        static const char *mastery_names[] = {
+            "Novice", "Skilled", "Expert", "Master"
+        };
+        gi.cprintf(ent, PRINT_ALL, "=== Weapon Mastery ===\n");
+        for (mi = 1; mi < WEAP_COUNT; mi++) {
+            if (ent->client->weapon_kills[mi] > 0 || mi == ent->client->pers_weapon) {
+                gi.cprintf(ent, PRINT_ALL, " %s: %s (%d kills)\n",
+                           weapon_names[mi],
+                           mastery_names[ent->client->weapon_mastery[mi]],
+                           ent->client->weapon_kills[mi]);
+            }
+        }
+        return;
+    }
+
     gi.cprintf(ent, PRINT_ALL, "Unknown command: %s\n", cmd);
 }
 
@@ -3376,6 +3420,30 @@ static void G_FireHitscan(edict_t *ent)
                     ent->client->score += score_award;
                     SCR_AddScorePopup(score_award);
 
+                    /* Weapon mastery: track kills per weapon, level up at thresholds */
+                    if (weap > 0 && weap < WEAP_COUNT) {
+                        static const int mastery_thresholds[] = { 10, 30, 75, 999999 };
+                        static const char *mastery_names[] = {
+                            "Novice", "Skilled", "Expert", "Master"
+                        };
+                        ent->client->weapon_kills[weap]++;
+                        if (ent->client->weapon_mastery[weap] < 3 &&
+                            ent->client->weapon_kills[weap] >=
+                            mastery_thresholds[ent->client->weapon_mastery[weap]]) {
+                            ent->client->weapon_mastery[weap]++;
+                            {
+                                char mbuf[64];
+                                snprintf(mbuf, sizeof(mbuf), "%s MASTERY: %s",
+                                         weapon_names[weap],
+                                         mastery_names[ent->client->weapon_mastery[weap]]);
+                                SCR_AddPickupMessage(mbuf);
+                            }
+                            ent->client->xp += 50;
+                            ent->client->score += 25;
+                            SCR_AddScorePopup(25);
+                        }
+                    }
+
                     /* Challenge mode tracking */
                     if (ent->client->challenge_end > level.time) {
                         ent->client->challenge_kills++;
@@ -3641,6 +3709,13 @@ static void G_FireHitscan(edict_t *ent)
     if (weap > 0 && weap < WEAP_COUNT && weapon_recoil[weap] > 0) {
         float recoil = weapon_recoil[weap];
         float h_recoil = 0;
+
+        /* Weapon mastery: reduce recoil per mastery tier (10%/20%/30%) */
+        {
+            int mastery = ent->client->weapon_mastery[weap];
+            if (mastery > 0)
+                recoil *= (1.0f - mastery * 0.1f);
+        }
 
         /* Vertical recoil (pitch up) */
         ent->client->kick_angles[0] -= recoil;
