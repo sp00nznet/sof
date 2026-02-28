@@ -3467,6 +3467,17 @@ static void G_FireHitscan(edict_t *ent)
                         SCR_AddScorePopup(20);
                     }
 
+                    /* Execution bonus: kill at point-blank range */
+                    {
+                        float kill_dist = tr.fraction * trace_range;
+                        if (kill_dist < 128.0f && weap != WEAP_KNIFE) {
+                            ent->client->score += 10;
+                            ent->client->xp += 15;
+                            SCR_AddPickupMessage("POINT BLANK!");
+                            SCR_AddScorePopup(10);
+                        }
+                    }
+
                     /* Weapon mastery: track kills per weapon, level up at thresholds */
                     if (weap > 0 && weap < WEAP_COUNT) {
                         static const int mastery_thresholds[] = { 10, 30, 75, 999999 };
@@ -4992,6 +5003,19 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
                 G_DamageDirectionToPlayer(ent, npc->s.origin);
                 break;  /* one warning per frame is enough */
             }
+        }
+    }
+
+    /* Blood trail — wounded players drip blood while moving */
+    if (!ent->deadflag && ent->health > 0 && ent->health < 40 && ent->groundentity) {
+        float speed_sq = ent->velocity[0] * ent->velocity[0] +
+                         ent->velocity[1] * ent->velocity[1];
+        if (speed_sq > 50.0f * 50.0f && gi.irand(0, 4) == 0) {
+            vec3_t drip_org, drip_down;
+            VectorCopy(ent->s.origin, drip_org);
+            drip_org[2] -= 16;
+            VectorSet(drip_down, 0, 0, -1);
+            R_ParticleEffect(drip_org, drip_down, 1, 1);  /* blood drip */
         }
     }
 

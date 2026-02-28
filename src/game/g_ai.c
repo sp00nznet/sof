@@ -78,6 +78,7 @@ static void AI_DamageDirectionToPlayer(edict_t *player, vec3_t source)
 #define AI_PURSUIT_LAST_SEEN 0x0010
 #define AI_PURSUE_NEXT      0x0020
 #define AI_PURSUE_TEMP      0x0040
+#define AI_AMBUSH           0x0080
 
 typedef enum {
     AI_STATE_IDLE,
@@ -632,6 +633,27 @@ static edict_t *AI_FindByTargetname(const char *targetname)
 
 static void ai_think_idle(edict_t *self)
 {
+    /* Ambush: stay hidden until player is very close, then surprise attack */
+    if (self->ai_flags & AI_AMBUSH) {
+        if (AI_FindTarget(self)) {
+            float ambush_dist = AI_Range(self, self->enemy);
+            if (ambush_dist < 256.0f) {
+                /* Spring the ambush! */
+                self->ai_flags &= ~AI_AMBUSH;  /* one-time trigger */
+                if (snd_monster_sight)
+                    gi.sound(self, CHAN_VOICE, snd_monster_sight, 1.0f, ATTN_NORM, 0);
+                AI_AlertNearby(self, self->enemy);
+                self->count = AI_STATE_ATTACK;  /* skip alert, go straight to attack */
+                self->nextthink = level.time + 0.1f;
+                return;
+            }
+            /* Too far — pretend we didn't see them */
+            self->enemy = NULL;
+        }
+        self->nextthink = level.time + 0.5f;
+        return;
+    }
+
     /* Look for player */
     if (AI_FindTarget(self)) {
         /* Sight sound */

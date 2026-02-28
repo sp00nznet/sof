@@ -273,6 +273,7 @@ static void SP_func_modstation(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_spotlight(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_portcullis(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_floodlight(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_barrier(edict_t *ent, epair_t *pairs, int num_pairs);
 static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
                            int damage, vec3_t point);
 
@@ -562,6 +563,10 @@ static spawn_func_t spawn_funcs[] = {
     /* Floodlight */
     { "func_floodlight",            SP_func_floodlight },
     { "light_flood",                SP_func_floodlight },
+
+    /* Barrier / bollard */
+    { "func_barrier",               SP_func_barrier },
+    { "func_bollard",               SP_func_barrier },
 
     /* Weapons (SoF) */
     { "weapon_knife",               SP_item_pickup },
@@ -6603,6 +6608,93 @@ static void SP_func_floodlight(edict_t *ent, epair_t *pairs, int num_pairs)
     gi.dprintf("  func_floodlight at (%.0f %.0f %.0f) intensity=%d %s\n",
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
                ent->dmg, ent->count ? "ON" : "OFF");
+}
+
+/* ==========================================================================
+   func_barrier — Retractable barrier/bollard that lowers into the ground
+   on use and raises back after a delay.
+   Keys: "lip" = lower distance (default 64), "speed" = movement speed,
+         "wait" = time before raising back (-1 = stay lowered)
+   ========================================================================== */
+
+static void barrier_raise(edict_t *self)
+{
+    if (self->s.origin[2] < self->moveinfo.start_origin[2]) {
+        self->velocity[2] = self->speed;
+        self->think = barrier_raise;
+        self->nextthink = level.time + 0.1f;
+    } else {
+        VectorCopy(self->moveinfo.start_origin, self->s.origin);
+        self->velocity[2] = 0;
+        self->moveinfo.state = 0;  /* raised */
+        self->solid = SOLID_BSP;
+        gi.linkentity(self);
+    }
+}
+
+static void barrier_wait_raise(edict_t *self)
+{
+    barrier_raise(self);
+}
+
+static void barrier_lower(edict_t *self)
+{
+    if (self->s.origin[2] > self->moveinfo.end_origin[2]) {
+        self->velocity[2] = -self->speed;
+        self->think = barrier_lower;
+        self->nextthink = level.time + 0.1f;
+    } else {
+        VectorCopy(self->moveinfo.end_origin, self->s.origin);
+        self->velocity[2] = 0;
+        self->moveinfo.state = 1;  /* lowered */
+        self->solid = SOLID_NOT;  /* passable when lowered */
+        gi.linkentity(self);
+        if (self->wait >= 0) {
+            self->think = barrier_wait_raise;
+            self->nextthink = level.time + (self->wait > 0 ? self->wait : 5.0f);
+        }
+    }
+}
+
+static void barrier_use(edict_t *self, edict_t *other, edict_t *activator)
+{
+    (void)other; (void)activator;
+    if (self->moveinfo.state == 0) {
+        int snd = gi.soundindex("world/switch_on.wav");
+        if (snd) gi.sound(self, CHAN_BODY, snd, 0.7f, ATTN_STATIC, 0);
+        barrier_lower(self);
+    } else if (self->moveinfo.state == 1) {
+        barrier_raise(self);
+    }
+}
+
+static void SP_func_barrier(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *v;
+    float lip;
+
+    ent->classname = "func_barrier";
+    ent->solid = SOLID_BSP;
+    ent->movetype = MOVETYPE_PUSH;
+    ent->use = barrier_use;
+
+    v = ED_FindValue(pairs, num_pairs, "speed");
+    ent->speed = v ? (float)atof(v) : 60.0f;
+
+    v = ED_FindValue(pairs, num_pairs, "lip");
+    lip = v ? (float)atof(v) : 64.0f;
+
+    v = ED_FindValue(pairs, num_pairs, "wait");
+    ent->wait = v ? (float)atof(v) : 5.0f;
+
+    VectorCopy(ent->s.origin, ent->moveinfo.start_origin);
+    VectorCopy(ent->s.origin, ent->moveinfo.end_origin);
+    ent->moveinfo.end_origin[2] -= lip;
+    ent->moveinfo.state = 0;  /* starts raised (blocking) */
+
+    gi.linkentity(ent);
+    gi.dprintf("  func_barrier at (%.0f %.0f %.0f) lip=%.0f\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2], lip);
 }
 
 /* ==========================================================================
