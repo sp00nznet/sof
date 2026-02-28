@@ -49,6 +49,8 @@ extern void SP_monster_dog(edict_t *ent, void *pairs, int num_pairs);
 extern void SP_monster_shield(edict_t *ent, void *pairs, int num_pairs);
 extern void SP_monster_hostage(edict_t *ent, void *pairs, int num_pairs);
 extern void SP_monster_engineer(edict_t *ent, void *pairs, int num_pairs);
+extern void SP_monster_kamikaze(edict_t *ent, void *pairs, int num_pairs);
+extern void SP_monster_radioman(edict_t *ent, void *pairs, int num_pairs);
 
 /* Forward declarations for precache functions */
 static void door_precache_sounds(void);
@@ -291,6 +293,7 @@ static void SP_trigger_quicksand(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_fence(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_info_sniper_nest(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_item_intel(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_pillar(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_cover_point(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_trigger_monster_spawn(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_fallback_point(edict_t *ent, epair_t *pairs, int num_pairs);
@@ -416,6 +419,10 @@ static spawn_func_t spawn_funcs[] = {
     { "monster_civilian",           (void (*)(edict_t *, epair_t *, int))SP_monster_hostage },
     { "monster_engineer",           (void (*)(edict_t *, epair_t *, int))SP_monster_engineer },
     { "monster_combat_engineer",    (void (*)(edict_t *, epair_t *, int))SP_monster_engineer },
+    { "monster_kamikaze",           (void (*)(edict_t *, epair_t *, int))SP_monster_kamikaze },
+    { "monster_suicide",            (void (*)(edict_t *, epair_t *, int))SP_monster_kamikaze },
+    { "monster_radioman",           (void (*)(edict_t *, epair_t *, int))SP_monster_radioman },
+    { "monster_radio",              (void (*)(edict_t *, epair_t *, int))SP_monster_radioman },
     { "monster_riot_shield",        (void (*)(edict_t *, epair_t *, int))SP_monster_shield },
     /* Q2-compatible monster names */
     { "monster_soldier_light",      (void (*)(edict_t *, epair_t *, int))SP_monster_soldier_light },
@@ -687,6 +694,10 @@ static spawn_func_t spawn_funcs[] = {
     /* Destructible fence */
     { "func_fence",                 SP_func_fence },
     { "func_chainlink",             SP_func_fence },
+
+    /* Destructible pillar/column */
+    { "func_pillar",                SP_func_pillar },
+    { "func_column",                SP_func_pillar },
 
     /* AI sniper nest */
     { "info_sniper_nest",           SP_info_sniper_nest },
@@ -8108,6 +8119,95 @@ static void SP_item_intel(edict_t *ent, epair_t *pairs, int num_pairs)
     gi.linkentity(ent);
     gi.dprintf("  item_intel at (%.0f %.0f %.0f)\n",
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
+}
+
+/* ==========================================================================
+   func_pillar — Destructible structural column with rubble debris
+   ========================================================================== */
+
+static void pillar_debris_expire(edict_t *self)
+{
+    self->inuse = qfalse;
+    self->solid = SOLID_NOT;
+    self->svflags |= SVF_NOCLIENT;
+    gi.unlinkentity(self);
+}
+
+static void pillar_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
+                        int damage, vec3_t point)
+{
+    vec3_t up = {0, 0, 1};
+    int i;
+    (void)inflictor; (void)attacker; (void)damage; (void)point;
+
+    /* Heavy rubble particles */
+    R_ParticleEffect(self->s.origin, up, 8, 30);
+
+    /* Camera shake from structural collapse */
+    SCR_AddScreenShake(0.3f, 0.4f);
+
+    /* Spawn rubble chunks */
+    for (i = 0; i < 6; i++) {
+        edict_t *rubble = G_AllocEdict();
+        if (!rubble)
+            break;
+        rubble->classname = "pillar_rubble";
+        rubble->movetype = MOVETYPE_TOSS;
+        rubble->solid = SOLID_NOT;
+        VectorCopy(self->s.origin, rubble->s.origin);
+        rubble->s.origin[2] += gi.flrand(-20, 40);
+        rubble->velocity[0] = gi.flrand(-120, 120);
+        rubble->velocity[1] = gi.flrand(-120, 120);
+        rubble->velocity[2] = gi.flrand(80, 200);
+        rubble->nextthink = level.time + 4.0f;
+        rubble->think = pillar_debris_expire;
+        gi.linkentity(rubble);
+    }
+
+    /* Collapse sound */
+    {
+        int snd = gi.soundindex("world/stone_break.wav");
+        if (snd)
+            gi.sound(self, CHAN_AUTO, snd, 1.0f, ATTN_NORM, 0);
+    }
+
+    /* Fire targets */
+    if (self->target) {
+        extern game_export_t globals;
+        int j;
+        for (j = 1; j < globals.num_edicts; j++) {
+            edict_t *t = &globals.edicts[j];
+            if (!t->inuse || !t->targetname)
+                continue;
+            if (Q_stricmp(t->targetname, self->target) == 0 && t->use)
+                t->use(t, self, self);
+        }
+    }
+
+    /* Remove the pillar */
+    self->solid = SOLID_NOT;
+    self->svflags |= SVF_NOCLIENT;
+    self->takedamage = DAMAGE_NO;
+    gi.linkentity(self);
+}
+
+static void SP_func_pillar(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+    ent->classname = "func_pillar";
+    ent->solid = SOLID_BSP;
+    ent->movetype = MOVETYPE_PUSH;
+
+    if (ent->health <= 0)
+        ent->health = 200;  /* pillars are sturdy */
+    ent->max_health = ent->health;
+    ent->takedamage = DAMAGE_YES;
+    ent->die = pillar_die;
+
+    gi.linkentity(ent);
+    gi.dprintf("  func_pillar at (%.0f %.0f %.0f) hp=%d\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->health);
 }
 
 static void fence_debris_expire(edict_t *self)

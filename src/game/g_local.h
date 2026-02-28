@@ -284,6 +284,7 @@ typedef enum {
 #define ATTACH_EXTMAG       0x04    /* extended magazine capacity */
 #define ATTACH_LASER        0x08    /* laser sight (reduced spread) */
 #define ATTACH_BAYONET      0x10    /* bayonet for quick melee */
+#define ATTACH_TACLIGHT     0x20    /* tactical flashlight on weapon */
 
 /* Key/keycard bitmask flags */
 #define KEY_RED     1

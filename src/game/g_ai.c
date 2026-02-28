@@ -26,13 +26,16 @@ extern edict_t *G_AllocEdict(void);
 extern void grenade_explode(edict_t *self);
 extern edict_t *G_DropItem(vec3_t origin, const char *classname);
 
-/* AI flag for combat engineer */
+/* AI flags for special types */
 #define AI_ENGINEER  0x1000
+#define AI_KAMIKAZE  0x2000
+#define AI_RADIOMAN  0x4000
 
 /* Forward declarations */
 static void AI_FormationSpread(edict_t *self);
 static void AI_MedicThink(edict_t *self);
 static void engineer_place_mine(edict_t *self);
+static void radioman_call_reinforcements(edict_t *self);
 static void AI_TryBreach(edict_t *self);
 static void AI_LeapfrogAdvance(edict_t *self);
 static void AI_BlindFire(edict_t *self);
@@ -1976,6 +1979,11 @@ void monster_think(edict_t *self)
         engineer_place_mine(self);
     }
 
+    /* Radioman behavior: call reinforcements when engaged */
+    if (self->ai_flags & AI_RADIOMAN) {
+        radioman_call_reinforcements(self);
+    }
+
     switch (self->count) {  /* count field used as AI state */
     case AI_STATE_IDLE:     ai_think_idle(self); break;
     case AI_STATE_ALERT:    ai_think_alert(self); break;
@@ -2629,6 +2637,181 @@ static void engineer_place_mine(edict_t *self)
         if (snd)
             gi.sound(self, CHAN_VOICE, snd, 1.0f, ATTN_NORM, 0);
     }
+}
+
+/*
+ * SP_monster_kamikaze - Suicidal bomber enemy
+ * Rushes player at high speed and detonates on contact for massive damage.
+ */
+
+static void kamikaze_think(edict_t *self)
+{
+    self->nextthink = level.time + FRAMETIME;
+
+    if (self->health <= 0 || self->deadflag)
+        return;
+
+    /* Find player if not already targeting */
+    if (!self->enemy) {
+        if (AI_FindTarget(self)) {
+            int snd = gi.soundindex("npc/kamikaze_yell.wav");
+            if (snd)
+                gi.sound(self, CHAN_VOICE, snd, 1.0f, ATTN_NONE, 0);
+        } else {
+            return;
+        }
+    }
+
+    /* Rush toward enemy at max speed */
+    if (self->enemy && self->enemy->health > 0) {
+        vec3_t diff;
+        float dist;
+        VectorSubtract(self->enemy->s.origin, self->s.origin, diff);
+        dist = VectorLength(diff);
+        AI_MoveToward(self, self->enemy->s.origin, AI_CHASE_SPEED * 2.5f);
+        AI_FaceEnemy(self);
+
+        /* Beeping accelerates as distance closes */
+        if ((int)(level.time * 4) % 2 == 0) {
+            vec3_t up = {0, 0, 1};
+            R_AddDlight(self->s.origin, 1.0f, 0.2f, 0.2f,
+                        50.0f + (300.0f - dist) * 0.3f, 0.1f);
+        }
+
+        /* Detonate on close proximity */
+        if (dist < 64.0f) {
+            vec3_t up = {0, 0, 1};
+            R_ParticleEffect(self->s.origin, up, 2, 48);
+            R_AddDlight(self->s.origin, 1.0f, 0.5f, 0.1f, 600.0f, 0.5f);
+            SCR_AddScreenShake(0.6f, 0.4f);
+            {
+                int snd = gi.soundindex("weapons/explode.wav");
+                if (snd)
+                    gi.sound(self, CHAN_AUTO, snd, 1.0f, ATTN_NONE, 0);
+            }
+            /* Inline radius damage — T_RadiusDamage is static in g_main.c */
+            {
+                extern game_export_t globals;
+                int rd_i;
+                for (rd_i = 1; rd_i < globals.num_edicts; rd_i++) {
+                    edict_t *victim = &globals.edicts[rd_i];
+                    vec3_t rd_diff;
+                    float rd_dist;
+                    if (!victim->inuse || victim->health <= 0)
+                        continue;
+                    if (!victim->takedamage)
+                        continue;
+                    VectorSubtract(victim->s.origin, self->s.origin, rd_diff);
+                    rd_dist = VectorLength(rd_diff);
+                    if (rd_dist < 250.0f) {
+                        int rd_dmg = (int)(200.0f * (1.0f - rd_dist / 250.0f));
+                        if (rd_dmg < 1) rd_dmg = 1;
+                        victim->health -= rd_dmg;
+                        if (victim->client)
+                            victim->client->pers_health = victim->health;
+                        if (victim->health <= 0 && victim->die)
+                            victim->die(victim, self, self, rd_dmg,
+                                        self->s.origin);
+                    }
+                }
+            }
+            self->health = -1;
+            self->deadflag = 1;
+            self->solid = SOLID_NOT;
+            self->svflags |= SVF_NOCLIENT;
+            gi.linkentity(self);
+        }
+    }
+
+    /* Run animation */
+    self->s.frame++;
+    if (self->s.frame < FRAME_RUN_START || self->s.frame > FRAME_RUN_END)
+        self->s.frame = FRAME_RUN_START;
+}
+
+void SP_monster_kamikaze(edict_t *ent, void *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+
+    gi.dprintf("  Spawning kamikaze at (%.0f %.0f %.0f)\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
+
+    ent->classname = "monster_kamikaze";
+    monster_start(ent, 30, 0, AI_CHASE_SPEED * 2.5f);  /* fragile, fast */
+    ent->yaw_speed = 35.0f;
+    ent->ai_flags |= AI_KAMIKAZE;
+    ent->think = kamikaze_think;
+    ent->nextthink = level.time + 1.0f;
+    ent->weapon_index = WEAP_NONE;  /* no ranged weapon, body is the weapon */
+}
+
+/*
+ * SP_monster_radioman - AI Radio Operator
+ * Calls for reinforcements when player is spotted. Spawns extra enemies.
+ */
+
+static void radioman_call_reinforcements(edict_t *self)
+{
+    extern game_export_t globals;
+    edict_t *reinforcement;
+    vec3_t spawn_pos;
+    int snd;
+
+    /* Cooldown: only call every 15s */
+    if (level.time < self->move_angles[1] + 15.0f)
+        return;
+    if (!self->enemy)
+        return;
+
+    self->move_angles[1] = level.time;
+
+    /* Spawn position: behind the radioman */
+    {
+        float yaw = self->s.angles[1] * 3.14159f / 180.0f;
+        spawn_pos[0] = self->s.origin[0] - cosf(yaw) * 200.0f;
+        spawn_pos[1] = self->s.origin[1] - sinf(yaw) * 200.0f;
+        spawn_pos[2] = self->s.origin[2];
+    }
+
+    /* Radio callout */
+    snd = gi.soundindex("npc/radio_call.wav");
+    if (snd)
+        gi.sound(self, CHAN_VOICE, snd, 1.0f, ATTN_NORM, 0);
+
+    /* Spawn a reinforcement soldier */
+    reinforcement = G_AllocEdict();
+    if (reinforcement) {
+        VectorCopy(spawn_pos, reinforcement->s.origin);
+        reinforcement->classname = "monster_soldier";
+        monster_start(reinforcement, 80, 10, AI_CHASE_SPEED);
+        reinforcement->weapon_index = WEAP_MACHINEGUN;
+        reinforcement->enemy = self->enemy;
+        reinforcement->count = AI_STATE_CHASE;
+        reinforcement->nextthink = level.time + 0.5f;
+        gi.linkentity(reinforcement);
+        if (globals.num_edicts <= (int)(reinforcement - globals.edicts) + 1)
+            globals.num_edicts = (int)(reinforcement - globals.edicts) + 1;
+
+        level.total_monsters++;
+        gi.dprintf("  Radioman spawned reinforcement at (%.0f %.0f %.0f)\n",
+                   spawn_pos[0], spawn_pos[1], spawn_pos[2]);
+    }
+
+    SCR_AddPickupMessage("Enemy called for backup!");
+}
+
+void SP_monster_radioman(edict_t *ent, void *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+
+    gi.dprintf("  Spawning radioman at (%.0f %.0f %.0f)\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
+
+    ent->classname = "monster_radioman";
+    monster_start(ent, 60, 8, AI_CHASE_SPEED * 0.7f);  /* light, cowardly */
+    ent->yaw_speed = 15.0f;
+    ent->weapon_index = WEAP_PISTOL1;
+    ent->ai_flags |= AI_RADIOMAN;
 }
 
 void SP_monster_engineer(edict_t *ent, void *pairs, int num_pairs)

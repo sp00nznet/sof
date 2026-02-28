@@ -1481,6 +1481,7 @@ static void ClientCommand(edict_t *ent)
             "grapple         - Fire grapple hook\n"
             "sling           - Quick-draw weapon swap\n"
             "paint           - Cycle weapon paint job\n"
+            "taclight        - Toggle weapon tac-light\n"
             "parry           - Knife block/riposte\n"
             "flashbang       - Throw flashbang\n"
             "+leanleft/right - Lean\n"
@@ -1757,6 +1758,27 @@ static void ClientCommand(edict_t *ent)
                 }
                 ent->client->weapon_change_time = level.time + 2.0f;  /* cooldown */
             }
+        }
+        return;
+    }
+
+    /* Tactical light: toggle weapon-mounted flashlight */
+    if (Q_stricmp(cmd, "taclight") == 0 || Q_stricmp(cmd, "weaplight") == 0) {
+        int w = ent->client->pers_weapon;
+        if (w > WEAP_KNIFE && w < WEAP_COUNT) {
+            ent->client->attachments[w] ^= ATTACH_TACLIGHT;
+            if (ent->client->attachments[w] & ATTACH_TACLIGHT) {
+                gi.cprintf(ent, PRINT_ALL, "Tactical light ON\n");
+                {
+                    int snd = gi.soundindex("weapons/flashlight_on.wav");
+                    if (snd)
+                        gi.sound(ent, CHAN_ITEM, snd, 0.7f, ATTN_NORM, 0);
+                }
+            } else {
+                gi.cprintf(ent, PRINT_ALL, "Tactical light OFF\n");
+            }
+        } else {
+            gi.cprintf(ent, PRINT_ALL, "Can't mount light on this weapon.\n");
         }
         return;
     }
@@ -5772,6 +5794,28 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
 
         fl_tr = gi.trace(fl_start, NULL, NULL, fl_end, ent, MASK_SHOT);
         R_AddDlight(fl_tr.endpos, 1.0f, 1.0f, 0.9f, 300.0f, level.frametime + 0.05f);
+    }
+
+    /* Weapon tactical light — narrower, brighter beam from weapon */
+    if (!client->flashlight_on && client->pers_weapon > WEAP_KNIFE &&
+        client->pers_weapon < WEAP_COUNT &&
+        (client->attachments[client->pers_weapon] & ATTACH_TACLIGHT)) {
+        vec3_t tl_start, tl_end, tl_fwd, tl_rt, tl_up;
+        trace_t tl_tr;
+
+        VectorCopy(ent->s.origin, tl_start);
+        tl_start[2] += client->viewheight;
+        G_AngleVectors(client->viewangles, tl_fwd, tl_rt, tl_up);
+        VectorMA(tl_start, 600, tl_fwd, tl_end);
+
+        tl_tr = gi.trace(tl_start, NULL, NULL, tl_end, ent, MASK_SHOT);
+        R_AddDlight(tl_tr.endpos, 0.9f, 0.9f, 1.0f, 200.0f, level.frametime + 0.05f);
+        /* Subtle muzzle-area glow */
+        {
+            vec3_t muzzle_glow;
+            VectorMA(tl_start, 20, tl_fwd, muzzle_glow);
+            R_AddDlight(muzzle_glow, 0.5f, 0.5f, 0.6f, 40.0f, level.frametime + 0.05f);
+        }
     }
 
     /* Night vision goggles — green tint + ambient light boost */
