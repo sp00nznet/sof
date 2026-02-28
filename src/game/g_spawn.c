@@ -300,6 +300,10 @@ static void SP_fallback_point(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_misc_explosive_barrel(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_trigger_extraction(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_trigger_alarm(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_booby_trap(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_trigger_toxic(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_trigger_fire_pit(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_misc_weapon_bench(edict_t *ent, epair_t *pairs, int num_pairs);
 static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
                            int damage, vec3_t point);
 
@@ -729,6 +733,22 @@ static spawn_func_t spawn_funcs[] = {
     /* Alarm system */
     { "trigger_alarm",              SP_trigger_alarm },
     { "func_alarm",                 SP_trigger_alarm },
+
+    /* Booby trap */
+    { "func_booby_trap",            SP_func_booby_trap },
+    { "func_trap_door",             SP_func_booby_trap },
+
+    /* Toxic spill zone */
+    { "trigger_toxic",              SP_trigger_toxic },
+    { "trigger_radiation",          SP_trigger_toxic },
+
+    /* Fire pit hazard */
+    { "trigger_fire_pit",           SP_trigger_fire_pit },
+    { "trigger_lava_pit",           SP_trigger_fire_pit },
+
+    /* Weapon upgrade bench */
+    { "misc_weapon_bench",          SP_misc_weapon_bench },
+    { "misc_workbench",             SP_misc_weapon_bench },
 
     /* Sentinel */
     { NULL, NULL }
@@ -8516,6 +8536,282 @@ static void SP_trigger_alarm(edict_t *ent, epair_t *pairs, int num_pairs)
     gi.linkentity(ent);
 
     gi.dprintf("  trigger_alarm at (%.0f %.0f %.0f)\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
+}
+
+/* ==========================================================================
+   Booby Trap — entity that explodes when used or touched.
+   Can be disarmed with careful approach (use button from a distance).
+   ========================================================================== */
+
+static void booby_trap_explode(edict_t *self, edict_t *activator)
+{
+    extern game_export_t globals;
+    int bi;
+    vec3_t trap_up = {0, 0, 1};
+    float radius = 180.0f;
+
+    R_ParticleEffect(self->s.origin, trap_up, 3, 25);
+    R_AddDlight(self->s.origin, 1.0f, 0.6f, 0.2f, 350.0f, 0.5f);
+    SCR_AddScreenShake(0.35f, 0.3f);
+    SCR_AddPickupMessage("BOOBY TRAP!");
+    {
+        int snd = gi.soundindex("weapons/explosion.wav");
+        if (snd)
+            gi.positioned_sound(self->s.origin, self, CHAN_AUTO,
+                                snd, 1.0f, ATTN_NORM, 0);
+    }
+
+    for (bi = 1; bi < globals.num_edicts; bi++) {
+        edict_t *v = &globals.edicts[bi];
+        vec3_t bd;
+        float bdist;
+        if (!v->inuse || v->health <= 0 || !v->takedamage || v == self)
+            continue;
+        VectorSubtract(v->s.origin, self->s.origin, bd);
+        bdist = VectorLength(bd);
+        if (bdist < radius) {
+            int b_dmg = (int)(90.0f * (1.0f - bdist / radius));
+            if (b_dmg < 1) b_dmg = 1;
+            v->health -= b_dmg;
+            v->velocity[2] += 150.0f;
+            if (v->client)
+                v->client->pers_health = v->health;
+            if (v->health <= 0 && v->die)
+                v->die(v, self, activator, b_dmg, self->s.origin);
+            else if (v->pain)
+                v->pain(v, self, 0, b_dmg);
+        }
+    }
+
+    self->inuse = qfalse;
+    gi.unlinkentity(self);
+}
+
+static void booby_trap_use(edict_t *self, edict_t *other, edict_t *activator)
+{
+    (void)other;
+    booby_trap_explode(self, activator);
+}
+
+static void booby_trap_touch(edict_t *self, edict_t *other, void *plane,
+                              csurface_t *surf)
+{
+    (void)plane; (void)surf;
+    if (!other || other->health <= 0)
+        return;
+    if (other == self->owner)
+        return;
+    booby_trap_explode(self, other);
+}
+
+static void SP_func_booby_trap(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+    ent->classname = "func_booby_trap";
+    ent->solid = SOLID_TRIGGER;
+    ent->movetype = MOVETYPE_NONE;
+    ent->use = booby_trap_use;
+    ent->touch = booby_trap_touch;
+    ent->svflags |= SVF_NOCLIENT;  /* hidden trap */
+    if (ent->mins[0] == 0 && ent->maxs[0] == 0) {
+        VectorSet(ent->mins, -16, -16, -8);
+        VectorSet(ent->maxs, 16, 16, 8);
+    }
+    gi.linkentity(ent);
+    gi.dprintf("  func_booby_trap at (%.0f %.0f %.0f)\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
+}
+
+/* ==========================================================================
+   Toxic Spill Zone — area that applies poison damage while inside.
+   Standing in the zone continuously applies DoT and green screen tint.
+   ========================================================================== */
+
+static void toxic_touch(edict_t *self, edict_t *other, void *plane,
+                         csurface_t *surf)
+{
+    (void)plane; (void)surf;
+    if (!other || other->health <= 0)
+        return;
+
+    /* Apply poison DoT */
+    if (other->client) {
+        other->client->poison_end = level.time + 3.0f;  /* 3s of poison */
+        other->client->poison_next_tick = 0;  /* immediate first tick */
+        /* Green toxic tint */
+        other->client->blend[0] = 0.1f;
+        other->client->blend[1] = 0.6f;
+        other->client->blend[2] = 0.0f;
+        other->client->blend[3] = 0.2f;
+    } else if (other->svflags & SVF_MONSTER) {
+        /* Direct damage to AI */
+        if (other->dmg_debounce_time < level.time) {
+            other->health -= 5;
+            other->dmg_debounce_time = level.time + 1.0f;
+            if (other->health <= 0 && other->die)
+                other->die(other, self, self, 5, other->s.origin);
+        }
+    }
+}
+
+static void SP_trigger_toxic(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+    ent->classname = "trigger_toxic";
+    ent->solid = SOLID_TRIGGER;
+    ent->movetype = MOVETYPE_NONE;
+    ent->touch = toxic_touch;
+    ent->svflags |= SVF_NOCLIENT;
+    if (ent->mins[0] == 0 && ent->maxs[0] == 0) {
+        VectorSet(ent->mins, -64, -64, -16);
+        VectorSet(ent->maxs, 64, 64, 32);
+    }
+    gi.linkentity(ent);
+    gi.dprintf("  trigger_toxic at (%.0f %.0f %.0f)\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
+}
+
+/* ==========================================================================
+   Fire Pit Hazard — burning area that ignites entities on contact.
+   Deals direct fire damage, applies burn DoT, and emits fire/smoke particles.
+   ========================================================================== */
+
+static void fire_pit_touch(edict_t *self, edict_t *other, void *plane,
+                            csurface_t *surf)
+{
+    (void)plane; (void)surf;
+    if (!other || other->health <= 0)
+        return;
+
+    /* Debounce: burn tick every 0.5s */
+    if (other->dmg_debounce_time > level.time)
+        return;
+    other->dmg_debounce_time = level.time + 0.5f;
+
+    {
+        int fire_dmg = self->dmg > 0 ? self->dmg : 10;
+        other->health -= fire_dmg;
+
+        /* Fire particles on victim */
+        {
+            vec3_t fire_up = {0, 0, 1};
+            R_ParticleEffect(other->s.origin, fire_up, 3, 6);
+            R_AddDlight(other->s.origin, 1.0f, 0.4f, 0.1f, 80.0f, 0.3f);
+        }
+
+        if (other->client) {
+            other->client->pers_health = other->health;
+            /* Apply burn DoT */
+            other->client->burn_end = level.time + 4.0f;
+            other->client->burn_next_tick = 0;
+            /* Orange-red screen tint */
+            other->client->blend[0] = 1.0f;
+            other->client->blend[1] = 0.3f;
+            other->client->blend[2] = 0.0f;
+            other->client->blend[3] = 0.3f;
+        }
+
+        if (other->health <= 0 && other->die)
+            other->die(other, self, self, fire_dmg, other->s.origin);
+    }
+}
+
+static void SP_trigger_fire_pit(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+    ent->classname = "trigger_fire_pit";
+    ent->solid = SOLID_TRIGGER;
+    ent->movetype = MOVETYPE_NONE;
+    ent->touch = fire_pit_touch;
+    if (ent->dmg <= 0) ent->dmg = 10;
+    ent->svflags |= SVF_NOCLIENT;
+    if (ent->mins[0] == 0 && ent->maxs[0] == 0) {
+        VectorSet(ent->mins, -48, -48, -8);
+        VectorSet(ent->maxs, 48, 48, 16);
+    }
+    gi.linkentity(ent);
+    gi.dprintf("  trigger_fire_pit at (%.0f %.0f %.0f) dmg=%d\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->dmg);
+}
+
+/* ==========================================================================
+   Weapon Bench — usable entity that repairs and upgrades the current weapon.
+   Player interacts via USE to restore condition and add random attachment.
+   ========================================================================== */
+
+static void weapon_bench_use(edict_t *self, edict_t *other, edict_t *activator)
+{
+    gclient_t *cl;
+    int w;
+    (void)other;
+
+    if (!activator || !activator->client)
+        return;
+    if (self->count > 0 && self->wait > level.time) {
+        gi.cprintf(activator, PRINT_ALL, "Bench is recharging...\n");
+        return;
+    }
+
+    cl = activator->client;
+    w = cl->pers_weapon;
+    if (w <= 0 || w >= WEAP_COUNT) {
+        gi.cprintf(activator, PRINT_ALL, "No weapon to upgrade.\n");
+        return;
+    }
+
+    /* Repair weapon to full condition */
+    cl->weapon_condition[w] = 1.0f;
+
+    /* Restore magazine: top off whatever the current max is */
+    if (cl->ammo_max[w] > 0 && cl->ammo[w] < cl->ammo_max[w])
+        cl->ammo[w] = cl->ammo_max[w];
+
+    /* Random chance to add a new attachment */
+    {
+        int roll = rand() % 6;
+        int new_att = 0;
+        static const char *att_names[] = {
+            "Silencer", "Scope", "Extended Mag", "Laser Sight",
+            "Bayonet", "Tactical Light"
+        };
+        int att_flags[] = { 0x01, 0x02, 0x04, 0x08, 0x10, 0x20 };
+
+        if (!(cl->attachments[w] & att_flags[roll])) {
+            new_att = att_flags[roll];
+            cl->attachments[w] |= new_att;
+            gi.cprintf(activator, PRINT_ALL, "Weapon upgraded: +%s!\n",
+                       att_names[roll]);
+        }
+    }
+
+    gi.cprintf(activator, PRINT_ALL, "Weapon repaired and serviced.\n");
+    SCR_AddPickupMessage("WEAPON UPGRADED");
+    {
+        int snd = gi.soundindex("weapons/reload.wav");
+        if (snd)
+            gi.sound(activator, CHAN_ITEM, snd, 1.0f, ATTN_NORM, 0);
+    }
+
+    /* Cooldown: 15 seconds before can use again */
+    self->count = 1;
+    self->wait = level.time + 15.0f;
+}
+
+static void SP_misc_weapon_bench(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+    ent->classname = "misc_weapon_bench";
+    ent->solid = SOLID_BBOX;
+    ent->movetype = MOVETYPE_NONE;
+    ent->use = weapon_bench_use;
+    ent->count = 0;
+    VectorSet(ent->mins, -24, -16, 0);
+    VectorSet(ent->maxs, 24, 16, 32);
+    ent->s.modelindex = gi.modelindex("models/objects/bench/tris.md2");
+    gi.linkentity(ent);
+    gi.dprintf("  misc_weapon_bench at (%.0f %.0f %.0f)\n",
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
 }
 
