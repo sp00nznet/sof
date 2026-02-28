@@ -537,6 +537,10 @@ struct gclient_s {
 
     /* Double jump */
     qboolean        double_jump_used;      /* already used air jump this flight */
+
+    /* Melee combo */
+    int             melee_combo;           /* consecutive knife hits (resets on miss/timeout) */
+    float           melee_combo_time;      /* level.time of last knife hit */
 };
 
 /* ==========================================================================

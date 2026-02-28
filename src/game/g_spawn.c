@@ -277,6 +277,7 @@ static void SP_func_door_secret(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_floodlight(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_barrier(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_crate(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_vent(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_cover_point(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_trigger_monster_spawn(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_fallback_point(edict_t *ent, epair_t *pairs, int num_pairs);
@@ -585,6 +586,10 @@ static spawn_func_t spawn_funcs[] = {
     /* Destroyable crate */
     { "func_crate",                 SP_func_crate },
     { "misc_crate",                 SP_func_crate },
+
+    /* Breakable vent cover */
+    { "func_vent",                  SP_func_vent },
+    { "misc_vent",                  SP_func_vent },
 
     /* AI cover node */
     { "cover_point",                SP_cover_point },
@@ -6867,6 +6872,71 @@ static void SP_trigger_monster_spawn(edict_t *ent, epair_t *pairs, int num_pairs
     gi.dprintf("  trigger_monster_spawn at (%.0f %.0f %.0f) type=%s count=%d\n",
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
                ent->message ? ent->message : "default", ent->count);
+}
+
+/* ==========================================================================
+   func_vent — Breakable air vent cover. When shot or used, it breaks
+   open to reveal a crawl space. Plays a metallic clang on break.
+   Keys: "health" = damage to break (default 10), "dmg" = unused
+   ========================================================================== */
+
+static void vent_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
+                     int damage, vec3_t point)
+{
+    (void)inflictor; (void)attacker; (void)damage; (void)point;
+
+    /* Metal debris particles */
+    {
+        vec3_t up = {0, 0, 1};
+        R_ParticleEffect(self->s.origin, up, 12, 10);  /* sparks */
+        R_ParticleEffect(self->s.origin, up, 0, 6);    /* dust */
+    }
+
+    /* Clang sound */
+    {
+        int snd = gi.soundindex("world/metal_clang.wav");
+        if (snd)
+            gi.sound(self, CHAN_BODY, snd, 1.0f, ATTN_NORM, 0);
+    }
+
+    /* Remove the vent cover — passage is now open */
+    self->solid = SOLID_NOT;
+    self->takedamage = DAMAGE_NO;
+    self->svflags |= SVF_NOCLIENT;
+    gi.unlinkentity(self);
+
+    /* Fire targets (e.g., trigger a light inside the vent) */
+    if (self->target)
+        G_UseTargets(self, self->target);
+}
+
+static void vent_use(edict_t *self, edict_t *other, edict_t *activator)
+{
+    (void)other;
+    vec3_t zero = {0, 0, 0};
+    vent_die(self, activator, activator, 100, zero);
+}
+
+static void SP_func_vent(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *v;
+
+    ent->classname = "func_vent";
+    ent->solid = SOLID_BSP;
+    ent->movetype = MOVETYPE_PUSH;
+
+    v = ED_FindValue(pairs, num_pairs, "health");
+    ent->health = v ? atoi(v) : 10;
+    ent->max_health = ent->health;
+
+    ent->takedamage = DAMAGE_YES;
+    ent->die = vent_die;
+    ent->use = vent_use;
+
+    gi.linkentity(ent);
+    gi.dprintf("  func_vent at (%.0f %.0f %.0f) health=%d\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->health);
 }
 
 /* ==========================================================================

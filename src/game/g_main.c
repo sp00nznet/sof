@@ -3270,6 +3270,18 @@ static void G_FireHitscan(edict_t *ent)
             }
 
             VectorMA(start, trace_range, pellet_dir, end);
+
+            /* Bullet drop: sniper/slugger shots arc downward at long range */
+            if (weap == WEAP_SNIPER || weap == WEAP_SLUGGER) {
+                float travel = trace_range;  /* max distance this shot can go */
+                /* Gravity drop: d = 0.5*g*t^2, t = dist/velocity
+                   At ~3000 units velocity, 1024u = ~0.34s, drop ~2u
+                   At 4096u = ~1.37s, drop ~30u. Scale for game feel. */
+                float drop = (travel * travel) * 0.0000015f;
+                if (drop > 64.0f) drop = 64.0f;
+                end[2] -= drop;
+            }
+
             tr = gi.trace(start, NULL, NULL, end, ent, MASK_SHOT);
 
             /* Underwater bubble trail */
@@ -3287,6 +3299,10 @@ static void G_FireHitscan(edict_t *ent)
                 VectorMA(tracer_start, 6, right, tracer_start);
                 R_AddTracer(tracer_start, tr.endpos, 1.0f, 0.9f, 0.5f);
             }
+
+    /* Reset melee combo on knife miss */
+    if (weap == WEAP_KNIFE && tr.fraction >= 1.0f && ent->client)
+        ent->client->melee_combo = 0;
 
     if (tr.fraction < 1.0f) {
         /* Spawn impact particles at hit point */
@@ -3329,6 +3345,27 @@ static void G_FireHitscan(edict_t *ent)
                     SCR_AddPickupMessage("BACKSTAB!");
                     ent->client->score += 15;
                     SCR_AddScorePopup(15);
+                }
+            }
+
+            /* Melee combo: consecutive knife hits deal escalating damage */
+            if (weap == WEAP_KNIFE && ent->client) {
+                if (level.time - ent->client->melee_combo_time < 1.5f)
+                    ent->client->melee_combo++;
+                else
+                    ent->client->melee_combo = 1;
+                ent->client->melee_combo_time = level.time;
+                if (ent->client->melee_combo >= 2) {
+                    /* Each consecutive hit adds 50% more damage, up to 3x */
+                    float combo_mult = 1.0f + (ent->client->melee_combo - 1) * 0.5f;
+                    if (combo_mult > 3.0f) combo_mult = 3.0f;
+                    damage = (int)(damage * combo_mult);
+                    if (ent->client->melee_combo == 3)
+                        SCR_AddPickupMessage("COMBO x3!");
+                    else if (ent->client->melee_combo >= 4)
+                        SCR_AddPickupMessage("COMBO x4!");
+                    ent->client->score += ent->client->melee_combo * 5;
+                    SCR_AddScorePopup(ent->client->melee_combo * 5);
                 }
             }
 

@@ -30,6 +30,7 @@ extern edict_t *G_DropItem(vec3_t origin, const char *classname);
 static void AI_FormationSpread(edict_t *self);
 static void AI_MedicThink(edict_t *self);
 static void AI_TryBreach(edict_t *self);
+static void AI_LeapfrogAdvance(edict_t *self);
 void AI_AllyDied(vec3_t death_origin);
 
 /* Monster sound indices — precached in monster_start */
@@ -1107,6 +1108,29 @@ static void ai_think_chase(edict_t *self)
 
     /* Push apart from nearby allies to avoid clumping */
     AI_FormationSpread(self);
+
+    /* Leapfrog advance: squads use fire-and-move when 3+ allies nearby */
+    if (self->max_health >= 80 && dist > 200.0f && dist < AI_ATTACK_RANGE * 2.0f) {
+        extern game_export_t globals;
+        int nearby_allies = 0;
+        int lfi;
+        for (lfi = 1; lfi < globals.num_edicts; lfi++) {
+            edict_t *a = &globals.edicts[lfi];
+            vec3_t ad;
+            if (a == self || !a->inuse || a->health <= 0)
+                continue;
+            if (!(a->svflags & SVF_MONSTER) || !a->enemy)
+                continue;
+            VectorSubtract(a->s.origin, self->s.origin, ad);
+            if (VectorLength(ad) < 400.0f)
+                nearby_allies++;
+        }
+        if (nearby_allies >= 2) {
+            AI_LeapfrogAdvance(self);
+            self->nextthink = level.time + FRAMETIME;
+            return;
+        }
+    }
 
     /* Coordinated breach: try to breach doors between us and enemy */
     if ((self->ai_flags & AI_LOST_SIGHT) && self->max_health >= 60)
@@ -2241,6 +2265,69 @@ static void AI_MedicThink(edict_t *self)
                 R_ParticleEffect(best_patient->s.origin, up, 2, 4); /* green */
             }
         }
+    }
+}
+
+/* ==========================================================================
+   AI Leapfrog Advance — squad members alternate between moving and covering.
+   Odd-indexed monsters move while even-indexed provide suppressing fire,
+   then roles swap every few seconds. Creates realistic fire-and-move tactics.
+   ========================================================================== */
+
+#define AI_LEAPFROG_INTERVAL 2.5f  /* seconds between role swaps */
+
+static void AI_LeapfrogAdvance(edict_t *self)
+{
+    extern game_export_t globals;
+    int idx = (int)(self - &globals.edicts[0]);
+    float phase = level.time / AI_LEAPFROG_INTERVAL;
+    int role = ((idx % 2) == ((int)phase % 2)) ? 0 : 1;  /* 0=move, 1=cover */
+
+    if (!self->enemy || !self->enemy->inuse)
+        return;
+
+    if (role == 0) {
+        /* MOVE phase: advance toward enemy quickly */
+        AI_MoveToward(self, self->enemy->s.origin, AI_CHASE_SPEED * 1.4f);
+        /* Run animation */
+        self->s.frame++;
+        if (self->s.frame < FRAME_RUN_START || self->s.frame > FRAME_RUN_END)
+            self->s.frame = FRAME_RUN_START;
+    } else {
+        /* COVER phase: stop and fire suppressive bursts */
+        self->velocity[0] = self->velocity[1] = 0;
+        if (AI_Visible(self, self->enemy) &&
+            self->move_angles[2] < level.time) {
+            vec3_t aim_dir, aim_end;
+            trace_t ctr;
+            VectorSubtract(self->enemy->s.origin, self->s.origin, aim_dir);
+            VectorNormalize(aim_dir);
+            /* Add slight inaccuracy for covering fire feel */
+            aim_dir[0] += ((float)(rand() % 60) - 30.0f) * 0.001f;
+            aim_dir[1] += ((float)(rand() % 60) - 30.0f) * 0.001f;
+            VectorMA(self->s.origin, 1024.0f, aim_dir, aim_end);
+            ctr = gi.trace(self->s.origin, NULL, NULL, aim_end, self, MASK_SHOT);
+            R_AddTracer(self->s.origin, ctr.endpos, 1.0f, 0.7f, 0.3f);
+            if (snd_monster_fire)
+                gi.sound(self, CHAN_WEAPON, snd_monster_fire, 0.9f, ATTN_NORM, 0);
+            /* Can hit player */
+            if (ctr.ent && ctr.ent->takedamage && ctr.ent->health > 0) {
+                int cover_dmg = (self->dmg ? self->dmg : 8) / 2;
+                if (cover_dmg < 1) cover_dmg = 1;
+                ctr.ent->health -= cover_dmg;
+                R_ParticleEffect(ctr.endpos, ctr.plane.normal, 1, 3);
+                if (ctr.ent->client) {
+                    ctr.ent->client->pers_health = ctr.ent->health;
+                    ctr.ent->client->blend[0] = 1.0f;
+                    ctr.ent->client->blend[3] = 0.15f;
+                }
+            }
+            self->move_angles[2] = level.time + 0.3f;
+        }
+        /* Attack animation while covering */
+        self->s.frame++;
+        if (self->s.frame < FRAME_ATTACK_START || self->s.frame > FRAME_ATTACK_END)
+            self->s.frame = FRAME_ATTACK_START;
     }
 }
 
