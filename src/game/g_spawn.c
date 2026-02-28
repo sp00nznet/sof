@@ -268,6 +268,8 @@ static void SP_func_zipline(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_elevator_call(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_crane(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_generator(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_trap_floor(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_modstation(edict_t *ent, epair_t *pairs, int num_pairs);
 static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
                            int damage, vec3_t point);
 
@@ -538,6 +540,14 @@ static spawn_func_t spawn_funcs[] = {
     /* Power generator */
     { "func_generator",             SP_func_generator },
     { "misc_generator",             SP_func_generator },
+
+    /* Trap floor */
+    { "func_trap_floor",            SP_func_trap_floor },
+    { "trigger_trap_floor",         SP_func_trap_floor },
+
+    /* Weapon mod station */
+    { "func_modstation",            SP_func_modstation },
+    { "misc_modstation",            SP_func_modstation },
 
     /* Weapons (SoF) */
     { "weapon_knife",               SP_item_pickup },
@@ -6328,6 +6338,141 @@ static void SP_func_generator(edict_t *ent, epair_t *pairs, int num_pairs)
     gi.dprintf("  func_generator at (%.0f %.0f %.0f) hp=%d target='%s'\n",
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
                ent->health, ent->target ? ent->target : "none");
+}
+
+/* ==========================================================================
+   func_trap_floor — Trapdoor that opens when stepped on
+   Becomes SOLID_NOT when a player touches it, drops them below.
+   Resets after "wait" seconds.
+   ========================================================================== */
+
+static void trap_floor_reset(edict_t *self)
+{
+    self->solid = SOLID_BSP;
+    self->s.modelindex = self->count;  /* restore model from saved index */
+    gi.linkentity(self);
+    self->nextthink = 0;
+}
+
+static void trap_floor_touch(edict_t *self, edict_t *other, void *plane, csurface_t *surf)
+{
+    (void)plane; (void)surf;
+
+    if (!other || !other->client)
+        return;
+    if (self->solid != SOLID_BSP)
+        return;  /* already triggered */
+
+    /* Open the trapdoor */
+    self->solid = SOLID_NOT;
+    self->s.modelindex = 0;  /* hide model */
+    gi.linkentity(self);
+
+    {
+        int snd = gi.soundindex("world/trapdoor.wav");
+        if (snd)
+            gi.positioned_sound(self->s.origin, NULL, CHAN_AUTO, snd, 1.0f, ATTN_NORM, 0);
+    }
+
+    /* Reset after wait time */
+    self->think = trap_floor_reset;
+    self->nextthink = level.time + self->wait;
+}
+
+static void SP_func_trap_floor(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *v;
+
+    ent->classname = "func_trap_floor";
+    ent->solid = SOLID_BSP;
+    ent->movetype = MOVETYPE_PUSH;
+    ent->touch = trap_floor_touch;
+
+    v = ED_FindValue(pairs, num_pairs, "wait");
+    ent->wait = v ? (float)atof(v) : 5.0f;
+
+    v = ED_FindValue(pairs, num_pairs, "model");
+    if (v && v[0])
+        ent->s.modelindex = gi.modelindex(v);
+
+    ent->count = ent->s.modelindex;  /* save model index for reset */
+
+    gi.linkentity(ent);
+
+    gi.dprintf("  func_trap_floor at (%.0f %.0f %.0f) wait=%.1f\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2], ent->wait);
+}
+
+/* ==========================================================================
+   func_modstation — Weapon modification station
+   Player uses to cycle through and add attachments to current weapon.
+   Each use adds the next available attachment.
+   ========================================================================== */
+
+static void modstation_use(edict_t *self, edict_t *other, edict_t *activator)
+{
+    int w, att;
+    (void)other; (void)self;
+
+    if (!activator || !activator->client)
+        return;
+
+    w = activator->client->pers_weapon;
+    if (w <= 0 || w >= WEAP_COUNT) {
+        gi.cprintf(activator, PRINT_ALL, "No weapon equipped.\n");
+        return;
+    }
+
+    att = activator->client->attachments[w];
+
+    /* Add next available attachment */
+    if (!(att & ATTACH_SILENCER)) {
+        activator->client->attachments[w] |= ATTACH_SILENCER;
+        gi.cprintf(activator, PRINT_ALL, "Silencer attached!\n");
+        SCR_AddPickupMessage("SILENCER ATTACHED");
+    } else if (!(att & ATTACH_SCOPE)) {
+        activator->client->attachments[w] |= ATTACH_SCOPE;
+        gi.cprintf(activator, PRINT_ALL, "Scope attached!\n");
+        SCR_AddPickupMessage("SCOPE ATTACHED");
+    } else if (!(att & ATTACH_EXTMAG)) {
+        activator->client->attachments[w] |= ATTACH_EXTMAG;
+        gi.cprintf(activator, PRINT_ALL, "Extended mag attached!\n");
+        SCR_AddPickupMessage("EXTENDED MAG ATTACHED");
+    } else if (!(att & ATTACH_LASER)) {
+        activator->client->attachments[w] |= ATTACH_LASER;
+        gi.cprintf(activator, PRINT_ALL, "Laser sight attached!\n");
+        SCR_AddPickupMessage("LASER ATTACHED");
+    } else {
+        gi.cprintf(activator, PRINT_ALL, "All attachments already equipped.\n");
+        return;
+    }
+
+    /* Also restore weapon condition */
+    activator->client->weapon_condition[w] = 1.0f;
+
+    {
+        int snd = gi.soundindex("weapons/mod_attach.wav");
+        if (snd)
+            gi.sound(activator, CHAN_ITEM, snd, 1.0f, ATTN_NORM, 0);
+    }
+}
+
+static void SP_func_modstation(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+
+    ent->classname = "func_modstation";
+    ent->solid = SOLID_BBOX;
+    ent->movetype = MOVETYPE_NONE;
+    ent->use = modstation_use;
+
+    VectorSet(ent->mins, -16, -16, 0);
+    VectorSet(ent->maxs, 16, 16, 32);
+
+    gi.linkentity(ent);
+
+    gi.dprintf("  func_modstation at (%.0f %.0f %.0f)\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
 }
 
 /* ==========================================================================

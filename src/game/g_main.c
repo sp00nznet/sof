@@ -3450,6 +3450,14 @@ static void G_FireHitscan(edict_t *ent)
                     ent->client->score += score_award;
                     SCR_AddScorePopup(score_award);
 
+                    /* Stealth kill bonus: target was unaware (idle AI, no enemy) */
+                    if (tr.ent->svflags & SVF_MONSTER && !tr.ent->enemy) {
+                        ent->client->score += 20;
+                        ent->client->xp += 30;
+                        SCR_AddPickupMessage("STEALTH KILL!");
+                        SCR_AddScorePopup(20);
+                    }
+
                     /* Weapon mastery: track kills per weapon, level up at thresholds */
                     if (weap > 0 && weap < WEAP_COUNT) {
                         static const int mastery_thresholds[] = { 10, 30, 75, 999999 };
