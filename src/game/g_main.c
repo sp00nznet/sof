@@ -2953,6 +2953,50 @@ static void ClientCommand(edict_t *ent)
         return;
     }
 
+    /* AI negotiation: force nearby wounded enemies to surrender */
+    if (Q_stricmp(cmd, "negotiate") == 0 || Q_stricmp(cmd, "surrender") == 0) {
+        if (ent->deadflag)
+            return;
+        {
+            int surrendered = 0;
+            int ni;
+            for (ni = 1; ni < globals.num_edicts; ni++) {
+                edict_t *m = &globals.edicts[ni];
+                vec3_t nd;
+                float ndist;
+                if (!m->inuse || m->health <= 0)
+                    continue;
+                if (!(m->svflags & SVF_MONSTER))
+                    continue;
+                VectorSubtract(m->s.origin, ent->s.origin, nd);
+                ndist = VectorLength(nd);
+                if (ndist > 200.0f)
+                    continue;
+                /* Only wounded enemies (below 30% HP) or low morale can be negotiated */
+                if (m->health > m->max_health * 0.3f && m->random > 15.0f)
+                    continue;
+                /* Surrender: stop fighting, become passive */
+                m->enemy = NULL;
+                m->count = 6;  /* AI_STATE_DEAD — stops AI logic */
+                m->takedamage = DAMAGE_NO;
+                m->velocity[0] = 0;
+                m->velocity[1] = 0;
+                VectorClear(m->velocity);
+                surrendered++;
+                /* Score bonus for non-lethal takedown */
+                ent->client->score += 50;
+                SCR_AddScorePopup(50);
+            }
+            if (surrendered > 0) {
+                gi.cprintf(ent, PRINT_ALL, "%d enemies surrendered!\n", surrendered);
+                SCR_AddPickupMessage("NEGOTIATION SUCCESS");
+            } else {
+                gi.cprintf(ent, PRINT_ALL, "No wounded enemies nearby to negotiate with.\n");
+            }
+        }
+        return;
+    }
+
     /* Mortar strike: call in artillery bombardment at aimed position */
     if (Q_stricmp(cmd, "mortar") == 0 || Q_stricmp(cmd, "airstrike") == 0) {
         if (ent->deadflag)

@@ -297,6 +297,9 @@ static void SP_func_pillar(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_cover_point(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_trigger_monster_spawn(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_fallback_point(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_misc_explosive_barrel(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_trigger_extraction(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_trigger_alarm(edict_t *ent, epair_t *pairs, int num_pairs);
 static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
                            int damage, vec3_t point);
 
@@ -714,6 +717,18 @@ static spawn_func_t spawn_funcs[] = {
     { "key_gold",                   SP_item_pickup },
     { "item_key_red",               SP_item_pickup },
     { "item_key_blue",              SP_item_pickup },
+
+    /* Explosive barrel */
+    { "misc_explosive_barrel",      SP_misc_explosive_barrel },
+    { "misc_barrel_explosive",      SP_misc_explosive_barrel },
+
+    /* Extraction zone */
+    { "trigger_extraction",         SP_trigger_extraction },
+    { "trigger_evac",               SP_trigger_extraction },
+
+    /* Alarm system */
+    { "trigger_alarm",              SP_trigger_alarm },
+    { "func_alarm",                 SP_trigger_alarm },
 
     /* Sentinel */
     { NULL, NULL }
@@ -8290,6 +8305,218 @@ static void SP_func_fence(edict_t *ent, epair_t *pairs, int num_pairs)
     gi.dprintf("  func_fence at (%.0f %.0f %.0f) hp=%d\n",
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
                ent->health);
+}
+
+/* ==========================================================================
+   Explosive Barrel — shootable barrel that detonates with radius damage.
+   Takes damage until health reaches 0, then explodes.
+   ========================================================================== */
+
+static void barrel_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
+                        int damage, vec3_t point)
+{
+    extern game_export_t globals;
+    int bi;
+    vec3_t barrel_up = {0, 0, 1};
+    float radius = 200.0f;
+
+    /* Explosion visual */
+    R_ParticleEffect(self->s.origin, barrel_up, 3, 30);
+    R_AddDlight(self->s.origin, 1.0f, 0.6f, 0.2f, 400.0f, 0.6f);
+    SCR_AddScreenShake(0.4f, 0.3f);
+    {
+        int snd = gi.soundindex("weapons/explosion.wav");
+        if (snd)
+            gi.positioned_sound(self->s.origin, self, CHAN_AUTO,
+                                snd, 1.0f, ATTN_NORM, 0);
+    }
+
+    /* Radius damage */
+    for (bi = 1; bi < globals.num_edicts; bi++) {
+        edict_t *v = &globals.edicts[bi];
+        vec3_t bd;
+        float bdist;
+        if (!v->inuse || v->health <= 0 || !v->takedamage || v == self)
+            continue;
+        VectorSubtract(v->s.origin, self->s.origin, bd);
+        bdist = VectorLength(bd);
+        if (bdist < radius) {
+            int b_dmg = (int)(120.0f * (1.0f - bdist / radius));
+            if (b_dmg < 1) b_dmg = 1;
+            v->health -= b_dmg;
+            v->velocity[2] += 200.0f;
+            if (v->client)
+                v->client->pers_health = v->health;
+            if (v->health <= 0 && v->die)
+                v->die(v, self, attacker, b_dmg, self->s.origin);
+            else if (v->pain)
+                v->pain(v, self, 0, b_dmg);
+        }
+    }
+
+    /* Remove barrel */
+    self->inuse = qfalse;
+    gi.unlinkentity(self);
+}
+
+static void SP_misc_explosive_barrel(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    ent->classname = "explosive_barrel";
+    ent->solid = SOLID_BBOX;
+    ent->movetype = MOVETYPE_NONE;
+    ent->takedamage = DAMAGE_YES;
+    if (ent->health <= 0) ent->health = 40;
+    ent->max_health = ent->health;
+    ent->die = barrel_die;
+    VectorSet(ent->mins, -12, -12, 0);
+    VectorSet(ent->maxs, 12, 12, 32);
+    ent->s.modelindex = gi.modelindex("models/objects/barrel/tris.md2");
+    gi.linkentity(ent);
+
+    gi.dprintf("  explosive_barrel at (%.0f %.0f %.0f) hp=%d\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->health);
+}
+
+/* ==========================================================================
+   Extraction Zone — trigger volume that completes the level.
+   Player enters the zone to trigger extraction/evacuation.
+   ========================================================================== */
+
+static void extraction_touch(edict_t *self, edict_t *other, void *plane,
+                              csurface_t *surf)
+{
+    if (!other || !other->client)
+        return;
+    if (other->health <= 0)
+        return;
+
+    gi.cprintf(other, PRINT_ALL, "EXTRACTION COMPLETE!\n");
+    SCR_AddPickupMessage("MISSION COMPLETE");
+    {
+        int snd = gi.soundindex("world/radio_static.wav");
+        if (snd)
+            gi.sound(other, CHAN_AUTO, snd, 1.0f, ATTN_NONE, 0);
+    }
+
+    /* Award completion bonus */
+    other->client->score += 500;
+    SCR_AddScorePopup(500);
+
+    /* Trigger any target entities */
+    if (self->target) {
+        extern game_export_t globals;
+        int ei;
+        for (ei = 1; ei < globals.num_edicts; ei++) {
+            edict_t *t = &globals.edicts[ei];
+            if (t->inuse && t->targetname &&
+                Q_stricmp(t->targetname, self->target) == 0) {
+                if (t->use)
+                    t->use(t, self, other);
+            }
+        }
+    }
+
+    /* Mark level as complete */
+    level.objectives_completed = level.objectives_total;
+    self->touch = NULL;  /* only trigger once */
+}
+
+static void SP_trigger_extraction(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    ent->classname = "trigger_extraction";
+    ent->solid = SOLID_TRIGGER;
+    ent->movetype = MOVETYPE_NONE;
+    ent->touch = extraction_touch;
+    ent->svflags |= SVF_NOCLIENT;
+    if (ent->mins[0] == 0 && ent->maxs[0] == 0) {
+        VectorSet(ent->mins, -64, -64, -16);
+        VectorSet(ent->maxs, 64, 64, 64);
+    }
+    gi.linkentity(ent);
+
+    gi.dprintf("  trigger_extraction at (%.0f %.0f %.0f)\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
+}
+
+/* ==========================================================================
+   Alarm System — trigger zone that sounds alarm and spawns reinforcements.
+   When player enters, plays alarm sound, alerts all monsters on the level,
+   and optionally spawns new enemies at linked spawn points.
+   ========================================================================== */
+
+static void alarm_touch(edict_t *self, edict_t *other, void *plane,
+                         csurface_t *surf)
+{
+    extern game_export_t globals;
+    int ai;
+
+    (void)plane; (void)surf;
+    if (!other || !other->client)
+        return;
+    if (other->health <= 0)
+        return;
+    if (self->count > 0)
+        return;  /* already triggered */
+
+    self->count = 1;
+    gi.cprintf(other, PRINT_ALL, "ALARM TRIGGERED!\n");
+    SCR_AddPickupMessage("ALARM!");
+    {
+        int snd = gi.soundindex("world/alarm.wav");
+        if (snd)
+            gi.positioned_sound(self->s.origin, self, CHAN_AUTO,
+                                snd, 1.0f, ATTN_NONE, 0);
+    }
+
+    /* Alert ALL monsters on the level */
+    for (ai = 1; ai < globals.num_edicts; ai++) {
+        edict_t *m = &globals.edicts[ai];
+        if (!m->inuse || m->health <= 0)
+            continue;
+        if (!(m->svflags & SVF_MONSTER))
+            continue;
+        if (!m->enemy) {
+            m->enemy = other;
+            m->count = 3; /* AI_STATE_CHASE */
+            VectorCopy(other->s.origin, m->move_origin);
+        }
+    }
+
+    /* Trigger any linked entities (spawn points, etc.) */
+    if (self->target) {
+        for (ai = 1; ai < globals.num_edicts; ai++) {
+            edict_t *t = &globals.edicts[ai];
+            if (t->inuse && t->targetname &&
+                Q_stricmp(t->targetname, self->target) == 0) {
+                if (t->use)
+                    t->use(t, self, other);
+            }
+        }
+    }
+}
+
+static void SP_trigger_alarm(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+    ent->classname = "trigger_alarm";
+    ent->solid = SOLID_TRIGGER;
+    ent->movetype = MOVETYPE_NONE;
+    ent->touch = alarm_touch;
+    ent->count = 0;  /* 0=armed, 1=triggered */
+    ent->svflags |= SVF_NOCLIENT;
+    /* Can be disabled by EMP or destroyed */
+    ent->takedamage = DAMAGE_YES;
+    if (ent->health <= 0) ent->health = 20;
+    ent->max_health = ent->health;
+    if (ent->mins[0] == 0 && ent->maxs[0] == 0) {
+        VectorSet(ent->mins, -32, -32, -16);
+        VectorSet(ent->maxs, 32, 32, 64);
+    }
+    gi.linkentity(ent);
+
+    gi.dprintf("  trigger_alarm at (%.0f %.0f %.0f)\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
 }
 
 /* ==========================================================================
