@@ -263,6 +263,8 @@ static void SP_func_cover(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_trigger_cutscene(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_trigger_music(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_cage(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_trigger_hazard(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_zipline(edict_t *ent, epair_t *pairs, int num_pairs);
 static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
                            int damage, vec3_t point);
 
@@ -510,6 +512,14 @@ static spawn_func_t spawn_funcs[] = {
 
     /* Mountable turret (alias) */
     { "func_turret",                SP_misc_turret },
+
+    /* Environmental hazard zone */
+    { "trigger_hazard",             SP_trigger_hazard },
+    { "trigger_hurt_zone",          SP_trigger_hazard },
+
+    /* Zipline */
+    { "func_zipline",               SP_func_zipline },
+    { "misc_zipline",               SP_func_zipline },
 
     /* Weapons (SoF) */
     { "weapon_knife",               SP_item_pickup },
@@ -5846,6 +5856,205 @@ static void SP_func_cage(edict_t *ent, epair_t *pairs, int num_pairs)
 
     gi.dprintf("  func_cage at (%.0f %.0f %.0f) hp=%d\n",
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2], ent->health);
+}
+
+/* ==========================================================================
+   trigger_hazard — Environmental damage zone
+   Deals periodic damage to entities inside. Type determines damage flavor:
+   "acid" = poison DoT, "electric" = burst damage, "fire" = burn DoT
+   Keys: "dmg" = damage per tick, "wait" = seconds between ticks
+   ========================================================================== */
+
+static void hazard_touch(edict_t *self, edict_t *other, void *plane, csurface_t *surf)
+{
+    extern void R_ParticleEffect(vec3_t org, vec3_t dir, int type, int count);
+    vec3_t up = {0, 0, 1};
+
+    (void)plane; (void)surf;
+
+    if (!other || !other->client || other->health <= 0)
+        return;
+    if (other->client->invuln_time > level.time)
+        return;
+    if (level.time < self->dmg_debounce_time)
+        return;
+
+    /* Apply damage */
+    other->health -= self->dmg;
+    other->client->pers_health = other->health;
+
+    /* Damage flash */
+    other->client->blend[0] = 0.5f;
+    other->client->blend[1] = 0.8f;
+    other->client->blend[2] = 0.0f;
+    other->client->blend[3] = 0.25f;
+
+    R_ParticleEffect(other->s.origin, up, 4, 8);
+
+    if (self->message && self->message[0])
+        gi.cprintf(other, PRINT_ALL, "%s\n", self->message);
+
+    /* Set tick cooldown */
+    self->dmg_debounce_time = level.time + self->wait;
+
+    if (other->health <= 0 && other->die)
+        other->die(other, self, self, self->dmg, other->s.origin);
+}
+
+static void SP_trigger_hazard(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *v;
+
+    ent->classname = "trigger_hazard";
+    ent->solid = SOLID_TRIGGER;
+    ent->movetype = MOVETYPE_NONE;
+    ent->touch = hazard_touch;
+    ent->svflags |= SVF_NOCLIENT;
+
+    v = ED_FindValue(pairs, num_pairs, "dmg");
+    ent->dmg = v ? atoi(v) : 10;
+
+    v = ED_FindValue(pairs, num_pairs, "wait");
+    ent->wait = v ? (float)atof(v) : 1.0f;
+
+    v = ED_FindValue(pairs, num_pairs, "message");
+    if (v && v[0])
+        ent->message = (char *)v;
+
+    VectorSet(ent->mins, -32, -32, -8);
+    VectorSet(ent->maxs, 32, 32, 32);
+
+    gi.linkentity(ent);
+
+    gi.dprintf("  trigger_hazard at (%.0f %.0f %.0f) dmg=%d wait=%.1f\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->dmg, ent->wait);
+}
+
+/* ==========================================================================
+   func_zipline — Rideable zipline between two points
+   Player uses to mount, slides along vector from origin to target position.
+   Keys: "speed" = travel speed, "target" = endpoint entity
+   ========================================================================== */
+
+static void zipline_use(edict_t *self, edict_t *other, edict_t *activator)
+{
+    (void)other;
+
+    if (!activator || !activator->client)
+        return;
+
+    /* Already riding? */
+    if (activator->client->zipline_ent) {
+        gi.cprintf(activator, PRINT_ALL, "Already on a zipline!\n");
+        return;
+    }
+
+    /* Check distance to start */
+    {
+        vec3_t diff;
+        VectorSubtract(self->s.origin, activator->s.origin, diff);
+        if (VectorLength(diff) > 96.0f) {
+            gi.cprintf(activator, PRINT_ALL, "Too far from zipline.\n");
+            return;
+        }
+    }
+
+    activator->client->zipline_ent = self;
+    activator->client->zipline_progress = 0;
+    activator->movetype = MOVETYPE_NONE;
+
+    gi.cprintf(activator, PRINT_ALL, "Grabbed zipline!\n");
+    {
+        int snd = gi.soundindex("world/zipline.wav");
+        if (snd)
+            gi.sound(activator, CHAN_ITEM, snd, 0.8f, ATTN_NORM, 0);
+    }
+}
+
+static void zipline_think(edict_t *self)
+{
+    extern game_export_t globals;
+    edict_t *player = &globals.edicts[1];
+
+    self->nextthink = level.time + 0.05f;
+
+    if (!player || !player->inuse || !player->client)
+        return;
+
+    if (player->client->zipline_ent != self)
+        return;
+
+    /* Advance progress */
+    {
+        float speed = (self->speed > 0) ? self->speed : 300.0f;
+        vec3_t travel;
+        float total_dist;
+
+        VectorSubtract(self->move_origin, self->s.origin, travel);
+        total_dist = VectorLength(travel);
+        if (total_dist < 1.0f) total_dist = 1.0f;
+
+        player->client->zipline_progress += (speed * 0.05f) / total_dist;
+
+        if (player->client->zipline_progress >= 1.0f) {
+            /* Arrived at end */
+            player->client->zipline_progress = 0;
+            player->client->zipline_ent = NULL;
+            VectorCopy(self->move_origin, player->s.origin);
+            player->movetype = MOVETYPE_WALK;
+            gi.linkentity(player);
+            gi.cprintf(player, PRINT_ALL, "Zipline complete.\n");
+            return;
+        }
+
+        /* Interpolate position */
+        {
+            float t = player->client->zipline_progress;
+            player->s.origin[0] = self->s.origin[0] + travel[0] * t;
+            player->s.origin[1] = self->s.origin[1] + travel[1] * t;
+            player->s.origin[2] = self->s.origin[2] + travel[2] * t;
+            player->velocity[0] = player->velocity[1] = 0;
+            player->velocity[2] = 0;
+            gi.linkentity(player);
+        }
+    }
+}
+
+static void SP_func_zipline(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *v;
+
+    ent->classname = "func_zipline";
+    ent->solid = SOLID_BBOX;
+    ent->movetype = MOVETYPE_NONE;
+    ent->use = zipline_use;
+    ent->think = zipline_think;
+    ent->nextthink = level.time + 1.0f;
+
+    v = ED_FindValue(pairs, num_pairs, "speed");
+    ent->speed = v ? (float)atof(v) : 300.0f;
+
+    /* Endpoint stored in move_origin (set from "target_origin" or use a fixed offset) */
+    v = ED_FindValue(pairs, num_pairs, "endpoint");
+    if (v) {
+        sscanf(v, "%f %f %f",
+               &ent->move_origin[0], &ent->move_origin[1], &ent->move_origin[2]);
+    } else {
+        /* Default: horizontal line 512 units in facing direction */
+        VectorCopy(ent->s.origin, ent->move_origin);
+        ent->move_origin[0] += 512.0f;
+    }
+
+    VectorSet(ent->mins, -8, -8, -8);
+    VectorSet(ent->maxs, 8, 8, 8);
+
+    gi.linkentity(ent);
+
+    gi.dprintf("  func_zipline at (%.0f %.0f %.0f) -> (%.0f %.0f %.0f) speed=%.0f\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->move_origin[0], ent->move_origin[1], ent->move_origin[2],
+               ent->speed);
 }
 
 /* ==========================================================================

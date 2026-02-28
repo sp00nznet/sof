@@ -1627,6 +1627,33 @@ static void ClientCommand(edict_t *ent)
     }
 
     /* Ping/mark — place a marker at crosshair location for team awareness */
+    /* Weapon maintenance — restore weapon condition */
+    if (Q_stricmp(cmd, "maintain") == 0 || Q_stricmp(cmd, "clean") == 0) {
+        int w = ent->client->pers_weapon;
+        if (w > 0 && w < WEAP_COUNT && w != WEAP_KNIFE) {
+            float cond = ent->client->weapon_condition[w];
+            if (cond <= 0) cond = 1.0f;  /* uninitialized = pristine */
+            if (cond >= 0.95f) {
+                gi.cprintf(ent, PRINT_ALL, "%s is already in good condition.\n",
+                           weapon_names[w]);
+            } else {
+                ent->client->weapon_condition[w] = 1.0f;
+                ent->client->weapon_change_time = level.time + 2.0f; /* maintenance takes time */
+                gi.cprintf(ent, PRINT_ALL, "Maintaining %s... (%.0f%% -> 100%%)\n",
+                           weapon_names[w], cond * 100.0f);
+                SCR_AddPickupMessage("WEAPON MAINTAINED");
+                {
+                    int snd = gi.soundindex("weapons/reload.wav");
+                    if (snd)
+                        gi.sound(ent, CHAN_ITEM, snd, 1.0f, ATTN_NORM, 0);
+                }
+            }
+        } else {
+            gi.cprintf(ent, PRINT_ALL, "Can't maintain this weapon.\n");
+        }
+        return;
+    }
+
     if (Q_stricmp(cmd, "ping") == 0 || Q_stricmp(cmd, "mark") == 0) {
         vec3_t fwd_p, start_p, end_p;
         trace_t tr_p;
@@ -2896,6 +2923,15 @@ static void G_FireHitscan(edict_t *ent)
         }
     }
 
+    /* Weapon degradation: each shot slightly reduces weapon condition */
+    if (weap > 0 && weap < WEAP_COUNT && weap != WEAP_KNIFE) {
+        if (ent->client->weapon_condition[weap] <= 0)
+            ent->client->weapon_condition[weap] = 1.0f;  /* init if unset */
+        ent->client->weapon_condition[weap] -= 0.001f;  /* ~1000 shots to fully degrade */
+        if (ent->client->weapon_condition[weap] < 0.3f)
+            ent->client->weapon_condition[weap] = 0.3f;  /* minimum 30% condition */
+    }
+
     /* Weapon-specific trace parameters */
     {
         int num_pellets = 1;
@@ -2959,6 +2995,15 @@ static void G_FireHitscan(edict_t *ent)
                              ent->velocity[1] * ent->velocity[1];
             if (speed_sq > 100.0f * 100.0f)
                 spread *= 1.3f;
+        }
+
+        /* Weapon condition penalty: degraded weapons are less accurate */
+        if (weap > 0 && weap < WEAP_COUNT &&
+            ent->client->weapon_condition[weap] > 0 &&
+            ent->client->weapon_condition[weap] < 1.0f) {
+            /* At 30% condition: spread *= 2.0; at 100%: no penalty */
+            float cond = ent->client->weapon_condition[weap];
+            spread *= (2.0f - cond);
         }
 
         /* Weapon-specific parameters */

@@ -520,6 +520,13 @@ struct gclient_s {
 
     /* Ammo type: 0=FMJ, 1=hollow point (more dmg, no pen), 2=incendiary */
     int             ammo_type;
+
+    /* Weapon condition: 1.0=pristine, degrades with use, affects accuracy */
+    float           weapon_condition[WEAP_COUNT];
+
+    /* Zipline: currently riding a zipline */
+    edict_t         *zipline_ent;       /* NULL if not riding */
+    float           zipline_progress;   /* 0..1 travel progress */
 };
 
 /* ==========================================================================

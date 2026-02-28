@@ -815,6 +815,37 @@ static void ai_think_chase(edict_t *self)
                 self->dmg_debounce_time = level.time + 0.4f;  /* slower fire while retreating */
             }
         }
+        /* Signal nearby allies to provide covering fire */
+        {
+            extern game_export_t globals;
+            int ci;
+            for (ci = 1; ci < globals.num_edicts; ci++) {
+                edict_t *ally = &globals.edicts[ci];
+                vec3_t adiff;
+                float adist;
+                if (ally == self || !ally->inuse || ally->health <= 0)
+                    continue;
+                if (!(ally->svflags & SVF_MONSTER))
+                    continue;
+                VectorSubtract(ally->s.origin, self->s.origin, adiff);
+                adist = VectorLength(adiff);
+                if (adist < 512.0f && ally->enemy && AI_Visible(ally, ally->enemy)) {
+                    /* Ally fires a covering burst */
+                    if (level.time > ally->move_angles[2] + 0.2f) {
+                        vec3_t aim_dir, aim_end;
+                        trace_t ctr;
+                        VectorSubtract(ally->enemy->s.origin, ally->s.origin, aim_dir);
+                        VectorNormalize(aim_dir);
+                        VectorMA(ally->s.origin, 1024.0f, aim_dir, aim_end);
+                        ctr = gi.trace(ally->s.origin, NULL, NULL, aim_end, ally, MASK_SHOT);
+                        R_AddTracer(ally->s.origin, ctr.endpos, 1.0f, 0.7f, 0.3f);
+                        if (snd_monster_fire)
+                            gi.sound(ally, CHAN_WEAPON, snd_monster_fire, 0.8f, ATTN_NORM, 0);
+                        ally->move_angles[2] = level.time;
+                    }
+                }
+            }
+        }
         self->s.frame++;
         if (self->s.frame < FRAME_RUN_START || self->s.frame > FRAME_RUN_END)
             self->s.frame = FRAME_RUN_START;
