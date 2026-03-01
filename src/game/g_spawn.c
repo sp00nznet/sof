@@ -326,6 +326,10 @@ static void SP_func_wrecking_ball(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_acid_sprayer(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_trigger_magnetic(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_trapdoor(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_guillotine(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_smoke_mine(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_energy_barrier(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_rolling_boulder(edict_t *ent, epair_t *pairs, int num_pairs);
 static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
                            int damage, vec3_t point);
 
@@ -861,6 +865,22 @@ static spawn_func_t spawn_funcs[] = {
     /* Hinged trapdoor */
     { "func_trapdoor",              SP_func_trapdoor },
     { "func_hatch",                 SP_func_trapdoor },
+
+    /* Guillotine blade */
+    { "func_guillotine",            SP_func_guillotine },
+    { "func_blade_drop",            SP_func_guillotine },
+
+    /* Smoke mine */
+    { "func_smoke_mine",            SP_func_smoke_mine },
+    { "func_gas_mine",              SP_func_smoke_mine },
+
+    /* Energy barrier wall */
+    { "func_energy_barrier",        SP_func_energy_barrier },
+    { "func_force_wall",            SP_func_energy_barrier },
+
+    /* Rolling boulder */
+    { "func_rolling_boulder",       SP_func_rolling_boulder },
+    { "func_boulder",               SP_func_rolling_boulder },
 
     /* Sentinel */
     { NULL, NULL }
@@ -10596,6 +10616,406 @@ static void SP_func_trapdoor(edict_t *ent, epair_t *pairs, int num_pairs)
     gi.dprintf("  func_trapdoor at (%.0f %.0f %.0f) dmg=%d\n",
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
                ent->dmg);
+}
+
+/* ==========================================================================
+   Guillotine — vertical blade that drops down periodically and resets.
+   "dmg" = chop damage (default 100 — instant kill). "wait" = cycle time
+   (default 3). Blade drops from top to bottom position, then retracts.
+   ========================================================================== */
+
+static void guillotine_retract(edict_t *self)
+{
+    /* Move blade back up */
+    self->s.origin[2] = self->move_origin[2];  /* restore original Z */
+    self->solid = SOLID_NOT;
+    self->style = 0;
+    self->nextthink = level.time + (self->wait > 0 ? self->wait : 3.0f);
+    self->think = NULL;
+
+    /* Re-enable periodic think via nextthink */
+    gi.linkentity(self);
+}
+
+static void guillotine_think(edict_t *self)
+{
+    if (!self->style) {
+        /* Drop the blade */
+        self->style = 1;
+        self->move_origin[2] = self->s.origin[2];  /* save original Z */
+        self->s.origin[2] -= 128.0f;  /* drop 128 units */
+        self->solid = SOLID_BBOX;
+        gi.linkentity(self);
+
+        /* Whoosh + impact sound */
+        {
+            int snd = gi.soundindex("world/blade1.wav");
+            if (snd) gi.sound(self, CHAN_AUTO, snd, 1.0f, ATTN_NORM, 0);
+        }
+
+        /* Check for anyone in the blade path */
+        {
+            edict_t *touch_list[32];
+            int num, i;
+            vec3_t blade_mins, blade_maxs;
+
+            VectorCopy(self->s.origin, blade_mins);
+            VectorCopy(self->s.origin, blade_maxs);
+            blade_mins[0] -= 24; blade_mins[1] -= 4; blade_mins[2] -= 8;
+            blade_maxs[0] += 24; blade_maxs[1] += 4; blade_maxs[2] += 128;
+
+            num = gi.BoxEdicts(blade_mins, blade_maxs, touch_list, 32, AREA_SOLID);
+            for (i = 0; i < num; i++) {
+                edict_t *victim = touch_list[i];
+                int chop_dmg;
+                if (!victim || victim == self || victim->health <= 0)
+                    continue;
+                if (!victim->client && !(victim->svflags & SVF_MONSTER))
+                    continue;
+
+                chop_dmg = self->dmg > 0 ? self->dmg : 100;
+                victim->health -= chop_dmg;
+
+                {
+                    vec3_t blood_up = {0, 0, 1};
+                    R_ParticleEffect(victim->s.origin, blood_up, 1, 20);
+                }
+
+                if (victim->client) {
+                    victim->client->pers_health = victim->health;
+                    SCR_AddScreenShake(0.3f, 0.3f);
+                }
+
+                if (victim->health <= 0 && victim->die)
+                    victim->die(victim, self, self, chop_dmg, victim->s.origin);
+                else if (victim->pain)
+                    victim->pain(victim, self, 0, chop_dmg);
+            }
+        }
+
+        /* Metal sparks at impact point */
+        {
+            vec3_t spark_up = {0, 0, 1};
+            R_ParticleEffect(self->s.origin, spark_up, 12, 10);
+        }
+
+        /* Schedule retract */
+        self->think = guillotine_retract;
+        self->nextthink = level.time + 0.5f;
+    } else {
+        self->nextthink = level.time + (self->wait > 0 ? self->wait : 3.0f);
+    }
+}
+
+static void SP_func_guillotine(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+    ent->classname = "func_guillotine";
+    ent->solid = SOLID_NOT;
+    ent->movetype = MOVETYPE_NONE;
+    ent->think = guillotine_think;
+    ent->nextthink = level.time + (ent->wait > 0 ? ent->wait : 3.0f);
+    if (ent->dmg <= 0) ent->dmg = 100;
+    if (ent->wait <= 0) ent->wait = 3.0f;
+    ent->style = 0;
+    VectorCopy(ent->s.origin, ent->move_origin);
+    VectorSet(ent->mins, -24, -4, -8);
+    VectorSet(ent->maxs, 24, 4, 8);
+    ent->s.modelindex = gi.modelindex("models/objects/guillotine/tris.md2");
+    gi.linkentity(ent);
+    gi.dprintf("  func_guillotine at (%.0f %.0f %.0f) dmg=%d cycle=%.1f\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->dmg, ent->wait);
+}
+
+/* ==========================================================================
+   Smoke Mine — proximity mine that deploys a smoke cloud when triggered.
+   Obscures vision in area. "count" = smoke radius (default 192).
+   "wait" = smoke duration (default 5). Single use — disarms after trigger.
+   ========================================================================== */
+
+static void smoke_mine_clear(edict_t *self)
+{
+    /* Smoke dissipates — free entity */
+    self->inuse = qfalse;
+}
+
+static void smoke_mine_touch(edict_t *self, edict_t *other, void *plane,
+                              csurface_t *surf)
+{
+    float radius;
+    (void)plane; (void)surf;
+    if (self->style)  /* already triggered */
+        return;
+    if (!other || !other->client || other->health <= 0)
+        return;
+
+    self->style = 1;  /* triggered */
+    self->solid = SOLID_NOT;
+    gi.linkentity(self);
+
+    radius = self->count > 0 ? (float)self->count : 192.0f;
+
+    /* Deploy smoke cloud — heavy particle effect */
+    {
+        vec3_t smoke_dir = {0, 0, 0.5f};
+        int puffs;
+        for (puffs = 0; puffs < 8; puffs++) {
+            vec3_t offset;
+            offset[0] = self->s.origin[0] + (float)((rand() % (int)radius) - (int)(radius / 2));
+            offset[1] = self->s.origin[1] + (float)((rand() % (int)radius) - (int)(radius / 2));
+            offset[2] = self->s.origin[2] + (float)(rand() % 64);
+            R_ParticleEffect(offset, smoke_dir, 8, 20);
+        }
+    }
+
+    /* Pop + hiss sound */
+    {
+        int snd = gi.soundindex("world/gas1.wav");
+        if (snd) gi.sound(self, CHAN_AUTO, snd, 1.0f, ATTN_NORM, 0);
+    }
+
+    SCR_AddPickupMessage("Smoke mine triggered!");
+    SCR_AddScreenShake(0.1f, 0.1f);
+
+    /* Schedule smoke clear */
+    self->think = smoke_mine_clear;
+    self->nextthink = level.time + (self->wait > 0 ? self->wait : 5.0f);
+}
+
+static void SP_func_smoke_mine(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+    ent->classname = "func_smoke_mine";
+    ent->solid = SOLID_TRIGGER;
+    ent->movetype = MOVETYPE_NONE;
+    ent->touch = smoke_mine_touch;
+    if (ent->count <= 0) ent->count = 192;
+    if (ent->wait <= 0) ent->wait = 5.0f;
+    ent->style = 0;  /* armed */
+    VectorSet(ent->mins, -8, -8, -4);
+    VectorSet(ent->maxs, 8, 8, 4);
+    ent->s.modelindex = gi.modelindex("models/objects/smokemine/tris.md2");
+    gi.linkentity(ent);
+    gi.dprintf("  func_smoke_mine at (%.0f %.0f %.0f) radius=%d\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->count);
+}
+
+/* ==========================================================================
+   Energy Barrier — glowing energy wall that blocks movement and damages on
+   contact. Can be toggled via trigger. "dmg" = contact damage (default 15).
+   Pulsing glow effect.
+   ========================================================================== */
+
+static void energy_barrier_think(edict_t *self)
+{
+    self->nextthink = level.time + 0.5f;
+
+    if (!self->style)
+        return;  /* disabled */
+
+    /* Pulsing glow effect */
+    R_AddDlight(self->s.origin, 0.2f, 0.6f, 1.0f, 100.0f, 0.5f);
+
+    /* Hum particles */
+    if ((rand() % 3) == 0) {
+        vec3_t bar_up = {0, 0, 0.5f};
+        R_ParticleEffect(self->s.origin, bar_up, 6, 4);
+    }
+}
+
+static void energy_barrier_touch(edict_t *self, edict_t *other, void *plane,
+                                  csurface_t *surf)
+{
+    int barrier_dmg;
+    (void)plane; (void)surf;
+    if (!self->style)  /* disabled */
+        return;
+    if (!other || other->health <= 0)
+        return;
+    if (other->dmg_debounce_time > level.time)
+        return;
+    other->dmg_debounce_time = level.time + 0.3f;
+
+    barrier_dmg = self->dmg > 0 ? self->dmg : 15;
+    other->health -= barrier_dmg;
+
+    /* Push back */
+    {
+        vec3_t push;
+        VectorSubtract(other->s.origin, self->s.origin, push);
+        VectorNormalize(push);
+        other->velocity[0] += push[0] * 300.0f;
+        other->velocity[1] += push[1] * 300.0f;
+        other->velocity[2] += 100.0f;
+    }
+
+    /* Electric shock particles */
+    {
+        vec3_t zap_dir = {0, 0, 1};
+        R_ParticleEffect(other->s.origin, zap_dir, 12, 10);
+    }
+
+    {
+        int snd = gi.soundindex("world/electric1.wav");
+        if (snd) gi.sound(self, CHAN_AUTO, snd, 0.8f, ATTN_NORM, 0);
+    }
+
+    if (other->client) {
+        other->client->pers_health = other->health;
+        SCR_AddScreenShake(0.15f, 0.15f);
+    }
+
+    if (other->health <= 0 && other->die)
+        other->die(other, self, self, barrier_dmg, self->s.origin);
+    else if (other->pain)
+        other->pain(other, self, 0, barrier_dmg);
+}
+
+static void SP_func_energy_barrier(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+    ent->classname = "func_energy_barrier";
+    ent->solid = SOLID_BBOX;
+    ent->movetype = MOVETYPE_NONE;
+    ent->think = energy_barrier_think;
+    ent->touch = energy_barrier_touch;
+    ent->nextthink = level.time + 1.0f;
+    if (ent->dmg <= 0) ent->dmg = 15;
+    ent->style = 1;  /* starts active */
+    VectorSet(ent->mins, -48, -4, -48);
+    VectorSet(ent->maxs, 48, 4, 48);
+    ent->s.modelindex = gi.modelindex("models/objects/barrier/tris.md2");
+    gi.linkentity(ent);
+    gi.dprintf("  func_energy_barrier at (%.0f %.0f %.0f) dmg=%d\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->dmg);
+}
+
+/* ==========================================================================
+   Rolling Boulder — rolls in a direction on trigger, crushing anything in path.
+   Indiana Jones-style hazard. "dmg" = crush damage (default 200).
+   "speed" = roll speed (default 300). Rolls in entity facing direction.
+   ========================================================================== */
+
+static void boulder_think(edict_t *self)
+{
+    trace_t tr;
+    vec3_t dest;
+
+    self->nextthink = level.time + 0.1f;
+
+    if (!self->style)
+        return;  /* not rolling yet */
+
+    /* Roll forward */
+    VectorMA(self->s.origin, self->speed * 0.1f, self->move_origin, dest);
+    tr = gi.trace(self->s.origin, self->mins, self->maxs, dest, self, MASK_SOLID);
+
+    if (tr.fraction > 0) {
+        VectorCopy(tr.endpos, self->s.origin);
+        /* Visual roll */
+        self->s.angles[0] += 15.0f;
+        if (self->s.angles[0] >= 360.0f) self->s.angles[0] -= 360.0f;
+        gi.linkentity(self);
+
+        /* Rumble particles */
+        if ((rand() % 3) == 0) {
+            vec3_t dust = {0, 0, 0.3f};
+            R_ParticleEffect(self->s.origin, dust, 8, 6);
+        }
+
+        /* Rumble sound */
+        if ((rand() % 5) == 0) {
+            int snd = gi.soundindex("world/rumble1.wav");
+            if (snd) gi.sound(self, CHAN_AUTO, snd, 0.7f, ATTN_NORM, 0);
+        }
+    }
+
+    /* Hit wall — stop */
+    if (tr.fraction < 1.0f && tr.ent && !tr.ent->client &&
+        !(tr.ent->svflags & SVF_MONSTER)) {
+        self->style = 0;
+        self->velocity[0] = 0;
+        self->velocity[1] = 0;
+        self->velocity[2] = 0;
+        {
+            vec3_t impact_up = {0, 0, 1};
+            R_ParticleEffect(tr.endpos, impact_up, 8, 20);
+        }
+        SCR_AddScreenShake(0.3f, 0.5f);
+        return;
+    }
+
+    /* Crush anything in path */
+    if (tr.ent && tr.ent->health > 0) {
+        int crush_dmg = self->dmg > 0 ? self->dmg : 200;
+        tr.ent->health -= crush_dmg;
+
+        {
+            vec3_t blood_dir = {0, 0, 1};
+            R_ParticleEffect(tr.ent->s.origin, blood_dir, 1, 20);
+        }
+
+        if (tr.ent->client) {
+            tr.ent->client->pers_health = tr.ent->health;
+            SCR_AddScreenShake(0.5f, 0.5f);
+        }
+
+        if (tr.ent->health <= 0 && tr.ent->die)
+            tr.ent->die(tr.ent, self, self, crush_dmg, tr.ent->s.origin);
+        else if (tr.ent->pain)
+            tr.ent->pain(tr.ent, self, 0, crush_dmg);
+    }
+}
+
+static void boulder_touch(edict_t *self, edict_t *other, void *plane,
+                           csurface_t *surf)
+{
+    (void)plane; (void)surf;
+    if (self->style)  /* already rolling */
+        return;
+    if (!other || !other->client || other->health <= 0)
+        return;
+
+    /* Triggered by proximity — start rolling */
+    self->style = 1;
+
+    {
+        int snd = gi.soundindex("world/rumble1.wav");
+        if (snd) gi.sound(self, CHAN_AUTO, snd, 1.0f, ATTN_NORM, 0);
+    }
+    SCR_AddScreenShake(0.2f, 1.0f);
+}
+
+static void SP_func_rolling_boulder(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    float yaw_rad;
+    (void)pairs; (void)num_pairs;
+    ent->classname = "func_rolling_boulder";
+    ent->solid = SOLID_BBOX;
+    ent->movetype = MOVETYPE_NONE;
+    ent->think = boulder_think;
+    ent->touch = boulder_touch;
+    ent->nextthink = level.time + 1.0f;
+    if (ent->dmg <= 0) ent->dmg = 200;
+    if (ent->speed <= 0) ent->speed = 300.0f;
+    ent->style = 0;  /* not rolling yet */
+
+    /* Calculate roll direction from entity yaw */
+    yaw_rad = ent->s.angles[1] * (3.14159265f / 180.0f);
+    ent->move_origin[0] = cosf(yaw_rad);
+    ent->move_origin[1] = sinf(yaw_rad);
+    ent->move_origin[2] = 0;
+
+    VectorSet(ent->mins, -32, -32, -32);
+    VectorSet(ent->maxs, 32, 32, 32);
+    ent->s.modelindex = gi.modelindex("models/objects/boulder/tris.md2");
+    gi.linkentity(ent);
+    gi.dprintf("  func_rolling_boulder at (%.0f %.0f %.0f) dmg=%d speed=%.0f\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->dmg, ent->speed);
 }
 
 /* ==========================================================================
