@@ -318,6 +318,10 @@ static void SP_func_flamethrower(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_spike_trap(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_trigger_slowmo(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_tesla_coil(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_grapple_point(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_poison_gas(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_trigger_gravity_lift(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_bear_trap(edict_t *ent, epair_t *pairs, int num_pairs);
 static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
                            int damage, vec3_t point);
 
@@ -821,6 +825,22 @@ static spawn_func_t spawn_funcs[] = {
     /* Tesla coil — electric arc zapper */
     { "func_tesla_coil",            SP_func_tesla_coil },
     { "func_tesla",                 SP_func_tesla_coil },
+
+    /* Grapple hook anchor point */
+    { "func_grapple_point",         SP_func_grapple_point },
+    { "func_grapple",               SP_func_grapple_point },
+
+    /* Poison gas emitter */
+    { "func_poison_gas",            SP_func_poison_gas },
+    { "func_gas_emitter",           SP_func_poison_gas },
+
+    /* Anti-gravity lift column */
+    { "trigger_gravity_lift",       SP_trigger_gravity_lift },
+    { "trigger_antigrav",           SP_trigger_gravity_lift },
+
+    /* Bear trap / snap trap */
+    { "func_bear_trap",             SP_func_bear_trap },
+    { "func_snap_trap",             SP_func_bear_trap },
 
     /* Sentinel */
     { NULL, NULL }
@@ -9957,6 +9977,295 @@ static void SP_func_tesla_coil(edict_t *ent, epair_t *pairs, int num_pairs)
     gi.dprintf("  func_tesla_coil at (%.0f %.0f %.0f) dmg=%d range=%d interval=%.1f\n",
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
                ent->dmg, ent->count, ent->wait);
+}
+
+/* ==========================================================================
+   Grapple Point — anchor that pulls the player toward it when used nearby.
+   Player must be within "count" units (default 512). "speed" = pull speed
+   (default 600). Activates on touch (proximity trigger).
+   ========================================================================== */
+
+static void grapple_point_touch(edict_t *self, edict_t *other, void *plane,
+                                 csurface_t *surf)
+{
+    vec3_t dir;
+    float dist, pull_speed;
+    (void)plane; (void)surf;
+    if (!other || !other->client || other->health <= 0)
+        return;
+    if (other->dmg_debounce_time > level.time)
+        return;
+    other->dmg_debounce_time = level.time + 0.5f;
+
+    /* Direction from player to grapple point */
+    VectorSubtract(self->s.origin, other->s.origin, dir);
+    dist = VectorLength(dir);
+    if (dist < 32.0f)
+        return;  /* already at the point */
+
+    VectorNormalize(dir);
+    pull_speed = self->speed > 0 ? self->speed : 600.0f;
+
+    /* Launch player toward grapple point */
+    other->velocity[0] = dir[0] * pull_speed;
+    other->velocity[1] = dir[1] * pull_speed;
+    other->velocity[2] = dir[2] * pull_speed + 50.0f;  /* slight uplift */
+
+    other->client->double_jump_used = false;
+
+    /* Grapple cable particles (line effect) */
+    {
+        vec3_t cable_dir = {0, 0, 0.2f};
+        R_ParticleEffect(other->s.origin, cable_dir, 12, 8);
+        R_ParticleEffect(self->s.origin, cable_dir, 12, 4);
+    }
+
+    {
+        int snd = gi.soundindex("world/rope1.wav");
+        if (snd) gi.sound(other, CHAN_AUTO, snd, 0.8f, ATTN_NORM, 0);
+    }
+
+    SCR_AddPickupMessage("Grapple!");
+}
+
+static void SP_func_grapple_point(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+    ent->classname = "func_grapple_point";
+    ent->solid = SOLID_TRIGGER;
+    ent->movetype = MOVETYPE_NONE;
+    ent->touch = grapple_point_touch;
+    if (ent->speed <= 0) ent->speed = 600.0f;
+    if (ent->count <= 0) ent->count = 512;
+    VectorSet(ent->mins, -64, -64, -64);
+    VectorSet(ent->maxs, 64, 64, 64);
+    ent->s.modelindex = gi.modelindex("models/objects/grapple/tris.md2");
+    gi.linkentity(ent);
+    gi.dprintf("  func_grapple_point at (%.0f %.0f %.0f) speed=%.0f\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->speed);
+}
+
+/* ==========================================================================
+   Poison Gas Emitter — periodically releases a toxic cloud that damages
+   entities in an area. "dmg" = damage per tick (default 5). "wait" = burst
+   interval (default 4). "count" = cloud radius (default 128).
+   ========================================================================== */
+
+static void poison_gas_think(edict_t *self)
+{
+    edict_t *touch_list[64];
+    int num_touch, i;
+    vec3_t area_mins, area_maxs;
+    float radius;
+    int gas_dmg;
+
+    self->nextthink = level.time + (self->wait > 0 ? self->wait : 4.0f);
+
+    radius = self->count > 0 ? (float)self->count : 128.0f;
+    gas_dmg = self->dmg > 0 ? self->dmg : 5;
+
+    /* Green toxic cloud particles */
+    {
+        vec3_t gas_up = {0, 0, 0.8f};
+        R_ParticleEffect(self->s.origin, gas_up, 6, 30);
+    }
+
+    /* Hissing gas sound */
+    {
+        int snd = gi.soundindex("world/gas1.wav");
+        if (snd) gi.sound(self, CHAN_AUTO, snd, 0.7f, ATTN_NORM, 0);
+    }
+
+    /* Find entities in the gas cloud radius */
+    VectorSet(area_mins,
+              self->s.origin[0] - radius,
+              self->s.origin[1] - radius,
+              self->s.origin[2] - 32);
+    VectorSet(area_maxs,
+              self->s.origin[0] + radius,
+              self->s.origin[1] + radius,
+              self->s.origin[2] + radius);
+
+    num_touch = gi.BoxEdicts(area_mins, area_maxs, touch_list, 64, AREA_SOLID);
+
+    for (i = 0; i < num_touch; i++) {
+        edict_t *victim = touch_list[i];
+        if (!victim || victim == self || victim->health <= 0)
+            continue;
+        if (!victim->client && !(victim->svflags & SVF_MONSTER))
+            continue;
+
+        victim->health -= gas_dmg;
+        if (victim->client) {
+            victim->client->pers_health = victim->health;
+            /* Poison green tint */
+            victim->client->blend[1] = 0.3f;
+        }
+        if (victim->health <= 0 && victim->die)
+            victim->die(victim, self, self, gas_dmg, victim->s.origin);
+        else if (victim->pain)
+            victim->pain(victim, self, 0, gas_dmg);
+    }
+}
+
+static void SP_func_poison_gas(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+    ent->classname = "func_poison_gas";
+    ent->solid = SOLID_NOT;
+    ent->movetype = MOVETYPE_NONE;
+    ent->think = poison_gas_think;
+    ent->nextthink = level.time + 2.0f;
+    if (ent->dmg <= 0) ent->dmg = 5;
+    if (ent->wait <= 0) ent->wait = 4.0f;
+    if (ent->count <= 0) ent->count = 128;
+    VectorSet(ent->mins, -8, -8, -8);
+    VectorSet(ent->maxs, 8, 8, 8);
+    ent->s.modelindex = gi.modelindex("models/objects/gasvent/tris.md2");
+    gi.linkentity(ent);
+    gi.dprintf("  func_poison_gas at (%.0f %.0f %.0f) dmg=%d radius=%d\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->dmg, ent->count);
+}
+
+/* ==========================================================================
+   Gravity Lift — vertical anti-gravity column that lifts entities upward.
+   Entities inside are continuously pushed upward. "speed" = lift force
+   (default 300). Think-based to also catch non-touching entities.
+   ========================================================================== */
+
+static void gravity_lift_touch(edict_t *self, edict_t *other, void *plane,
+                                csurface_t *surf)
+{
+    float lift_speed;
+    (void)plane; (void)surf;
+    if (!other || other->health <= 0)
+        return;
+    if (!other->client && !(other->svflags & SVF_MONSTER))
+        return;
+
+    lift_speed = self->speed > 0 ? self->speed : 300.0f;
+
+    /* Apply upward force */
+    if (other->velocity[2] < lift_speed)
+        other->velocity[2] = lift_speed;
+
+    /* Lift particles */
+    if ((rand() % 3) == 0) {
+        vec3_t lift_up = {0, 0, 1};
+        R_ParticleEffect(other->s.origin, lift_up, 6, 4);
+    }
+
+    if (other->client)
+        other->client->double_jump_used = false;
+}
+
+static void SP_trigger_gravity_lift(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+    ent->classname = "trigger_gravity_lift";
+    ent->solid = SOLID_TRIGGER;
+    ent->movetype = MOVETYPE_NONE;
+    ent->touch = gravity_lift_touch;
+    if (ent->speed <= 0) ent->speed = 300.0f;
+    VectorSet(ent->mins, -32, -32, -16);
+    VectorSet(ent->maxs, 32, 32, 256);
+    gi.linkentity(ent);
+    gi.dprintf("  trigger_gravity_lift at (%.0f %.0f %.0f) force=%.0f\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->speed);
+}
+
+/* ==========================================================================
+   Bear Trap — ground-level snap trap that immobilizes and damages.
+   When stepped on, clamps shut and holds the victim in place.
+   "dmg" = initial snap damage (default 25). "wait" = hold duration (default 3).
+   ========================================================================== */
+
+static void bear_trap_release(edict_t *self)
+{
+    /* Re-arm the trap */
+    self->style = 0;  /* armed */
+    self->solid = SOLID_TRIGGER;
+    self->nextthink = 0;
+    gi.linkentity(self);
+}
+
+static void bear_trap_touch(edict_t *self, edict_t *other, void *plane,
+                             csurface_t *surf)
+{
+    int trap_dmg;
+    float hold_time;
+    (void)plane; (void)surf;
+    if (self->style)  /* already triggered */
+        return;
+    if (!other || other->health <= 0)
+        return;
+    if (!other->client && !(other->svflags & SVF_MONSTER))
+        return;
+
+    self->style = 1;  /* triggered */
+    trap_dmg = self->dmg > 0 ? self->dmg : 25;
+    hold_time = self->wait > 0 ? self->wait : 3.0f;
+
+    /* Snap damage */
+    other->health -= trap_dmg;
+
+    /* Immobilize victim */
+    other->velocity[0] = 0;
+    other->velocity[1] = 0;
+    other->velocity[2] = 0;
+
+    /* Blood and metal particles */
+    {
+        vec3_t snap_up = {0, 0, 1};
+        R_ParticleEffect(self->s.origin, snap_up, 1, 12);
+        R_ParticleEffect(self->s.origin, snap_up, 12, 6);
+    }
+
+    /* Snap sound */
+    {
+        int snd = gi.soundindex("world/trap1.wav");
+        if (snd) gi.sound(self, CHAN_AUTO, snd, 1.0f, ATTN_NORM, 0);
+    }
+
+    if (other->client) {
+        other->client->pers_health = other->health;
+        SCR_AddScreenShake(0.25f, 0.3f);
+        SCR_AddPickupMessage("Caught in a bear trap!");
+    }
+
+    if (other->health <= 0 && other->die) {
+        other->die(other, self, self, trap_dmg, self->s.origin);
+    } else if (other->pain) {
+        other->pain(other, self, 0, trap_dmg);
+    }
+
+    /* Disable solid and schedule re-arm */
+    self->solid = SOLID_NOT;
+    self->think = bear_trap_release;
+    self->nextthink = level.time + hold_time;
+    gi.linkentity(self);
+}
+
+static void SP_func_bear_trap(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+    ent->classname = "func_bear_trap";
+    ent->solid = SOLID_TRIGGER;
+    ent->movetype = MOVETYPE_NONE;
+    ent->touch = bear_trap_touch;
+    if (ent->dmg <= 0) ent->dmg = 25;
+    if (ent->wait <= 0) ent->wait = 3.0f;
+    ent->style = 0;  /* armed */
+    VectorSet(ent->mins, -12, -12, -4);
+    VectorSet(ent->maxs, 12, 12, 4);
+    ent->s.modelindex = gi.modelindex("models/objects/beartrap/tris.md2");
+    gi.linkentity(ent);
+    gi.dprintf("  func_bear_trap at (%.0f %.0f %.0f) dmg=%d hold=%.1f\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->dmg, ent->wait);
 }
 
 /* ==========================================================================
