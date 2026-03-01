@@ -342,6 +342,10 @@ static void SP_func_dart_wall(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_moving_platform(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_flame_jet_floor(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_shrapnel_bomb(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_trigger_oil_slick(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_chain_winch(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_steam_pipe(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_trigger_gas_leak(edict_t *ent, epair_t *pairs, int num_pairs);
 static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
                            int damage, vec3_t point);
 
@@ -941,6 +945,22 @@ static spawn_func_t spawn_funcs[] = {
     /* Shrapnel proximity bomb */
     { "func_shrapnel_bomb",         SP_func_shrapnel_bomb },
     { "func_frag_mine",             SP_func_shrapnel_bomb },
+
+    /* Oil slick */
+    { "trigger_oil_slick",          SP_trigger_oil_slick },
+    { "trigger_oil_spill",          SP_trigger_oil_slick },
+
+    /* Chain winch */
+    { "func_chain_winch",           SP_func_chain_winch },
+    { "func_winch",                 SP_func_chain_winch },
+
+    /* Breakable steam pipe */
+    { "func_steam_pipe",            SP_func_steam_pipe },
+    { "func_pipe",                  SP_func_steam_pipe },
+
+    /* Gas leak zone */
+    { "trigger_gas_leak",           SP_trigger_gas_leak },
+    { "trigger_gas",                SP_trigger_gas_leak },
 
     /* Sentinel */
     { NULL, NULL }
@@ -12127,6 +12147,416 @@ static void SP_func_shrapnel_bomb(edict_t *ent, epair_t *pairs, int num_pairs)
     gi.dprintf("  func_shrapnel_bomb at (%.0f %.0f %.0f) dmg=%d frags=%d\n",
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
                ent->dmg, ent->count);
+}
+
+/* ==========================================================================
+   Oil Slick — slippery oil spill on the ground. Reduces traction and can
+   be ignited by fire/explosions to create a burning surface.
+   "dmg" = fire damage when ignited (default 8). Starts unlit.
+   ========================================================================== */
+
+static void oil_slick_burn_think(edict_t *self)
+{
+    self->nextthink = level.time + 0.2f;
+
+    /* Burning oil particles */
+    {
+        vec3_t fire_up = {0, 0, 1};
+        R_ParticleEffect(self->s.origin, fire_up, 1, 12);
+    }
+    R_AddDlight(self->s.origin, 1.0f, 0.5f, 0.1f, 100.0f, 0.2f);
+
+    /* Burn out after some time */
+    self->count--;
+    if (self->count <= 0) {
+        self->style = 2;  /* burnt out */
+        self->solid = SOLID_NOT;
+        self->think = NULL;
+        self->nextthink = 0;
+        gi.linkentity(self);
+    }
+}
+
+static void oil_slick_touch(edict_t *self, edict_t *other, void *plane,
+                             csurface_t *surf)
+{
+    (void)plane; (void)surf;
+    if (!other || other->health <= 0)
+        return;
+    if (!other->client && !(other->svflags & SVF_MONSTER))
+        return;
+
+    if (self->style == 0) {
+        /* Unlit oil — slippery */
+        other->velocity[0] *= 1.03f;
+        other->velocity[1] *= 1.03f;
+    } else if (self->style == 1) {
+        /* Burning — deal fire damage */
+        if (other->dmg_debounce_time > level.time)
+            return;
+        other->dmg_debounce_time = level.time + 0.3f;
+
+        {
+            int fire_dmg = self->dmg > 0 ? self->dmg : 8;
+            other->health -= fire_dmg;
+            if (other->client) {
+                other->client->pers_health = other->health;
+                SCR_AddScreenShake(0.1f, 0.1f);
+            }
+            if (other->health <= 0 && other->die)
+                other->die(other, self, self, fire_dmg, self->s.origin);
+            else if (other->pain)
+                other->pain(other, self, 0, fire_dmg);
+        }
+    }
+}
+
+static void oil_slick_use(edict_t *self, edict_t *other, edict_t *activator)
+{
+    (void)other; (void)activator;
+    if (self->style != 0)
+        return;  /* already lit or burnt */
+
+    /* Ignite the oil */
+    self->style = 1;
+    self->count = 50;  /* burn for ~10 seconds */
+    self->think = oil_slick_burn_think;
+    self->nextthink = level.time + 0.1f;
+
+    {
+        int snd = gi.soundindex("world/fire1.wav");
+        if (snd) gi.sound(self, CHAN_AUTO, snd, 1.0f, ATTN_NORM, 0);
+    }
+}
+
+static void SP_trigger_oil_slick(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+    ent->classname = "trigger_oil_slick";
+    ent->solid = SOLID_TRIGGER;
+    ent->movetype = MOVETYPE_NONE;
+    ent->touch = oil_slick_touch;
+    ent->use = oil_slick_use;
+    if (ent->dmg <= 0) ent->dmg = 8;
+    ent->style = 0;  /* unlit */
+    VectorSet(ent->mins, -48, -48, -4);
+    VectorSet(ent->maxs, 48, 48, 4);
+    gi.linkentity(ent);
+    gi.dprintf("  trigger_oil_slick at (%.0f %.0f %.0f)\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
+}
+
+/* ==========================================================================
+   Chain Winch — chain-operated winch that raises/lowers vertically.
+   Activated by use. Moves between start Z and start Z + "count" (default 128).
+   "speed" = lift speed (default 80).
+   ========================================================================== */
+
+static void chain_winch_think(edict_t *self)
+{
+    float target_z, diff, move_step;
+
+    self->nextthink = level.time + 0.1f;
+
+    /* Target depends on direction */
+    target_z = self->style ? (self->move_origin[2] + (float)self->count)
+                           : self->move_origin[2];
+
+    diff = target_z - self->s.origin[2];
+
+    if (fabsf(diff) < 2.0f) {
+        self->s.origin[2] = target_z;
+        self->think = NULL;
+        self->nextthink = 0;
+        {
+            int snd = gi.soundindex("world/chain_stop1.wav");
+            if (snd) gi.sound(self, CHAN_AUTO, snd, 0.6f, ATTN_NORM, 0);
+        }
+        gi.linkentity(self);
+        return;
+    }
+
+    move_step = (self->speed > 0 ? self->speed : 80.0f) * 0.1f;
+    if (diff > 0)
+        self->s.origin[2] += (move_step < diff) ? move_step : diff;
+    else
+        self->s.origin[2] -= (move_step < -diff) ? move_step : -diff;
+
+    /* Chain rattle */
+    if ((rand() % 5) == 0) {
+        int snd = gi.soundindex("world/chain1.wav");
+        if (snd) gi.sound(self, CHAN_AUTO, snd, 0.4f, ATTN_NORM, 0);
+    }
+
+    gi.linkentity(self);
+}
+
+static void chain_winch_use(edict_t *self, edict_t *other, edict_t *activator)
+{
+    (void)other; (void)activator;
+    self->style = !self->style;
+    self->think = chain_winch_think;
+    self->nextthink = level.time + 0.1f;
+
+    {
+        int snd = gi.soundindex("world/chain1.wav");
+        if (snd) gi.sound(self, CHAN_AUTO, snd, 0.7f, ATTN_NORM, 0);
+    }
+}
+
+static void SP_func_chain_winch(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+    ent->classname = "func_chain_winch";
+    ent->solid = SOLID_BBOX;
+    ent->movetype = MOVETYPE_NONE;
+    ent->use = chain_winch_use;
+    if (ent->speed <= 0) ent->speed = 80.0f;
+    if (ent->count <= 0) ent->count = 128;
+    ent->style = 0;  /* down position */
+    VectorCopy(ent->s.origin, ent->move_origin);  /* save start */
+    VectorSet(ent->mins, -16, -16, -8);
+    VectorSet(ent->maxs, 16, 16, 8);
+    ent->s.modelindex = gi.modelindex("models/objects/winch/tris.md2");
+    gi.linkentity(ent);
+    gi.dprintf("  func_chain_winch at (%.0f %.0f %.0f) lift=%d speed=%.0f\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->count, ent->speed);
+}
+
+/* ==========================================================================
+   Steam Pipe — breakable pipe segment. When health reaches 0, the pipe
+   breaks and releases a continuous steam jet that damages nearby entities.
+   "health" = pipe HP (default 30). "dmg" = steam damage (default 6).
+   ========================================================================== */
+
+static void steam_pipe_jet_think(edict_t *self)
+{
+    edict_t *touch_list[32];
+    int num, i;
+    vec3_t jet_mins, jet_maxs;
+    int steam_dmg;
+
+    self->nextthink = level.time + 0.5f;
+
+    /* Steam particles */
+    {
+        vec3_t steam_up = {0, 0, 1};
+        R_ParticleEffect(self->s.origin, steam_up, 8, 10);
+    }
+
+    /* Hiss sound */
+    if ((rand() % 3) == 0) {
+        int snd = gi.soundindex("world/steam1.wav");
+        if (snd) gi.sound(self, CHAN_AUTO, snd, 0.6f, ATTN_NORM, 0);
+    }
+
+    steam_dmg = self->dmg > 0 ? self->dmg : 6;
+
+    VectorSet(jet_mins,
+              self->s.origin[0] - 48,
+              self->s.origin[1] - 48,
+              self->s.origin[2] - 16);
+    VectorSet(jet_maxs,
+              self->s.origin[0] + 48,
+              self->s.origin[1] + 48,
+              self->s.origin[2] + 64);
+
+    num = gi.BoxEdicts(jet_mins, jet_maxs, touch_list, 32, AREA_SOLID);
+    for (i = 0; i < num; i++) {
+        edict_t *victim = touch_list[i];
+        if (!victim || victim == self || victim->health <= 0)
+            continue;
+        if (!victim->client && !(victim->svflags & SVF_MONSTER))
+            continue;
+        if (victim->dmg_debounce_time > level.time)
+            continue;
+        victim->dmg_debounce_time = level.time + 0.5f;
+
+        victim->health -= steam_dmg;
+        if (victim->client)
+            victim->client->pers_health = victim->health;
+        if (victim->health <= 0 && victim->die)
+            victim->die(victim, self, self, steam_dmg, victim->s.origin);
+        else if (victim->pain)
+            victim->pain(victim, self, 0, steam_dmg);
+    }
+}
+
+static void steam_pipe_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
+                            int damage, vec3_t point)
+{
+    (void)inflictor; (void)attacker; (void)damage; (void)point;
+    /* Pipe breaks — start steam jet */
+    self->solid = SOLID_NOT;
+    self->takedamage = 0;
+    self->think = steam_pipe_jet_think;
+    self->nextthink = level.time + 0.1f;
+
+    {
+        vec3_t debris_up = {0, 0, 1};
+        R_ParticleEffect(self->s.origin, debris_up, 12, 15);
+    }
+    {
+        int snd = gi.soundindex("world/metal_break1.wav");
+        if (snd) gi.sound(self, CHAN_AUTO, snd, 1.0f, ATTN_NORM, 0);
+    }
+
+    gi.linkentity(self);
+}
+
+static void SP_func_steam_pipe(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+    ent->classname = "func_steam_pipe";
+    ent->solid = SOLID_BBOX;
+    ent->movetype = MOVETYPE_NONE;
+    if (ent->health <= 0) ent->health = 30;
+    ent->max_health = ent->health;
+    ent->takedamage = 1;
+    ent->die = steam_pipe_die;
+    if (ent->dmg <= 0) ent->dmg = 6;
+    VectorSet(ent->mins, -8, -8, -16);
+    VectorSet(ent->maxs, 8, 8, 16);
+    ent->s.modelindex = gi.modelindex("models/objects/pipe/tris.md2");
+    gi.linkentity(ent);
+    gi.dprintf("  func_steam_pipe at (%.0f %.0f %.0f) hp=%d\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->health);
+}
+
+/* ==========================================================================
+   Gas Leak — leaking gas zone that deals mild poison damage. If triggered
+   (by explosion or fire), detonates in a massive fireball.
+   "dmg" = poison damage per second (default 3). Explosion = dmg * 10.
+   ========================================================================== */
+
+static void gas_leak_explode(edict_t *self)
+{
+    edict_t *touch_list[64];
+    int num, i;
+    vec3_t area_mins, area_maxs;
+    int blast_dmg = (self->dmg > 0 ? self->dmg : 3) * 10;
+    float radius = 256.0f;
+
+    /* Massive explosion */
+    {
+        vec3_t exp_up = {0, 0, 1};
+        R_ParticleEffect(self->s.origin, exp_up, 1, 60);
+    }
+    R_AddDlight(self->s.origin, 1.0f, 0.8f, 0.3f, 400.0f, 1.0f);
+    SCR_AddScreenShake(0.6f, 1.0f);
+    {
+        int snd = gi.soundindex("world/explosion1.wav");
+        if (snd) gi.sound(self, CHAN_AUTO, snd, 1.0f, ATTN_NONE, 0);
+    }
+
+    VectorSet(area_mins,
+              self->s.origin[0] - radius,
+              self->s.origin[1] - radius,
+              self->s.origin[2] - radius);
+    VectorSet(area_maxs,
+              self->s.origin[0] + radius,
+              self->s.origin[1] + radius,
+              self->s.origin[2] + radius);
+
+    num = gi.BoxEdicts(area_mins, area_maxs, touch_list, 64, AREA_SOLID);
+    for (i = 0; i < num; i++) {
+        edict_t *victim = touch_list[i];
+        vec3_t diff;
+        float dist, scale;
+        int dmg;
+
+        if (!victim || victim == self || victim->health <= 0)
+            continue;
+        if (!victim->client && !(victim->svflags & SVF_MONSTER))
+            continue;
+
+        VectorSubtract(victim->s.origin, self->s.origin, diff);
+        dist = VectorLength(diff);
+        if (dist > radius) continue;
+
+        scale = 1.0f - (dist / radius);
+        dmg = (int)(blast_dmg * scale);
+        if (dmg < 1) dmg = 1;
+
+        victim->health -= dmg;
+        if (dist > 1.0f) {
+            VectorNormalize(diff);
+            victim->velocity[0] += diff[0] * 600.0f * scale;
+            victim->velocity[1] += diff[1] * 600.0f * scale;
+            victim->velocity[2] += 300.0f * scale;
+        }
+
+        if (victim->client)
+            victim->client->pers_health = victim->health;
+        if (victim->health <= 0 && victim->die)
+            victim->die(victim, self, self, dmg, victim->s.origin);
+        else if (victim->pain)
+            victim->pain(victim, self, 0, dmg);
+    }
+
+    self->inuse = qfalse;
+}
+
+static void gas_leak_use(edict_t *self, edict_t *other, edict_t *activator)
+{
+    (void)other; (void)activator;
+    if (self->style)
+        return;
+    self->style = 1;
+    gas_leak_explode(self);
+}
+
+static void gas_leak_touch(edict_t *self, edict_t *other, void *plane,
+                            csurface_t *surf)
+{
+    int gas_dmg;
+    (void)plane; (void)surf;
+    if (self->style)  /* exploded */
+        return;
+    if (!other || other->health <= 0)
+        return;
+    if (!other->client && !(other->svflags & SVF_MONSTER))
+        return;
+    if (other->dmg_debounce_time > level.time)
+        return;
+    other->dmg_debounce_time = level.time + 1.0f;
+
+    gas_dmg = self->dmg > 0 ? self->dmg : 3;
+    other->health -= gas_dmg;
+
+    /* Gas particles */
+    {
+        vec3_t gas_up = {0, 0, 0.5f};
+        R_ParticleEffect(other->s.origin, gas_up, 6, 4);
+    }
+
+    if (other->client) {
+        other->client->pers_health = other->health;
+        other->client->blend[1] = 0.15f;  /* green tint */
+    }
+
+    if (other->health <= 0 && other->die)
+        other->die(other, self, self, gas_dmg, other->s.origin);
+}
+
+static void SP_trigger_gas_leak(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+    ent->classname = "trigger_gas_leak";
+    ent->solid = SOLID_TRIGGER;
+    ent->movetype = MOVETYPE_NONE;
+    ent->touch = gas_leak_touch;
+    ent->use = gas_leak_use;
+    if (ent->dmg <= 0) ent->dmg = 3;
+    ent->style = 0;
+    VectorSet(ent->mins, -64, -64, -32);
+    VectorSet(ent->maxs, 64, 64, 32);
+    gi.linkentity(ent);
+    gi.dprintf("  trigger_gas_leak at (%.0f %.0f %.0f) dmg=%d explode=%d\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->dmg, ent->dmg * 10);
 }
 
 /* ==========================================================================
