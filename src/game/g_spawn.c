@@ -314,6 +314,10 @@ static void SP_func_catapult(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_trigger_regen(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_saw_blade(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_trigger_ice_floor(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_flamethrower(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_spike_trap(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_trigger_slowmo(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_tesla_coil(edict_t *ent, epair_t *pairs, int num_pairs);
 static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
                            int damage, vec3_t point);
 
@@ -801,6 +805,22 @@ static spawn_func_t spawn_funcs[] = {
     /* Ice floor — slippery surface */
     { "trigger_ice_floor",          SP_trigger_ice_floor },
     { "trigger_ice",                SP_trigger_ice_floor },
+
+    /* Wall-mounted flamethrower */
+    { "func_flamethrower",          SP_func_flamethrower },
+    { "func_flame_jet",             SP_func_flamethrower },
+
+    /* Retractable spike trap */
+    { "func_spike_trap",            SP_func_spike_trap },
+    { "func_spikes",                SP_func_spike_trap },
+
+    /* Slow-motion / bullet-time zone */
+    { "trigger_slowmo",             SP_trigger_slowmo },
+    { "trigger_bullet_time",        SP_trigger_slowmo },
+
+    /* Tesla coil — electric arc zapper */
+    { "func_tesla_coil",            SP_func_tesla_coil },
+    { "func_tesla",                 SP_func_tesla_coil },
 
     /* Sentinel */
     { NULL, NULL }
@@ -9563,6 +9583,380 @@ static void SP_trigger_ice_floor(edict_t *ent, epair_t *pairs, int num_pairs)
     gi.linkentity(ent);
     gi.dprintf("  trigger_ice_floor at (%.0f %.0f %.0f)\n",
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
+}
+
+/* ==========================================================================
+   Flamethrower — wall-mounted flame projector that fires periodically.
+   "dmg" = damage per tick (default 8). "wait" = fire interval (default 3).
+   "count" = flame duration in ticks (default 10). Fires in facing direction.
+   ========================================================================== */
+
+static void flamethrower_burn(edict_t *self)
+{
+    vec3_t forward, right, up;
+    vec3_t fire_end;
+    trace_t tr;
+    float yaw_rad, pitch_rad;
+    int flame_dmg;
+
+    self->nextthink = level.time + 0.1f;
+
+    /* Decrement active counter */
+    if (self->count <= 0) {
+        /* Cooldown period — wait before next burst */
+        self->count = (int)(self->wait > 0 ? self->wait * 10 : 30);
+        self->style = 0;  /* not firing */
+        return;
+    }
+
+    if (!self->style) {
+        /* In cooldown, decrement and wait */
+        self->count--;
+        if (self->count <= 0) {
+            self->count = self->dmg_radius > 0 ? (int)self->dmg_radius : 10;
+            self->style = 1;  /* start firing */
+        }
+        return;
+    }
+
+    self->count--;
+
+    /* Calculate forward direction from entity angles */
+    yaw_rad = self->s.angles[1] * (3.14159265f / 180.0f);
+    pitch_rad = self->s.angles[0] * (3.14159265f / 180.0f);
+    forward[0] = cosf(pitch_rad) * cosf(yaw_rad);
+    forward[1] = cosf(pitch_rad) * sinf(yaw_rad);
+    forward[2] = -sinf(pitch_rad);
+    (void)right; (void)up;
+
+    /* Trace flame cone (192 units range) */
+    VectorMA(self->s.origin, 192.0f, forward, fire_end);
+    tr = gi.trace(self->s.origin, NULL, NULL, fire_end, self, MASK_SHOT);
+
+    /* Fire particles along the path */
+    {
+        vec3_t flame_dir = {0, 0, 0.3f};
+        R_ParticleEffect(self->s.origin, forward, 1, 12);
+        if (tr.fraction < 1.0f)
+            R_ParticleEffect(tr.endpos, flame_dir, 1, 8);
+    }
+
+    /* Fire sound */
+    if ((self->count % 5) == 0) {
+        int snd = gi.soundindex("world/fire1.wav");
+        if (snd) gi.sound(self, CHAN_AUTO, snd, 0.7f, ATTN_NORM, 0);
+    }
+
+    /* Damage anything hit */
+    if (tr.ent && tr.ent->health > 0 && tr.fraction < 1.0f) {
+        flame_dmg = self->dmg > 0 ? self->dmg : 8;
+        tr.ent->health -= flame_dmg;
+        if (tr.ent->client) {
+            tr.ent->client->pers_health = tr.ent->health;
+            SCR_AddScreenShake(0.1f, 0.1f);
+        }
+        if (tr.ent->health <= 0 && tr.ent->die)
+            tr.ent->die(tr.ent, self, self, flame_dmg, tr.endpos);
+        else if (tr.ent->pain)
+            tr.ent->pain(tr.ent, self, 0, flame_dmg);
+    }
+}
+
+static void SP_func_flamethrower(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+    ent->classname = "func_flamethrower";
+    ent->solid = SOLID_NOT;
+    ent->movetype = MOVETYPE_NONE;
+    ent->think = flamethrower_burn;
+    ent->nextthink = level.time + 1.0f;
+    if (ent->dmg <= 0) ent->dmg = 8;
+    if (ent->wait <= 0) ent->wait = 3.0f;
+    /* dmg_radius stores burst length (ticks); style tracks firing state */
+    ent->dmg_radius = 10.0f;
+    ent->count = (int)(ent->wait * 10);  /* start in cooldown */
+    ent->style = 0;
+    VectorSet(ent->mins, -8, -8, -8);
+    VectorSet(ent->maxs, 8, 8, 8);
+    ent->s.modelindex = gi.modelindex("models/objects/flamethrower/tris.md2");
+    gi.linkentity(ent);
+    gi.dprintf("  func_flamethrower at (%.0f %.0f %.0f) dmg=%d wait=%.1f\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->dmg, ent->wait);
+}
+
+/* ==========================================================================
+   Spike Trap — retractable floor spikes that extend and retract on a timer.
+   "dmg" = damage per hit (default 20). "wait" = cycle time (default 2).
+   Spikes alternate between up (damaging) and down (safe) states.
+   ========================================================================== */
+
+static void spike_trap_think(edict_t *self)
+{
+    self->nextthink = level.time + 0.1f;
+
+    /* Toggle spikes every 'wait' seconds */
+    if (level.time >= self->move_angles[2]) {
+        self->style = !self->style;  /* toggle up/down */
+        self->move_angles[2] = level.time + (self->wait > 0 ? self->wait : 2.0f);
+
+        if (self->style) {
+            /* Spikes up — become solid and damaging */
+            self->solid = SOLID_BBOX;
+            VectorSet(self->maxs, 24, 24, 16);
+            {
+                int snd = gi.soundindex("world/spike1.wav");
+                if (snd) gi.sound(self, CHAN_AUTO, snd, 0.8f, ATTN_NORM, 0);
+            }
+            /* Metal spike particles */
+            {
+                vec3_t spike_up = {0, 0, 1};
+                R_ParticleEffect(self->s.origin, spike_up, 12, 6);
+            }
+        } else {
+            /* Spikes down — safe to walk over */
+            self->solid = SOLID_NOT;
+        }
+        gi.linkentity(self);
+    }
+}
+
+static void spike_trap_touch(edict_t *self, edict_t *other, void *plane,
+                              csurface_t *surf)
+{
+    int spike_dmg;
+    (void)plane; (void)surf;
+    if (!self->style)  /* spikes are retracted */
+        return;
+    if (!other || other->health <= 0)
+        return;
+    if (other->dmg_debounce_time > level.time)
+        return;
+    other->dmg_debounce_time = level.time + 0.5f;
+
+    spike_dmg = self->dmg > 0 ? self->dmg : 20;
+    other->health -= spike_dmg;
+
+    {
+        vec3_t blood_up = {0, 0, 1};
+        R_ParticleEffect(other->s.origin, blood_up, 1, 10);
+    }
+
+    if (other->client) {
+        other->client->pers_health = other->health;
+        SCR_AddScreenShake(0.2f, 0.2f);
+        SCR_AddPickupMessage("Impaled by spikes!");
+    }
+
+    if (other->health <= 0 && other->die)
+        other->die(other, self, self, spike_dmg, self->s.origin);
+    else if (other->pain)
+        other->pain(other, self, 0, spike_dmg);
+}
+
+static void SP_func_spike_trap(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+    ent->classname = "func_spike_trap";
+    ent->solid = SOLID_NOT;  /* starts retracted */
+    ent->movetype = MOVETYPE_NONE;
+    ent->think = spike_trap_think;
+    ent->touch = spike_trap_touch;
+    ent->nextthink = level.time + 1.0f;
+    if (ent->dmg <= 0) ent->dmg = 20;
+    if (ent->wait <= 0) ent->wait = 2.0f;
+    ent->style = 0;  /* starts retracted */
+    ent->move_angles[2] = level.time + ent->wait;
+    VectorSet(ent->mins, -24, -24, -4);
+    VectorSet(ent->maxs, 24, 24, 4);
+    ent->s.modelindex = gi.modelindex("models/objects/spikes/tris.md2");
+    gi.linkentity(ent);
+    gi.dprintf("  func_spike_trap at (%.0f %.0f %.0f) dmg=%d cycle=%.1f\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->dmg, ent->wait);
+}
+
+/* ==========================================================================
+   Slow-Motion Zone — entering this trigger slows game time for the player.
+   Creates a bullet-time effect. "count" = slow factor % (default 50 = half).
+   "wait" = duration in seconds (default 3).
+   ========================================================================== */
+
+static void slowmo_restore_think(edict_t *self)
+{
+    /* Restore normal speed for the player who triggered this */
+    if (self->owner && self->owner->client) {
+        self->owner->client->blend[2] = 0;  /* clear slow-mo tint */
+        SCR_AddPickupMessage("Normal speed restored");
+    }
+    /* Free this temporary entity */
+    self->inuse = qfalse;
+}
+
+static void slowmo_touch(edict_t *self, edict_t *other, void *plane,
+                          csurface_t *surf)
+{
+    edict_t *timer;
+    float duration;
+    (void)plane; (void)surf;
+    if (!other || !other->client || other->health <= 0)
+        return;
+    /* Debounce — don't re-trigger while already in slow-mo */
+    if (other->dmg_debounce_time > level.time)
+        return;
+
+    duration = self->wait > 0 ? self->wait : 3.0f;
+    other->dmg_debounce_time = level.time + duration + 1.0f;
+
+    /* Apply slow-motion: reduce player velocity */
+    other->velocity[0] *= 0.5f;
+    other->velocity[1] *= 0.5f;
+    other->velocity[2] *= 0.7f;
+
+    /* Visual feedback */
+    other->client->blend[2] = 0.3f;  /* blue tint for slow-mo */
+    SCR_AddPickupMessage("BULLET TIME!");
+    SCR_AddScreenShake(0.05f, 0.3f);
+
+    /* Spawn a timer entity to restore normal speed */
+    timer = G_AllocEdict();
+    if (timer) {
+        timer->classname = "slowmo_timer";
+        timer->owner = other;
+        timer->think = slowmo_restore_think;
+        timer->nextthink = level.time + duration;
+    }
+
+    /* Blue time-warp particles */
+    {
+        vec3_t warp_dir = {0, 0, 0.5f};
+        R_ParticleEffect(other->s.origin, warp_dir, 6, 16);
+    }
+
+    {
+        int snd = gi.soundindex("world/slowmo1.wav");
+        if (snd) gi.sound(other, CHAN_AUTO, snd, 0.8f, ATTN_NORM, 0);
+    }
+}
+
+static void SP_trigger_slowmo(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+    ent->classname = "trigger_slowmo";
+    ent->solid = SOLID_TRIGGER;
+    ent->movetype = MOVETYPE_NONE;
+    ent->touch = slowmo_touch;
+    if (ent->wait <= 0) ent->wait = 3.0f;
+    VectorSet(ent->mins, -48, -48, -16);
+    VectorSet(ent->maxs, 48, 48, 48);
+    gi.linkentity(ent);
+    gi.dprintf("  trigger_slowmo at (%.0f %.0f %.0f) duration=%.1f\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->wait);
+}
+
+/* ==========================================================================
+   Tesla Coil — periodically zaps the nearest entity within range.
+   Deals electric damage with visible arc effect and stun.
+   "dmg" = damage per zap (default 12). "wait" = zap interval (default 1.5).
+   "count" = range in units (default 256).
+   ========================================================================== */
+
+static void tesla_coil_think(edict_t *self)
+{
+    edict_t *target = NULL;
+    edict_t *check;
+    float best_dist = 99999.0f;
+    float zap_range;
+    int i;
+
+    self->nextthink = level.time + (self->wait > 0 ? self->wait : 1.5f);
+
+    zap_range = self->count > 0 ? (float)self->count : 256.0f;
+
+    /* Find nearest living entity in range */
+    for (i = 1; i < globals.num_edicts; i++) {
+        vec3_t diff;
+        float dist;
+        check = &globals.edicts[i];
+        if (!check->inuse || check == self)
+            continue;
+        if (check->health <= 0)
+            continue;
+        if (!check->client && !(check->svflags & SVF_MONSTER))
+            continue;
+
+        VectorSubtract(check->s.origin, self->s.origin, diff);
+        dist = VectorLength(diff);
+        if (dist < best_dist && dist <= zap_range) {
+            best_dist = dist;
+            target = check;
+        }
+    }
+
+    if (target) {
+        int zap_dmg = self->dmg > 0 ? self->dmg : 12;
+        trace_t tr;
+
+        /* Line of sight check */
+        tr = gi.trace(self->s.origin, NULL, NULL, target->s.origin,
+                      self, MASK_SHOT);
+        if (tr.ent != target)
+            return;  /* blocked */
+
+        /* Electric arc particles */
+        {
+            vec3_t arc_dir;
+            VectorSubtract(target->s.origin, self->s.origin, arc_dir);
+            VectorNormalize(arc_dir);
+            R_ParticleEffect(self->s.origin, arc_dir, 12, 20);
+            R_ParticleEffect(target->s.origin, arc_dir, 12, 10);
+        }
+
+        /* Dynamic light — blue electric flash */
+        R_AddDlight(self->s.origin, 0.3f, 0.5f, 1.0f, 150.0f, 0.3f);
+
+        /* Zap sound */
+        {
+            int snd = gi.soundindex("world/electric1.wav");
+            if (snd) gi.sound(self, CHAN_AUTO, snd, 0.9f, ATTN_NORM, 0);
+        }
+
+        /* Apply damage */
+        target->health -= zap_dmg;
+        if (target->client) {
+            target->client->pers_health = target->health;
+            SCR_AddScreenShake(0.15f, 0.2f);
+            /* Brief stun — zero velocity */
+            target->velocity[0] = 0;
+            target->velocity[1] = 0;
+        }
+
+        if (target->health <= 0 && target->die)
+            target->die(target, self, self, zap_dmg, target->s.origin);
+        else if (target->pain)
+            target->pain(target, self, 0, zap_dmg);
+    }
+}
+
+static void SP_func_tesla_coil(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+    ent->classname = "func_tesla_coil";
+    ent->solid = SOLID_BBOX;
+    ent->movetype = MOVETYPE_NONE;
+    ent->think = tesla_coil_think;
+    ent->nextthink = level.time + 2.0f;
+    if (ent->dmg <= 0) ent->dmg = 12;
+    if (ent->wait <= 0) ent->wait = 1.5f;
+    if (ent->count <= 0) ent->count = 256;
+    VectorSet(ent->mins, -12, -12, -24);
+    VectorSet(ent->maxs, 12, 12, 32);
+    ent->s.modelindex = gi.modelindex("models/objects/tesla/tris.md2");
+    gi.linkentity(ent);
+    gi.dprintf("  func_tesla_coil at (%.0f %.0f %.0f) dmg=%d range=%d interval=%.1f\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->dmg, ent->count, ent->wait);
 }
 
 /* ==========================================================================
