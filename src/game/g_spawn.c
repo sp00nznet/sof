@@ -310,6 +310,10 @@ static void SP_func_trampoline(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_fan(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_crusher(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_turntable(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_catapult(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_trigger_regen(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_saw_blade(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_trigger_ice_floor(edict_t *ent, epair_t *pairs, int num_pairs);
 static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
                            int damage, vec3_t point);
 
@@ -781,6 +785,22 @@ static spawn_func_t spawn_funcs[] = {
     /* Rotating platform / turntable */
     { "func_turntable",             SP_func_turntable },
     { "func_rotating_platform",     SP_func_turntable },
+
+    /* Catapult / directional launch pad */
+    { "func_catapult",              SP_func_catapult },
+    { "func_launch_pad",            SP_func_catapult },
+
+    /* Regeneration zone */
+    { "trigger_regen",              SP_trigger_regen },
+    { "trigger_heal_zone",          SP_trigger_regen },
+
+    /* Saw blade hazard */
+    { "func_saw_blade",             SP_func_saw_blade },
+    { "func_buzz_saw",              SP_func_saw_blade },
+
+    /* Ice floor — slippery surface */
+    { "trigger_ice_floor",          SP_trigger_ice_floor },
+    { "trigger_ice",                SP_trigger_ice_floor },
 
     /* Sentinel */
     { NULL, NULL }
@@ -9322,6 +9342,227 @@ static void SP_func_turntable(edict_t *ent, epair_t *pairs, int num_pairs)
     gi.dprintf("  func_turntable at (%.0f %.0f %.0f) speed=%.0f\n",
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
                ent->speed);
+}
+
+/* ==========================================================================
+   Catapult — directional launch entity. Uses entity angles to determine
+   launch direction. "speed" = launch force (default 700).
+   ========================================================================== */
+
+static void catapult_touch(edict_t *self, edict_t *other, void *plane,
+                            csurface_t *surf)
+{
+    float force;
+    float yaw_rad, pitch_rad;
+    (void)plane; (void)surf;
+    if (!other || other->health <= 0)
+        return;
+    if (other->dmg_debounce_time > level.time)
+        return;
+    other->dmg_debounce_time = level.time + 0.5f;
+
+    force = self->speed > 0 ? self->speed : 700.0f;
+    yaw_rad = self->s.angles[1] * (3.14159265f / 180.0f);
+    pitch_rad = self->s.angles[0] * (3.14159265f / 180.0f);
+
+    other->velocity[0] = (float)cos(yaw_rad) * (float)cos(pitch_rad) * force;
+    other->velocity[1] = (float)sin(yaw_rad) * (float)cos(pitch_rad) * force;
+    other->velocity[2] = (float)sin(-pitch_rad) * force;
+    if (other->velocity[2] < 200.0f)
+        other->velocity[2] = 200.0f; /* minimum upward launch */
+    other->groundentity = NULL;
+
+    /* Launch sound and particles */
+    {
+        int snd = gi.soundindex("world/catapult1.wav");
+        if (snd) gi.sound(self, CHAN_AUTO, snd, 1.0f, ATTN_NORM, 0);
+    }
+    {
+        vec3_t launch_up = {0, 0, 1};
+        R_ParticleEffect(self->s.origin, launch_up, 6, 20);
+    }
+
+    if (other->client) {
+        other->client->double_jump_used = false;
+        SCR_AddPickupMessage("LAUNCHED!");
+    }
+}
+
+static void SP_func_catapult(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+    ent->classname = "func_catapult";
+    ent->solid = SOLID_TRIGGER;
+    ent->movetype = MOVETYPE_NONE;
+    ent->touch = catapult_touch;
+    if (ent->speed <= 0) ent->speed = 700.0f;
+    VectorSet(ent->mins, -24, -24, -4);
+    VectorSet(ent->maxs, 24, 24, 4);
+    ent->s.modelindex = gi.modelindex("models/objects/catapult/tris.md2");
+    gi.linkentity(ent);
+    gi.dprintf("  func_catapult at (%.0f %.0f %.0f) speed=%.0f pitch=%.0f yaw=%.0f\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->speed, ent->s.angles[0], ent->s.angles[1]);
+}
+
+/* ==========================================================================
+   Regen Zone — passive healing area. Entities inside heal gradually.
+   "count" = HP per second (default 5). "wait" = 0 means always active.
+   ========================================================================== */
+
+static void regen_touch(edict_t *self, edict_t *other, void *plane,
+                         csurface_t *surf)
+{
+    int heal_rate;
+    (void)plane; (void)surf;
+    if (!other || !other->client || other->health <= 0)
+        return;
+    if (other->dmg_debounce_time > level.time)
+        return;
+    other->dmg_debounce_time = level.time + 1.0f;
+
+    heal_rate = self->count > 0 ? self->count : 5;
+
+    if (other->health < other->max_health) {
+        other->health += heal_rate;
+        if (other->health > other->max_health)
+            other->health = other->max_health;
+        other->client->pers_health = other->health;
+
+        /* Green healing particles */
+        {
+            vec3_t heal_up = {0, 0, 1};
+            R_ParticleEffect(other->s.origin, heal_up, 6, 4);
+        }
+    }
+}
+
+static void SP_trigger_regen(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+    ent->classname = "trigger_regen";
+    ent->solid = SOLID_TRIGGER;
+    ent->movetype = MOVETYPE_NONE;
+    ent->touch = regen_touch;
+    if (ent->count <= 0) ent->count = 5;
+    VectorSet(ent->mins, -64, -64, -16);
+    VectorSet(ent->maxs, 64, 64, 64);
+    gi.linkentity(ent);
+    gi.dprintf("  trigger_regen at (%.0f %.0f %.0f) heal=%d/sec\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->count);
+}
+
+/* ==========================================================================
+   Saw Blade — spinning blade hazard that deals damage on contact.
+   Rotates visually and inflicts slicing damage + bleeding.
+   ========================================================================== */
+
+static void saw_blade_touch(edict_t *self, edict_t *other, void *plane,
+                             csurface_t *surf)
+{
+    int saw_dmg;
+    (void)plane; (void)surf;
+    if (!other || other->health <= 0)
+        return;
+    if (other->dmg_debounce_time > level.time)
+        return;
+    other->dmg_debounce_time = level.time + 0.2f;
+
+    saw_dmg = self->dmg > 0 ? self->dmg : 15;
+    other->health -= saw_dmg;
+
+    /* Sparks and blood */
+    {
+        vec3_t saw_up = {0, 0, 1};
+        if (other->client || (other->svflags & SVF_MONSTER))
+            R_ParticleEffect(other->s.origin, saw_up, 1, 8);  /* blood */
+        else
+            R_ParticleEffect(other->s.origin, saw_up, 12, 6); /* sparks */
+    }
+
+    /* Buzzing saw sound */
+    {
+        int snd = gi.soundindex("world/saw1.wav");
+        if (snd) gi.sound(self, CHAN_AUTO, snd, 1.0f, ATTN_NORM, 0);
+    }
+
+    if (other->client) {
+        other->client->pers_health = other->health;
+        SCR_AddScreenShake(0.15f, 0.15f);
+    }
+
+    if (other->health <= 0 && other->die)
+        other->die(other, self, self, saw_dmg, self->s.origin);
+    else if (other->pain)
+        other->pain(other, self, 0, saw_dmg);
+}
+
+static void saw_blade_think(edict_t *self)
+{
+    self->nextthink = level.time + 0.1f;
+    /* Spin the blade */
+    self->s.angles[2] += 30.0f;
+    if (self->s.angles[2] >= 360.0f) self->s.angles[2] -= 360.0f;
+    gi.linkentity(self);
+}
+
+static void SP_func_saw_blade(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+    ent->classname = "func_saw_blade";
+    ent->solid = SOLID_BBOX;
+    ent->movetype = MOVETYPE_NONE;
+    ent->touch = saw_blade_touch;
+    ent->think = saw_blade_think;
+    ent->nextthink = level.time + 1.0f;
+    if (ent->dmg <= 0) ent->dmg = 15;
+    VectorSet(ent->mins, -16, -16, -4);
+    VectorSet(ent->maxs, 16, 16, 4);
+    ent->s.modelindex = gi.modelindex("models/objects/sawblade/tris.md2");
+    gi.linkentity(ent);
+    gi.dprintf("  func_saw_blade at (%.0f %.0f %.0f) dmg=%d\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->dmg);
+}
+
+/* ==========================================================================
+   Ice Floor — slippery surface that reduces friction and causes sliding.
+   Entities entering this trigger have reduced ground traction.
+   ========================================================================== */
+
+static void ice_floor_touch(edict_t *self, edict_t *other, void *plane,
+                             csurface_t *surf)
+{
+    (void)self; (void)plane; (void)surf;
+    if (!other || other->health <= 0)
+        return;
+    if (!other->client && !(other->svflags & SVF_MONSTER))
+        return;
+
+    /* Reduce friction: multiply horizontal velocity, reduce control */
+    other->velocity[0] *= 1.02f;  /* slight acceleration on ice */
+    other->velocity[1] *= 1.02f;
+
+    /* Ice particles */
+    if ((rand() % 10) == 0) {
+        vec3_t ice_up = {0, 0, 0.5f};
+        R_ParticleEffect(other->s.origin, ice_up, 6, 2);
+    }
+}
+
+static void SP_trigger_ice_floor(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+    ent->classname = "trigger_ice_floor";
+    ent->solid = SOLID_TRIGGER;
+    ent->movetype = MOVETYPE_NONE;
+    ent->touch = ice_floor_touch;
+    VectorSet(ent->mins, -64, -64, -4);
+    VectorSet(ent->maxs, 64, 64, 4);
+    gi.linkentity(ent);
+    gi.dprintf("  trigger_ice_floor at (%.0f %.0f %.0f)\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2]);
 }
 
 /* ==========================================================================
