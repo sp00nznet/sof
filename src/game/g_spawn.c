@@ -322,6 +322,10 @@ static void SP_func_grapple_point(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_poison_gas(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_trigger_gravity_lift(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_bear_trap(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_wrecking_ball(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_acid_sprayer(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_trigger_magnetic(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_trapdoor(edict_t *ent, epair_t *pairs, int num_pairs);
 static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
                            int damage, vec3_t point);
 
@@ -841,6 +845,22 @@ static spawn_func_t spawn_funcs[] = {
     /* Bear trap / snap trap */
     { "func_bear_trap",             SP_func_bear_trap },
     { "func_snap_trap",             SP_func_bear_trap },
+
+    /* Wrecking ball */
+    { "func_wrecking_ball",         SP_func_wrecking_ball },
+    { "func_demolition_ball",       SP_func_wrecking_ball },
+
+    /* Acid sprayer nozzle */
+    { "func_acid_sprayer",          SP_func_acid_sprayer },
+    { "func_acid_nozzle",           SP_func_acid_sprayer },
+
+    /* Magnetic field */
+    { "trigger_magnetic",           SP_trigger_magnetic },
+    { "trigger_magnet",             SP_trigger_magnetic },
+
+    /* Hinged trapdoor */
+    { "func_trapdoor",              SP_func_trapdoor },
+    { "func_hatch",                 SP_func_trapdoor },
 
     /* Sentinel */
     { NULL, NULL }
@@ -10266,6 +10286,316 @@ static void SP_func_bear_trap(edict_t *ent, epair_t *pairs, int num_pairs)
     gi.dprintf("  func_bear_trap at (%.0f %.0f %.0f) dmg=%d hold=%.1f\n",
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
                ent->dmg, ent->wait);
+}
+
+/* ==========================================================================
+   Wrecking Ball — swinging demolition ball on a pendulum arc.
+   Damages anything it touches. "dmg" = damage (default 40).
+   "speed" = swing speed (default 2). Swings back and forth on yaw axis.
+   ========================================================================== */
+
+static void wrecking_ball_think(edict_t *self)
+{
+    float swing_speed, swing_range;
+    self->nextthink = level.time + 0.1f;
+
+    swing_speed = self->speed > 0 ? self->speed : 2.0f;
+    swing_range = 45.0f;
+
+    /* Pendulum motion using sine wave */
+    self->move_angles[0] += swing_speed;
+    if (self->move_angles[0] >= 360.0f) self->move_angles[0] -= 360.0f;
+
+    self->s.angles[2] = sinf(self->move_angles[0] * (3.14159265f / 180.0f)) * swing_range;
+    gi.linkentity(self);
+}
+
+static void wrecking_ball_touch(edict_t *self, edict_t *other, void *plane,
+                                 csurface_t *surf)
+{
+    int ball_dmg;
+    vec3_t knockback;
+    (void)plane; (void)surf;
+    if (!other || other->health <= 0)
+        return;
+    if (other->dmg_debounce_time > level.time)
+        return;
+    other->dmg_debounce_time = level.time + 1.0f;
+
+    ball_dmg = self->dmg > 0 ? self->dmg : 40;
+    other->health -= ball_dmg;
+
+    /* Massive knockback */
+    VectorSubtract(other->s.origin, self->s.origin, knockback);
+    VectorNormalize(knockback);
+    other->velocity[0] += knockback[0] * 500.0f;
+    other->velocity[1] += knockback[1] * 500.0f;
+    other->velocity[2] += 200.0f;
+
+    /* Impact particles */
+    {
+        vec3_t impact_up = {0, 0, 1};
+        R_ParticleEffect(other->s.origin, impact_up, 12, 20);
+    }
+
+    {
+        int snd = gi.soundindex("world/metal1.wav");
+        if (snd) gi.sound(self, CHAN_AUTO, snd, 1.0f, ATTN_NORM, 0);
+    }
+
+    if (other->client) {
+        other->client->pers_health = other->health;
+        SCR_AddScreenShake(0.4f, 0.5f);
+    }
+
+    if (other->health <= 0 && other->die)
+        other->die(other, self, self, ball_dmg, self->s.origin);
+    else if (other->pain)
+        other->pain(other, self, 0, ball_dmg);
+}
+
+static void SP_func_wrecking_ball(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+    ent->classname = "func_wrecking_ball";
+    ent->solid = SOLID_BBOX;
+    ent->movetype = MOVETYPE_NONE;
+    ent->think = wrecking_ball_think;
+    ent->touch = wrecking_ball_touch;
+    ent->nextthink = level.time + 1.0f;
+    if (ent->dmg <= 0) ent->dmg = 40;
+    if (ent->speed <= 0) ent->speed = 2.0f;
+    ent->move_angles[0] = 0;
+    VectorSet(ent->mins, -20, -20, -20);
+    VectorSet(ent->maxs, 20, 20, 20);
+    ent->s.modelindex = gi.modelindex("models/objects/wreckball/tris.md2");
+    gi.linkentity(ent);
+    gi.dprintf("  func_wrecking_ball at (%.0f %.0f %.0f) dmg=%d\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->dmg);
+}
+
+/* ==========================================================================
+   Acid Sprayer — directional acid spray nozzle that fires in facing direction.
+   Similar to flamethrower but with acid/corrosive damage. "dmg" = damage per
+   tick (default 6). "wait" = spray interval (default 3). Burns through armor.
+   ========================================================================== */
+
+static void acid_sprayer_think(edict_t *self)
+{
+    vec3_t forward, spray_end;
+    trace_t tr;
+    float yaw_rad, pitch_rad;
+    int acid_dmg;
+
+    self->nextthink = level.time + 0.15f;
+
+    /* Toggle spray on/off with timer */
+    if (self->count <= 0) {
+        self->count = (int)(self->wait > 0 ? self->wait * 7 : 21);
+        self->style = !self->style;
+    }
+    self->count--;
+
+    if (!self->style)
+        return;  /* in cooldown */
+
+    /* Direction from entity angles */
+    yaw_rad = self->s.angles[1] * (3.14159265f / 180.0f);
+    pitch_rad = self->s.angles[0] * (3.14159265f / 180.0f);
+    forward[0] = cosf(pitch_rad) * cosf(yaw_rad);
+    forward[1] = cosf(pitch_rad) * sinf(yaw_rad);
+    forward[2] = -sinf(pitch_rad);
+
+    VectorMA(self->s.origin, 160.0f, forward, spray_end);
+    tr = gi.trace(self->s.origin, NULL, NULL, spray_end, self, MASK_SHOT);
+
+    /* Green acid particles */
+    {
+        vec3_t acid_dir = {0, 0, 0.2f};
+        R_ParticleEffect(self->s.origin, forward, 6, 10);
+        if (tr.fraction < 1.0f)
+            R_ParticleEffect(tr.endpos, acid_dir, 6, 6);
+    }
+
+    if (tr.ent && tr.ent->health > 0 && tr.fraction < 1.0f) {
+        acid_dmg = self->dmg > 0 ? self->dmg : 6;
+
+        /* Acid burns through armor first */
+        if (tr.ent->client && tr.ent->client->armor > 0) {
+            tr.ent->client->armor -= acid_dmg;
+            if (tr.ent->client->armor < 0) {
+                tr.ent->health += tr.ent->client->armor;  /* overflow to health */
+                tr.ent->client->armor = 0;
+            }
+        } else {
+            tr.ent->health -= acid_dmg;
+        }
+
+        if (tr.ent->client)
+            tr.ent->client->pers_health = tr.ent->health;
+
+        if (tr.ent->health <= 0 && tr.ent->die)
+            tr.ent->die(tr.ent, self, self, acid_dmg, tr.endpos);
+        else if (tr.ent->pain)
+            tr.ent->pain(tr.ent, self, 0, acid_dmg);
+    }
+}
+
+static void SP_func_acid_sprayer(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+    ent->classname = "func_acid_sprayer";
+    ent->solid = SOLID_NOT;
+    ent->movetype = MOVETYPE_NONE;
+    ent->think = acid_sprayer_think;
+    ent->nextthink = level.time + 1.0f;
+    if (ent->dmg <= 0) ent->dmg = 6;
+    if (ent->wait <= 0) ent->wait = 3.0f;
+    ent->count = (int)(ent->wait * 7);
+    ent->style = 0;
+    VectorSet(ent->mins, -8, -8, -8);
+    VectorSet(ent->maxs, 8, 8, 8);
+    ent->s.modelindex = gi.modelindex("models/objects/acidspray/tris.md2");
+    gi.linkentity(ent);
+    gi.dprintf("  func_acid_sprayer at (%.0f %.0f %.0f) dmg=%d\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->dmg);
+}
+
+/* ==========================================================================
+   Magnetic Field — pulls entities toward the center. Useful for traps
+   or environmental hazards. "speed" = pull strength (default 200).
+   "count" = field radius (default 192).
+   ========================================================================== */
+
+static void magnetic_touch(edict_t *self, edict_t *other, void *plane,
+                            csurface_t *surf)
+{
+    vec3_t pull_dir;
+    float dist, pull_force;
+    (void)plane; (void)surf;
+    if (!other || other->health <= 0)
+        return;
+    if (!other->client && !(other->svflags & SVF_MONSTER))
+        return;
+
+    VectorSubtract(self->s.origin, other->s.origin, pull_dir);
+    dist = VectorLength(pull_dir);
+    if (dist < 16.0f)
+        return;  /* at center */
+
+    VectorNormalize(pull_dir);
+    pull_force = self->speed > 0 ? self->speed : 200.0f;
+
+    /* Stronger pull closer to center (inverse distance) */
+    pull_force *= (1.0f - dist / 256.0f);
+    if (pull_force < 0) pull_force = 0;
+
+    other->velocity[0] += pull_dir[0] * pull_force * 0.1f;
+    other->velocity[1] += pull_dir[1] * pull_force * 0.1f;
+    other->velocity[2] += pull_dir[2] * pull_force * 0.05f;
+
+    /* Electric-magnetic particles */
+    if ((rand() % 5) == 0) {
+        vec3_t mag_dir = {0, 0, 0.3f};
+        R_ParticleEffect(other->s.origin, mag_dir, 12, 3);
+    }
+}
+
+static void SP_trigger_magnetic(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+    ent->classname = "trigger_magnetic";
+    ent->solid = SOLID_TRIGGER;
+    ent->movetype = MOVETYPE_NONE;
+    ent->touch = magnetic_touch;
+    if (ent->speed <= 0) ent->speed = 200.0f;
+    if (ent->count <= 0) ent->count = 192;
+    VectorSet(ent->mins, -96, -96, -48);
+    VectorSet(ent->maxs, 96, 96, 48);
+    gi.linkentity(ent);
+    gi.dprintf("  trigger_magnetic at (%.0f %.0f %.0f) force=%.0f\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->speed);
+}
+
+/* ==========================================================================
+   Trapdoor — hinged floor panel that opens when stepped on, dropping
+   the player below. Resets after "wait" seconds (default 2).
+   "dmg" = fall damage bonus (default 10).
+   ========================================================================== */
+
+static void trapdoor_reset(edict_t *self)
+{
+    self->solid = SOLID_BBOX;
+    self->style = 0;  /* closed */
+    self->s.angles[0] = 0;  /* reset tilt */
+    self->nextthink = 0;
+    gi.linkentity(self);
+
+    {
+        int snd = gi.soundindex("world/door_close1.wav");
+        if (snd) gi.sound(self, CHAN_AUTO, snd, 0.6f, ATTN_NORM, 0);
+    }
+}
+
+static void trapdoor_touch(edict_t *self, edict_t *other, void *plane,
+                            csurface_t *surf)
+{
+    int fall_dmg;
+    (void)plane; (void)surf;
+    if (self->style)  /* already open */
+        return;
+    if (!other || !other->client || other->health <= 0)
+        return;
+
+    self->style = 1;  /* open */
+
+    /* Swing open animation — tilt 90 degrees */
+    self->s.angles[0] = 90.0f;
+    self->solid = SOLID_NOT;
+    gi.linkentity(self);
+
+    /* Creak sound */
+    {
+        int snd = gi.soundindex("world/door_open1.wav");
+        if (snd) gi.sound(self, CHAN_AUTO, snd, 0.8f, ATTN_NORM, 0);
+    }
+
+    /* Apply downward velocity + bonus damage */
+    other->velocity[2] = -200.0f;
+    fall_dmg = self->dmg > 0 ? self->dmg : 10;
+    other->health -= fall_dmg;
+    other->client->pers_health = other->health;
+
+    SCR_AddScreenShake(0.15f, 0.2f);
+
+    if (other->health <= 0 && other->die)
+        other->die(other, self, self, fall_dmg, self->s.origin);
+
+    /* Schedule reset */
+    self->think = trapdoor_reset;
+    self->nextthink = level.time + (self->wait > 0 ? self->wait : 2.0f);
+}
+
+static void SP_func_trapdoor(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+    ent->classname = "func_trapdoor";
+    ent->solid = SOLID_BBOX;
+    ent->movetype = MOVETYPE_NONE;
+    ent->touch = trapdoor_touch;
+    if (ent->dmg <= 0) ent->dmg = 10;
+    if (ent->wait <= 0) ent->wait = 2.0f;
+    ent->style = 0;  /* closed */
+    VectorSet(ent->mins, -32, -32, -4);
+    VectorSet(ent->maxs, 32, 32, 4);
+    ent->s.modelindex = gi.modelindex("models/objects/trapdoor/tris.md2");
+    gi.linkentity(ent);
+    gi.dprintf("  func_trapdoor at (%.0f %.0f %.0f) dmg=%d\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->dmg);
 }
 
 /* ==========================================================================
