@@ -338,6 +338,10 @@ static void SP_func_spotlight_turret(edict_t *ent, epair_t *pairs, int num_pairs
 static void SP_func_collapsing_bridge(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_electric_fence(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_trigger_sand_pit(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_dart_wall(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_moving_platform(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_flame_jet_floor(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_shrapnel_bomb(edict_t *ent, epair_t *pairs, int num_pairs);
 static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
                            int damage, vec3_t point);
 
@@ -921,6 +925,22 @@ static spawn_func_t spawn_funcs[] = {
     /* Sinking sand pit */
     { "trigger_sand_pit",           SP_trigger_sand_pit },
     { "trigger_sinkhole",           SP_trigger_sand_pit },
+
+    /* Poison dart wall */
+    { "func_dart_wall",             SP_func_dart_wall },
+    { "func_dart_trap",             SP_func_dart_wall },
+
+    /* Moving platform (A-to-B) */
+    { "func_moving_platform",       SP_func_moving_platform },
+    { "func_mover",                 SP_func_moving_platform },
+
+    /* Flame jet floor vent */
+    { "func_flame_jet_floor",       SP_func_flame_jet_floor },
+    { "func_floor_flame",           SP_func_flame_jet_floor },
+
+    /* Shrapnel proximity bomb */
+    { "func_shrapnel_bomb",         SP_func_shrapnel_bomb },
+    { "func_frag_mine",             SP_func_shrapnel_bomb },
 
     /* Sentinel */
     { NULL, NULL }
@@ -11779,6 +11799,334 @@ static void SP_trigger_sand_pit(edict_t *ent, epair_t *pairs, int num_pairs)
     gi.dprintf("  trigger_sand_pit at (%.0f %.0f %.0f) sink=%.0f\n",
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
                ent->speed);
+}
+
+/* ==========================================================================
+   Dart Wall — wall that periodically shoots poison darts in its facing
+   direction. Darts deal initial damage + poison DOT. "dmg" = dart damage
+   (default 10). "wait" = fire interval (default 2). Trace-based projectile.
+   ========================================================================== */
+
+static void dart_wall_think(edict_t *self)
+{
+    vec3_t forward, dart_end;
+    trace_t tr;
+    float yaw_rad, pitch_rad;
+    int dart_dmg;
+
+    self->nextthink = level.time + (self->wait > 0 ? self->wait : 2.0f);
+
+    /* Direction from entity angles */
+    yaw_rad = self->s.angles[1] * (3.14159265f / 180.0f);
+    pitch_rad = self->s.angles[0] * (3.14159265f / 180.0f);
+    forward[0] = cosf(pitch_rad) * cosf(yaw_rad);
+    forward[1] = cosf(pitch_rad) * sinf(yaw_rad);
+    forward[2] = -sinf(pitch_rad);
+
+    VectorMA(self->s.origin, 512.0f, forward, dart_end);
+    tr = gi.trace(self->s.origin, NULL, NULL, dart_end, self, MASK_SHOT);
+
+    /* Dart trail particles */
+    {
+        vec3_t trail_up = {0, 0, 0.1f};
+        R_ParticleEffect(self->s.origin, forward, 8, 6);
+    }
+
+    /* Puff sound */
+    {
+        int snd = gi.soundindex("world/dart1.wav");
+        if (snd) gi.sound(self, CHAN_AUTO, snd, 0.6f, ATTN_NORM, 0);
+    }
+
+    if (tr.ent && tr.ent->health > 0 && tr.fraction < 1.0f) {
+        dart_dmg = self->dmg > 0 ? self->dmg : 10;
+        tr.ent->health -= dart_dmg;
+
+        /* Poison effect — green particles */
+        {
+            vec3_t poison_dir = {0, 0, 0.5f};
+            R_ParticleEffect(tr.endpos, poison_dir, 6, 6);
+        }
+
+        if (tr.ent->client) {
+            tr.ent->client->pers_health = tr.ent->health;
+            tr.ent->client->blend[1] = 0.2f;  /* green poison tint */
+        }
+
+        if (tr.ent->health <= 0 && tr.ent->die)
+            tr.ent->die(tr.ent, self, self, dart_dmg, tr.endpos);
+        else if (tr.ent->pain)
+            tr.ent->pain(tr.ent, self, 0, dart_dmg);
+    }
+}
+
+static void SP_func_dart_wall(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+    ent->classname = "func_dart_wall";
+    ent->solid = SOLID_NOT;
+    ent->movetype = MOVETYPE_NONE;
+    ent->think = dart_wall_think;
+    ent->nextthink = level.time + 2.0f;
+    if (ent->dmg <= 0) ent->dmg = 10;
+    if (ent->wait <= 0) ent->wait = 2.0f;
+    VectorSet(ent->mins, -8, -8, -8);
+    VectorSet(ent->maxs, 8, 8, 8);
+    ent->s.modelindex = gi.modelindex("models/objects/dartwall/tris.md2");
+    gi.linkentity(ent);
+    gi.dprintf("  func_dart_wall at (%.0f %.0f %.0f) dmg=%d interval=%.1f\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->dmg, ent->wait);
+}
+
+/* ==========================================================================
+   Moving Platform — platform that shuttles between spawn point and a
+   destination. "speed" = movement speed (default 100). Destination set via
+   "move_origin" field or 128 units in facing direction if not set.
+   ========================================================================== */
+
+static void moving_platform_think(edict_t *self)
+{
+    vec3_t dir;
+    float dist, move_dist;
+    vec3_t *dest;
+
+    self->nextthink = level.time + 0.1f;
+
+    /* Determine destination based on current direction
+       move_origin = destination, move_angles = start position */
+    dest = self->style ? (vec3_t *)&self->move_origin : (vec3_t *)&self->move_angles;
+
+    VectorSubtract(*dest, self->s.origin, dir);
+    dist = VectorLength(dir);
+
+    if (dist < 4.0f) {
+        /* Arrived — reverse direction */
+        self->style = !self->style;
+        {
+            int snd = gi.soundindex("world/plat_stop1.wav");
+            if (snd) gi.sound(self, CHAN_AUTO, snd, 0.5f, ATTN_NORM, 0);
+        }
+        return;
+    }
+
+    VectorNormalize(dir);
+    move_dist = (self->speed > 0 ? self->speed : 100.0f) * 0.1f;
+    if (move_dist > dist)
+        move_dist = dist;
+
+    self->s.origin[0] += dir[0] * move_dist;
+    self->s.origin[1] += dir[1] * move_dist;
+    self->s.origin[2] += dir[2] * move_dist;
+
+    gi.linkentity(self);
+}
+
+static void SP_func_moving_platform(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    float yaw_rad;
+    (void)pairs; (void)num_pairs;
+    ent->classname = "func_moving_platform";
+    ent->solid = SOLID_BBOX;
+    ent->movetype = MOVETYPE_NONE;
+    ent->think = moving_platform_think;
+    ent->nextthink = level.time + 1.0f;
+    if (ent->speed <= 0) ent->speed = 100.0f;
+
+    /* Save start position in move_angles */
+    VectorCopy(ent->s.origin, ent->move_angles);
+
+    /* Calculate destination: 128 units in facing direction */
+    yaw_rad = ent->s.angles[1] * (3.14159265f / 180.0f);
+    ent->move_origin[0] = ent->s.origin[0] + cosf(yaw_rad) * 128.0f;
+    ent->move_origin[1] = ent->s.origin[1] + sinf(yaw_rad) * 128.0f;
+    ent->move_origin[2] = ent->s.origin[2];
+
+    ent->style = 0;  /* moving toward move_origin first */
+    VectorSet(ent->mins, -32, -32, -4);
+    VectorSet(ent->maxs, 32, 32, 4);
+    ent->s.modelindex = gi.modelindex("models/objects/platform/tris.md2");
+    gi.linkentity(ent);
+    gi.dprintf("  func_moving_platform at (%.0f %.0f %.0f) speed=%.0f\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->speed);
+}
+
+/* ==========================================================================
+   Flame Jet Floor — floor vents that shoot jets of fire straight up.
+   Cycles on/off. "dmg" = fire damage (default 12). "wait" = cycle (default 2).
+   ========================================================================== */
+
+static void flame_jet_floor_think(edict_t *self)
+{
+    self->nextthink = level.time + 0.1f;
+
+    /* Toggle jet */
+    if (level.time >= self->move_angles[2]) {
+        self->style = !self->style;
+        self->move_angles[2] = level.time + (self->wait > 0 ? self->wait : 2.0f);
+
+        if (self->style) {
+            self->solid = SOLID_TRIGGER;
+            {
+                int snd = gi.soundindex("world/fire1.wav");
+                if (snd) gi.sound(self, CHAN_AUTO, snd, 0.8f, ATTN_NORM, 0);
+            }
+        } else {
+            self->solid = SOLID_NOT;
+        }
+        gi.linkentity(self);
+    }
+
+    if (self->style) {
+        /* Upward fire jet particles */
+        vec3_t jet_up = {0, 0, 1};
+        R_ParticleEffect(self->s.origin, jet_up, 1, 12);
+        R_AddDlight(self->s.origin, 1.0f, 0.4f, 0.1f, 100.0f, 0.15f);
+    }
+}
+
+static void flame_jet_floor_touch(edict_t *self, edict_t *other, void *plane,
+                                   csurface_t *surf)
+{
+    int jet_dmg;
+    (void)plane; (void)surf;
+    if (!self->style)
+        return;
+    if (!other || other->health <= 0)
+        return;
+    if (other->dmg_debounce_time > level.time)
+        return;
+    other->dmg_debounce_time = level.time + 0.25f;
+
+    jet_dmg = self->dmg > 0 ? self->dmg : 12;
+    other->health -= jet_dmg;
+
+    /* Launch upward from jet */
+    other->velocity[2] += 150.0f;
+
+    {
+        vec3_t burn_up = {0, 0, 1};
+        R_ParticleEffect(other->s.origin, burn_up, 1, 8);
+    }
+
+    if (other->client) {
+        other->client->pers_health = other->health;
+        SCR_AddScreenShake(0.1f, 0.1f);
+    }
+
+    if (other->health <= 0 && other->die)
+        other->die(other, self, self, jet_dmg, self->s.origin);
+    else if (other->pain)
+        other->pain(other, self, 0, jet_dmg);
+}
+
+static void SP_func_flame_jet_floor(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+    ent->classname = "func_flame_jet_floor";
+    ent->solid = SOLID_NOT;
+    ent->movetype = MOVETYPE_NONE;
+    ent->think = flame_jet_floor_think;
+    ent->touch = flame_jet_floor_touch;
+    ent->nextthink = level.time + 1.0f;
+    if (ent->dmg <= 0) ent->dmg = 12;
+    if (ent->wait <= 0) ent->wait = 2.0f;
+    ent->style = 0;
+    ent->move_angles[2] = level.time + ent->wait;
+    VectorSet(ent->mins, -16, -16, -4);
+    VectorSet(ent->maxs, 16, 16, 64);
+    gi.linkentity(ent);
+    gi.dprintf("  func_flame_jet_floor at (%.0f %.0f %.0f) dmg=%d cycle=%.1f\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->dmg, ent->wait);
+}
+
+/* ==========================================================================
+   Shrapnel Bomb — proximity mine that sprays shrapnel on detonation.
+   Hits multiple targets in radius with individual shrapnel traces.
+   "dmg" = per-shrapnel damage (default 8). "count" = shrapnel count (default 12).
+   Single use — destroyed on detonation.
+   ========================================================================== */
+
+static void shrapnel_bomb_touch(edict_t *self, edict_t *other, void *plane,
+                                 csurface_t *surf)
+{
+    int i, frag_count, frag_dmg;
+    (void)plane; (void)surf;
+    if (self->style)  /* already detonated */
+        return;
+    if (!other || !other->client || other->health <= 0)
+        return;
+
+    self->style = 1;
+    frag_count = self->count > 0 ? self->count : 12;
+    frag_dmg = self->dmg > 0 ? self->dmg : 8;
+
+    /* Explosion flash */
+    R_AddDlight(self->s.origin, 1.0f, 0.7f, 0.3f, 200.0f, 0.4f);
+    SCR_AddScreenShake(0.3f, 0.4f);
+    {
+        int snd = gi.soundindex("world/explosion1.wav");
+        if (snd) gi.sound(self, CHAN_AUTO, snd, 1.0f, ATTN_NORM, 0);
+    }
+
+    /* Spray shrapnel traces in random directions */
+    for (i = 0; i < frag_count; i++) {
+        vec3_t dir, frag_end;
+        trace_t tr;
+
+        dir[0] = (float)((rand() % 200) - 100) * 0.01f;
+        dir[1] = (float)((rand() % 200) - 100) * 0.01f;
+        dir[2] = (float)(rand() % 100) * 0.01f;
+        VectorNormalize(dir);
+
+        VectorMA(self->s.origin, 256.0f, dir, frag_end);
+        tr = gi.trace(self->s.origin, NULL, NULL, frag_end, self, MASK_SHOT);
+
+        /* Shrapnel sparks */
+        R_ParticleEffect(tr.endpos, dir, 12, 3);
+
+        if (tr.ent && tr.ent->health > 0 && tr.fraction < 1.0f) {
+            tr.ent->health -= frag_dmg;
+
+            {
+                vec3_t blood_up = {0, 0, 1};
+                if (tr.ent->client || (tr.ent->svflags & SVF_MONSTER))
+                    R_ParticleEffect(tr.endpos, blood_up, 1, 4);
+            }
+
+            if (tr.ent->client)
+                tr.ent->client->pers_health = tr.ent->health;
+
+            if (tr.ent->health <= 0 && tr.ent->die)
+                tr.ent->die(tr.ent, self, self, frag_dmg, tr.endpos);
+            else if (tr.ent->pain)
+                tr.ent->pain(tr.ent, self, 0, frag_dmg);
+        }
+    }
+
+    /* Remove the bomb */
+    self->inuse = qfalse;
+}
+
+static void SP_func_shrapnel_bomb(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+    ent->classname = "func_shrapnel_bomb";
+    ent->solid = SOLID_TRIGGER;
+    ent->movetype = MOVETYPE_NONE;
+    ent->touch = shrapnel_bomb_touch;
+    if (ent->dmg <= 0) ent->dmg = 8;
+    if (ent->count <= 0) ent->count = 12;
+    ent->style = 0;
+    VectorSet(ent->mins, -12, -12, -4);
+    VectorSet(ent->maxs, 12, 12, 8);
+    ent->s.modelindex = gi.modelindex("models/objects/shrapbomb/tris.md2");
+    gi.linkentity(ent);
+    gi.dprintf("  func_shrapnel_bomb at (%.0f %.0f %.0f) dmg=%d frags=%d\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->dmg, ent->count);
 }
 
 /* ==========================================================================
