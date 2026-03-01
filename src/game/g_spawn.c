@@ -334,6 +334,10 @@ static void SP_func_flame_wall(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_pendulum_axe(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_water_mine(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_conveyor_crusher(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_spotlight_turret(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_collapsing_bridge(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_electric_fence(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_trigger_sand_pit(edict_t *ent, epair_t *pairs, int num_pairs);
 static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
                            int damage, vec3_t point);
 
@@ -901,6 +905,22 @@ static spawn_func_t spawn_funcs[] = {
     /* Conveyor crusher */
     { "func_conveyor_crusher",      SP_func_conveyor_crusher },
     { "func_grinder",               SP_func_conveyor_crusher },
+
+    /* Spotlight turret (alarm) */
+    { "func_spotlight_turret",      SP_func_spotlight_turret },
+    { "func_searchlight",           SP_func_spotlight_turret },
+
+    /* Collapsing bridge */
+    { "func_collapsing_bridge",     SP_func_collapsing_bridge },
+    { "func_crumble_bridge",        SP_func_collapsing_bridge },
+
+    /* Electrified fence */
+    { "func_electric_fence",        SP_func_electric_fence },
+    { "func_shock_fence",           SP_func_electric_fence },
+
+    /* Sinking sand pit */
+    { "trigger_sand_pit",           SP_trigger_sand_pit },
+    { "trigger_sinkhole",           SP_trigger_sand_pit },
 
     /* Sentinel */
     { NULL, NULL }
@@ -11442,6 +11462,323 @@ static void SP_func_conveyor_crusher(edict_t *ent, epair_t *pairs, int num_pairs
     gi.dprintf("  func_conveyor_crusher at (%.0f %.0f %.0f) speed=%.0f dmg=%d\n",
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
                ent->speed, ent->dmg);
+}
+
+/* ==========================================================================
+   Spotlight Turret — rotating searchlight that scans for the player.
+   When player is detected in the light cone, triggers an alarm.
+   "speed" = rotation speed (default 1.5). "count" = detection range (default 384).
+   ========================================================================== */
+
+static void spotlight_turret_think(edict_t *self)
+{
+    float rot_speed;
+    float yaw_rad;
+    vec3_t forward, scan_end;
+    trace_t tr;
+
+    self->nextthink = level.time + 0.1f;
+
+    rot_speed = self->speed > 0 ? self->speed : 1.5f;
+
+    /* Rotate the spotlight */
+    self->s.angles[1] += rot_speed;
+    if (self->s.angles[1] >= 360.0f) self->s.angles[1] -= 360.0f;
+
+    /* Spotlight beam */
+    yaw_rad = self->s.angles[1] * (3.14159265f / 180.0f);
+    forward[0] = cosf(yaw_rad);
+    forward[1] = sinf(yaw_rad);
+    forward[2] = -0.3f;  /* slightly downward */
+
+    {
+        float range = self->count > 0 ? (float)self->count : 384.0f;
+        VectorMA(self->s.origin, range, forward, scan_end);
+    }
+
+    /* Light cone visual */
+    R_AddDlight(self->s.origin, 1.0f, 1.0f, 0.8f, 80.0f, 0.15f);
+
+    /* Trace for player */
+    tr = gi.trace(self->s.origin, NULL, NULL, scan_end, self, MASK_SHOT);
+    if (tr.ent && tr.ent->client && tr.ent->health > 0) {
+        /* Player detected! */
+        if (!self->style) {
+            self->style = 1;  /* alarm active */
+            {
+                int snd = gi.soundindex("world/alarm1.wav");
+                if (snd) gi.sound(self, CHAN_AUTO, snd, 1.0f, ATTN_NONE, 0);
+            }
+            R_AddDlight(self->s.origin, 1.0f, 0.2f, 0.2f, 200.0f, 2.0f);
+            SCR_AddPickupMessage("DETECTED! Alarm triggered!");
+            SCR_AddScreenShake(0.1f, 0.3f);
+        }
+    } else {
+        /* Reset alarm after a delay */
+        if (self->style && self->move_angles[2] < level.time) {
+            self->style = 0;
+            self->move_angles[2] = level.time + 5.0f;
+        }
+    }
+
+    gi.linkentity(self);
+}
+
+static void SP_func_spotlight_turret(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+    ent->classname = "func_spotlight_turret";
+    ent->solid = SOLID_NOT;
+    ent->movetype = MOVETYPE_NONE;
+    ent->think = spotlight_turret_think;
+    ent->nextthink = level.time + 1.0f;
+    if (ent->speed <= 0) ent->speed = 1.5f;
+    if (ent->count <= 0) ent->count = 384;
+    ent->style = 0;
+    VectorSet(ent->mins, -8, -8, -8);
+    VectorSet(ent->maxs, 8, 8, 8);
+    ent->s.modelindex = gi.modelindex("models/objects/spotlight/tris.md2");
+    gi.linkentity(ent);
+    gi.dprintf("  func_spotlight_turret at (%.0f %.0f %.0f) range=%d\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->count);
+}
+
+/* ==========================================================================
+   Collapsing Bridge — bridge surface that breaks apart after being walked on.
+   Player steps on it, it shakes briefly, then collapses (becomes non-solid).
+   "wait" = delay before collapse (default 1). "delay" = respawn time (default 5).
+   ========================================================================== */
+
+static void bridge_respawn(edict_t *self)
+{
+    self->solid = SOLID_BBOX;
+    self->style = 0;  /* intact */
+    self->s.origin[2] = self->move_origin[2];  /* restore Z */
+    self->nextthink = 0;
+    gi.linkentity(self);
+}
+
+static void bridge_collapse(edict_t *self)
+{
+    /* Collapse — go non-solid and drop visually */
+    self->solid = SOLID_NOT;
+    self->s.origin[2] -= 256.0f;  /* drop out of sight */
+    gi.linkentity(self);
+
+    /* Crumble sound + particles */
+    {
+        int snd = gi.soundindex("world/debris1.wav");
+        if (snd) gi.sound(self, CHAN_AUTO, snd, 1.0f, ATTN_NORM, 0);
+    }
+    {
+        vec3_t debris_down = {0, 0, -1};
+        R_ParticleEffect(self->s.origin, debris_down, 8, 30);
+    }
+
+    /* Schedule respawn */
+    self->think = bridge_respawn;
+    self->nextthink = level.time + (self->delay > 0 ? self->delay : 5.0f);
+}
+
+static void bridge_touch(edict_t *self, edict_t *other, void *plane,
+                          csurface_t *surf)
+{
+    (void)plane; (void)surf;
+    if (self->style)  /* already collapsing */
+        return;
+    if (!other || !other->client || other->health <= 0)
+        return;
+
+    self->style = 1;  /* triggered */
+    VectorCopy(self->s.origin, self->move_origin);  /* save position */
+
+    /* Warning shake */
+    SCR_AddScreenShake(0.1f, 0.5f);
+    {
+        int snd = gi.soundindex("world/creak1.wav");
+        if (snd) gi.sound(self, CHAN_AUTO, snd, 0.8f, ATTN_NORM, 0);
+    }
+
+    /* Schedule collapse */
+    self->think = bridge_collapse;
+    self->nextthink = level.time + (self->wait > 0 ? self->wait : 1.0f);
+}
+
+static void SP_func_collapsing_bridge(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+    ent->classname = "func_collapsing_bridge";
+    ent->solid = SOLID_BBOX;
+    ent->movetype = MOVETYPE_NONE;
+    ent->touch = bridge_touch;
+    if (ent->wait <= 0) ent->wait = 1.0f;
+    if (ent->delay <= 0) ent->delay = 5.0f;
+    ent->style = 0;
+    VectorSet(ent->mins, -64, -32, -4);
+    VectorSet(ent->maxs, 64, 32, 4);
+    ent->s.modelindex = gi.modelindex("models/objects/bridge/tris.md2");
+    gi.linkentity(ent);
+    gi.dprintf("  func_collapsing_bridge at (%.0f %.0f %.0f) delay=%.1f respawn=%.1f\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->wait, ent->delay);
+}
+
+/* ==========================================================================
+   Electric Fence — electrified fence barrier that zaps on contact.
+   Continuous buzz with periodic spark effects. "dmg" = shock damage (default 12).
+   ========================================================================== */
+
+static void electric_fence_think(edict_t *self)
+{
+    self->nextthink = level.time + 0.5f;
+
+    /* Periodic sparks */
+    if ((rand() % 3) == 0) {
+        vec3_t spark_dir;
+        spark_dir[0] = (float)((rand() % 20) - 10) * 0.1f;
+        spark_dir[1] = (float)((rand() % 20) - 10) * 0.1f;
+        spark_dir[2] = 0.5f;
+        R_ParticleEffect(self->s.origin, spark_dir, 12, 4);
+    }
+
+    /* Electric hum */
+    if ((rand() % 5) == 0) {
+        int snd = gi.soundindex("world/electric1.wav");
+        if (snd) gi.sound(self, CHAN_AUTO, snd, 0.3f, ATTN_NORM, 0);
+    }
+}
+
+static void electric_fence_touch(edict_t *self, edict_t *other, void *plane,
+                                  csurface_t *surf)
+{
+    int shock_dmg;
+    (void)plane; (void)surf;
+    if (!other || other->health <= 0)
+        return;
+    if (other->dmg_debounce_time > level.time)
+        return;
+    other->dmg_debounce_time = level.time + 0.4f;
+
+    shock_dmg = self->dmg > 0 ? self->dmg : 12;
+    other->health -= shock_dmg;
+
+    /* Electric shock pushback */
+    {
+        vec3_t push;
+        VectorSubtract(other->s.origin, self->s.origin, push);
+        VectorNormalize(push);
+        other->velocity[0] += push[0] * 200.0f;
+        other->velocity[1] += push[1] * 200.0f;
+        other->velocity[2] += 80.0f;
+    }
+
+    /* Zap particles */
+    {
+        vec3_t zap_up = {0, 0, 1};
+        R_ParticleEffect(other->s.origin, zap_up, 12, 12);
+    }
+
+    {
+        int snd = gi.soundindex("world/electric1.wav");
+        if (snd) gi.sound(self, CHAN_AUTO, snd, 0.9f, ATTN_NORM, 0);
+    }
+
+    if (other->client) {
+        other->client->pers_health = other->health;
+        SCR_AddScreenShake(0.15f, 0.2f);
+        /* Brief stun */
+        other->velocity[0] *= 0.3f;
+        other->velocity[1] *= 0.3f;
+    }
+
+    if (other->health <= 0 && other->die)
+        other->die(other, self, self, shock_dmg, self->s.origin);
+    else if (other->pain)
+        other->pain(other, self, 0, shock_dmg);
+}
+
+static void SP_func_electric_fence(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+    ent->classname = "func_electric_fence";
+    ent->solid = SOLID_BBOX;
+    ent->movetype = MOVETYPE_NONE;
+    ent->think = electric_fence_think;
+    ent->touch = electric_fence_touch;
+    ent->nextthink = level.time + 1.0f;
+    if (ent->dmg <= 0) ent->dmg = 12;
+    VectorSet(ent->mins, -48, -4, -32);
+    VectorSet(ent->maxs, 48, 4, 48);
+    ent->s.modelindex = gi.modelindex("models/objects/efence/tris.md2");
+    gi.linkentity(ent);
+    gi.dprintf("  func_electric_fence at (%.0f %.0f %.0f) dmg=%d\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->dmg);
+}
+
+/* ==========================================================================
+   Sand Pit — sinking sand/mud pit that slowly pulls entities downward.
+   Standing in it drags the player down; they must jump to escape.
+   "dmg" = suffocation damage per second at full depth (default 5).
+   "speed" = sink rate (default 30).
+   ========================================================================== */
+
+static void sand_pit_touch(edict_t *self, edict_t *other, void *plane,
+                            csurface_t *surf)
+{
+    float sink_speed;
+    (void)plane; (void)surf;
+    if (!other || other->health <= 0)
+        return;
+    if (!other->client && !(other->svflags & SVF_MONSTER))
+        return;
+
+    sink_speed = self->speed > 0 ? self->speed : 30.0f;
+
+    /* Pull downward */
+    other->velocity[2] -= sink_speed;
+    /* Slow horizontal movement (stuck in sand) */
+    other->velocity[0] *= 0.9f;
+    other->velocity[1] *= 0.9f;
+
+    /* Sand particles */
+    if ((rand() % 5) == 0) {
+        vec3_t sand_up = {0, 0, 0.3f};
+        R_ParticleEffect(other->s.origin, sand_up, 8, 3);
+    }
+
+    /* Suffocation damage when deeply sunk */
+    if (other->s.origin[2] < self->s.origin[2]) {
+        if (other->dmg_debounce_time <= level.time) {
+            int suf_dmg = self->dmg > 0 ? self->dmg : 5;
+            other->dmg_debounce_time = level.time + 1.0f;
+            other->health -= suf_dmg;
+            if (other->client) {
+                other->client->pers_health = other->health;
+                SCR_AddPickupMessage("Sinking!");
+            }
+            if (other->health <= 0 && other->die)
+                other->die(other, self, self, suf_dmg, other->s.origin);
+        }
+    }
+}
+
+static void SP_trigger_sand_pit(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+    ent->classname = "trigger_sand_pit";
+    ent->solid = SOLID_TRIGGER;
+    ent->movetype = MOVETYPE_NONE;
+    ent->touch = sand_pit_touch;
+    if (ent->speed <= 0) ent->speed = 30.0f;
+    if (ent->dmg <= 0) ent->dmg = 5;
+    VectorSet(ent->mins, -64, -64, -32);
+    VectorSet(ent->maxs, 64, 64, 4);
+    gi.linkentity(ent);
+    gi.dprintf("  trigger_sand_pit at (%.0f %.0f %.0f) sink=%.0f\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->speed);
 }
 
 /* ==========================================================================
