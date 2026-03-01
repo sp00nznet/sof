@@ -330,6 +330,10 @@ static void SP_func_guillotine(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_smoke_mine(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_energy_barrier(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_rolling_boulder(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_flame_wall(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_pendulum_axe(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_water_mine(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_conveyor_crusher(edict_t *ent, epair_t *pairs, int num_pairs);
 static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
                            int damage, vec3_t point);
 
@@ -881,6 +885,22 @@ static spawn_func_t spawn_funcs[] = {
     /* Rolling boulder */
     { "func_rolling_boulder",       SP_func_rolling_boulder },
     { "func_boulder",               SP_func_rolling_boulder },
+
+    /* Flame wall */
+    { "func_flame_wall",            SP_func_flame_wall },
+    { "func_fire_wall",             SP_func_flame_wall },
+
+    /* Pendulum axe */
+    { "func_pendulum_axe",          SP_func_pendulum_axe },
+    { "func_swinging_axe",          SP_func_pendulum_axe },
+
+    /* Floating water mine */
+    { "func_water_mine",            SP_func_water_mine },
+    { "func_naval_mine",            SP_func_water_mine },
+
+    /* Conveyor crusher */
+    { "func_conveyor_crusher",      SP_func_conveyor_crusher },
+    { "func_grinder",               SP_func_conveyor_crusher },
 
     /* Sentinel */
     { NULL, NULL }
@@ -11016,6 +11036,412 @@ static void SP_func_rolling_boulder(edict_t *ent, epair_t *pairs, int num_pairs)
     gi.dprintf("  func_rolling_boulder at (%.0f %.0f %.0f) dmg=%d speed=%.0f\n",
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
                ent->dmg, ent->speed);
+}
+
+/* ==========================================================================
+   Flame Wall — a wide wall of fire that cycles on/off. When active, damages
+   anything passing through. "dmg" = damage per tick (default 10).
+   "wait" = on/off cycle time (default 2). "count" = wall width (default 128).
+   ========================================================================== */
+
+static void flame_wall_think(edict_t *self)
+{
+    self->nextthink = level.time + 0.1f;
+
+    /* Toggle on/off */
+    if (level.time >= self->move_angles[2]) {
+        self->style = !self->style;
+        self->move_angles[2] = level.time + (self->wait > 0 ? self->wait : 2.0f);
+
+        if (self->style) {
+            self->solid = SOLID_TRIGGER;
+            /* Ignition sound */
+            {
+                int snd = gi.soundindex("world/fire1.wav");
+                if (snd) gi.sound(self, CHAN_AUTO, snd, 0.9f, ATTN_NORM, 0);
+            }
+        } else {
+            self->solid = SOLID_NOT;
+        }
+        gi.linkentity(self);
+    }
+
+    /* Fire particles when active */
+    if (self->style) {
+        vec3_t flame_up = {0, 0, 1};
+        R_ParticleEffect(self->s.origin, flame_up, 1, 15);
+        R_AddDlight(self->s.origin, 1.0f, 0.5f, 0.1f, 120.0f, 0.15f);
+    }
+}
+
+static void flame_wall_touch(edict_t *self, edict_t *other, void *plane,
+                              csurface_t *surf)
+{
+    int fire_dmg;
+    (void)plane; (void)surf;
+    if (!self->style)
+        return;
+    if (!other || other->health <= 0)
+        return;
+    if (other->dmg_debounce_time > level.time)
+        return;
+    other->dmg_debounce_time = level.time + 0.3f;
+
+    fire_dmg = self->dmg > 0 ? self->dmg : 10;
+    other->health -= fire_dmg;
+
+    {
+        vec3_t burn_up = {0, 0, 1};
+        R_ParticleEffect(other->s.origin, burn_up, 1, 10);
+    }
+
+    if (other->client) {
+        other->client->pers_health = other->health;
+        SCR_AddScreenShake(0.1f, 0.1f);
+    }
+
+    if (other->health <= 0 && other->die)
+        other->die(other, self, self, fire_dmg, self->s.origin);
+    else if (other->pain)
+        other->pain(other, self, 0, fire_dmg);
+}
+
+static void SP_func_flame_wall(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+    ent->classname = "func_flame_wall";
+    ent->solid = SOLID_NOT;  /* starts off */
+    ent->movetype = MOVETYPE_NONE;
+    ent->think = flame_wall_think;
+    ent->touch = flame_wall_touch;
+    ent->nextthink = level.time + 1.0f;
+    if (ent->dmg <= 0) ent->dmg = 10;
+    if (ent->wait <= 0) ent->wait = 2.0f;
+    ent->style = 0;
+    ent->move_angles[2] = level.time + ent->wait;
+    VectorSet(ent->mins, -64, -8, -8);
+    VectorSet(ent->maxs, 64, 8, 64);
+    gi.linkentity(ent);
+    gi.dprintf("  func_flame_wall at (%.0f %.0f %.0f) dmg=%d cycle=%.1f\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->dmg, ent->wait);
+}
+
+/* ==========================================================================
+   Pendulum Axe — swinging axe blade on a pendulum arc. Deals heavy
+   slicing damage on contact. "dmg" = damage (default 50).
+   "speed" = swing speed (default 3). Swings on roll axis.
+   ========================================================================== */
+
+static void pendulum_axe_think(edict_t *self)
+{
+    float swing_speed, swing_range;
+    self->nextthink = level.time + 0.1f;
+
+    swing_speed = self->speed > 0 ? self->speed : 3.0f;
+    swing_range = 60.0f;
+
+    self->move_angles[0] += swing_speed;
+    if (self->move_angles[0] >= 360.0f) self->move_angles[0] -= 360.0f;
+
+    self->s.angles[2] = sinf(self->move_angles[0] * (3.14159265f / 180.0f)) * swing_range;
+
+    /* Whoosh at extremes */
+    if (self->s.angles[2] > swing_range - 5.0f ||
+        self->s.angles[2] < -(swing_range - 5.0f)) {
+        int snd = gi.soundindex("world/blade1.wav");
+        if (snd && (rand() % 3) == 0)
+            gi.sound(self, CHAN_AUTO, snd, 0.5f, ATTN_NORM, 0);
+    }
+
+    gi.linkentity(self);
+}
+
+static void pendulum_axe_touch(edict_t *self, edict_t *other, void *plane,
+                                csurface_t *surf)
+{
+    int axe_dmg;
+    (void)plane; (void)surf;
+    if (!other || other->health <= 0)
+        return;
+    if (other->dmg_debounce_time > level.time)
+        return;
+    other->dmg_debounce_time = level.time + 0.8f;
+
+    axe_dmg = self->dmg > 0 ? self->dmg : 50;
+    other->health -= axe_dmg;
+
+    {
+        vec3_t blood_up = {0, 0, 1};
+        if (other->client || (other->svflags & SVF_MONSTER))
+            R_ParticleEffect(other->s.origin, blood_up, 1, 16);
+        else
+            R_ParticleEffect(other->s.origin, blood_up, 12, 8);
+    }
+
+    if (other->client) {
+        other->client->pers_health = other->health;
+        SCR_AddScreenShake(0.25f, 0.3f);
+    }
+
+    if (other->health <= 0 && other->die)
+        other->die(other, self, self, axe_dmg, self->s.origin);
+    else if (other->pain)
+        other->pain(other, self, 0, axe_dmg);
+}
+
+static void SP_func_pendulum_axe(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+    ent->classname = "func_pendulum_axe";
+    ent->solid = SOLID_BBOX;
+    ent->movetype = MOVETYPE_NONE;
+    ent->think = pendulum_axe_think;
+    ent->touch = pendulum_axe_touch;
+    ent->nextthink = level.time + 1.0f;
+    if (ent->dmg <= 0) ent->dmg = 50;
+    if (ent->speed <= 0) ent->speed = 3.0f;
+    ent->move_angles[0] = 0;
+    VectorSet(ent->mins, -8, -24, -48);
+    VectorSet(ent->maxs, 8, 24, 0);
+    ent->s.modelindex = gi.modelindex("models/objects/axe/tris.md2");
+    gi.linkentity(ent);
+    gi.dprintf("  func_pendulum_axe at (%.0f %.0f %.0f) dmg=%d\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->dmg);
+}
+
+/* ==========================================================================
+   Water Mine — floating mine that explodes on contact with nearby entities.
+   Deals splash damage in a radius. "dmg" = explosion damage (default 80).
+   "count" = blast radius (default 128). Single use — destroyed on detonation.
+   ========================================================================== */
+
+static void water_mine_explode(edict_t *self, edict_t *attacker)
+{
+    edict_t *touch_list[64];
+    int num, i;
+    vec3_t area_mins, area_maxs;
+    float radius;
+    int blast_dmg;
+
+    blast_dmg = self->dmg > 0 ? self->dmg : 80;
+    radius = self->count > 0 ? (float)self->count : 128.0f;
+
+    /* Explosion effects */
+    {
+        vec3_t exp_up = {0, 0, 1};
+        R_ParticleEffect(self->s.origin, exp_up, 1, 40);
+        R_ParticleEffect(self->s.origin, exp_up, 12, 20);
+    }
+    R_AddDlight(self->s.origin, 1.0f, 0.6f, 0.2f, 250.0f, 0.5f);
+    SCR_AddScreenShake(0.4f, 0.6f);
+
+    {
+        int snd = gi.soundindex("world/explosion1.wav");
+        if (snd) gi.sound(self, CHAN_AUTO, snd, 1.0f, ATTN_NONE, 0);
+    }
+
+    /* Splash damage */
+    VectorSet(area_mins,
+              self->s.origin[0] - radius,
+              self->s.origin[1] - radius,
+              self->s.origin[2] - radius);
+    VectorSet(area_maxs,
+              self->s.origin[0] + radius,
+              self->s.origin[1] + radius,
+              self->s.origin[2] + radius);
+
+    num = gi.BoxEdicts(area_mins, area_maxs, touch_list, 64, AREA_SOLID);
+    for (i = 0; i < num; i++) {
+        edict_t *victim = touch_list[i];
+        vec3_t diff;
+        float dist, scale;
+        int dmg;
+
+        if (!victim || victim == self || victim->health <= 0)
+            continue;
+        if (!victim->client && !(victim->svflags & SVF_MONSTER))
+            continue;
+
+        VectorSubtract(victim->s.origin, self->s.origin, diff);
+        dist = VectorLength(diff);
+        if (dist > radius) continue;
+
+        scale = 1.0f - (dist / radius);
+        dmg = (int)(blast_dmg * scale);
+        if (dmg < 1) dmg = 1;
+
+        victim->health -= dmg;
+
+        /* Knockback from blast */
+        if (dist > 1.0f) {
+            VectorNormalize(diff);
+            victim->velocity[0] += diff[0] * 400.0f * scale;
+            victim->velocity[1] += diff[1] * 400.0f * scale;
+            victim->velocity[2] += 200.0f * scale;
+        }
+
+        if (victim->client)
+            victim->client->pers_health = victim->health;
+
+        if (victim->health <= 0 && victim->die)
+            victim->die(victim, self, attacker, dmg, victim->s.origin);
+        else if (victim->pain)
+            victim->pain(victim, self, 0, dmg);
+    }
+
+    /* Remove mine */
+    self->inuse = qfalse;
+}
+
+static void water_mine_touch(edict_t *self, edict_t *other, void *plane,
+                              csurface_t *surf)
+{
+    (void)plane; (void)surf;
+    if (!other || other->health <= 0)
+        return;
+    if (!other->client && !(other->svflags & SVF_MONSTER))
+        return;
+
+    water_mine_explode(self, other);
+}
+
+static void water_mine_think(edict_t *self)
+{
+    self->nextthink = level.time + 0.5f;
+
+    /* Gentle bobbing motion */
+    self->s.origin[2] += sinf(level.time * 2.0f) * 0.3f;
+    gi.linkentity(self);
+}
+
+static void SP_func_water_mine(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+    ent->classname = "func_water_mine";
+    ent->solid = SOLID_TRIGGER;
+    ent->movetype = MOVETYPE_NONE;
+    ent->think = water_mine_think;
+    ent->touch = water_mine_touch;
+    ent->nextthink = level.time + 1.0f;
+    if (ent->dmg <= 0) ent->dmg = 80;
+    if (ent->count <= 0) ent->count = 128;
+    VectorSet(ent->mins, -16, -16, -16);
+    VectorSet(ent->maxs, 16, 16, 16);
+    ent->s.modelindex = gi.modelindex("models/objects/watermine/tris.md2");
+    gi.linkentity(ent);
+    gi.dprintf("  func_water_mine at (%.0f %.0f %.0f) dmg=%d radius=%d\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->dmg, ent->count);
+}
+
+/* ==========================================================================
+   Conveyor Crusher — conveyor belt surface that moves entities toward a
+   grinding end, dealing continuous damage. "speed" = conveyor speed
+   (default 100). "dmg" = grinder damage per tick (default 15).
+   ========================================================================== */
+
+static void conveyor_crusher_think(edict_t *self)
+{
+    edict_t *touch_list[32];
+    int num, i;
+    float conv_speed;
+
+    self->nextthink = level.time + 0.1f;
+
+    conv_speed = self->speed > 0 ? self->speed : 100.0f;
+
+    /* Find entities on the conveyor */
+    num = gi.BoxEdicts(self->absmin, self->absmax, touch_list, 32, AREA_SOLID);
+    for (i = 0; i < num; i++) {
+        edict_t *rider = touch_list[i];
+        float yaw_rad;
+
+        if (!rider || rider == self || rider->health <= 0)
+            continue;
+        if (!rider->client && !(rider->svflags & SVF_MONSTER))
+            continue;
+
+        /* Push rider in entity's facing direction */
+        yaw_rad = self->s.angles[1] * (3.14159265f / 180.0f);
+        rider->velocity[0] += cosf(yaw_rad) * conv_speed * 0.1f;
+        rider->velocity[1] += sinf(yaw_rad) * conv_speed * 0.1f;
+    }
+
+    /* Grinding sound */
+    if ((rand() % 10) == 0) {
+        int snd = gi.soundindex("world/grinder1.wav");
+        if (snd) gi.sound(self, CHAN_AUTO, snd, 0.6f, ATTN_NORM, 0);
+    }
+}
+
+static void conveyor_crusher_touch(edict_t *self, edict_t *other, void *plane,
+                                    csurface_t *surf)
+{
+    int grind_dmg;
+    vec3_t end_pos;
+    float yaw_rad, dist;
+    vec3_t to_end;
+    (void)plane; (void)surf;
+    if (!other || other->health <= 0)
+        return;
+    if (!other->client && !(other->svflags & SVF_MONSTER))
+        return;
+
+    /* Check if entity is near the grinder end (far end in facing direction) */
+    yaw_rad = self->s.angles[1] * (3.14159265f / 180.0f);
+    end_pos[0] = self->s.origin[0] + cosf(yaw_rad) * 64.0f;
+    end_pos[1] = self->s.origin[1] + sinf(yaw_rad) * 64.0f;
+    end_pos[2] = self->s.origin[2];
+
+    VectorSubtract(other->s.origin, end_pos, to_end);
+    dist = VectorLength(to_end);
+
+    if (dist < 32.0f) {
+        /* At the grinder — deal damage */
+        if (other->dmg_debounce_time > level.time)
+            return;
+        other->dmg_debounce_time = level.time + 0.3f;
+
+        grind_dmg = self->dmg > 0 ? self->dmg : 15;
+        other->health -= grind_dmg;
+
+        {
+            vec3_t grind_up = {0, 0, 1};
+            R_ParticleEffect(other->s.origin, grind_up, 1, 8);
+            R_ParticleEffect(other->s.origin, grind_up, 12, 6);
+        }
+
+        if (other->client) {
+            other->client->pers_health = other->health;
+            SCR_AddScreenShake(0.15f, 0.15f);
+        }
+
+        if (other->health <= 0 && other->die)
+            other->die(other, self, self, grind_dmg, self->s.origin);
+        else if (other->pain)
+            other->pain(other, self, 0, grind_dmg);
+    }
+}
+
+static void SP_func_conveyor_crusher(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    (void)pairs; (void)num_pairs;
+    ent->classname = "func_conveyor_crusher";
+    ent->solid = SOLID_TRIGGER;
+    ent->movetype = MOVETYPE_NONE;
+    ent->think = conveyor_crusher_think;
+    ent->touch = conveyor_crusher_touch;
+    ent->nextthink = level.time + 1.0f;
+    if (ent->speed <= 0) ent->speed = 100.0f;
+    if (ent->dmg <= 0) ent->dmg = 15;
+    VectorSet(ent->mins, -64, -32, -4);
+    VectorSet(ent->maxs, 64, 32, 4);
+    gi.linkentity(ent);
+    gi.dprintf("  func_conveyor_crusher at (%.0f %.0f %.0f) speed=%.0f dmg=%d\n",
+               ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+               ent->speed, ent->dmg);
 }
 
 /* ==========================================================================
