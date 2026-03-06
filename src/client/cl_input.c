@@ -289,4 +289,18 @@ void CL_InitInput(void)
     /* Quick save/load */
     Cmd_AddCommand("quicksave", IN_QuickSave);
     Cmd_AddCommand("quickload", IN_QuickLoad);
+
+    /* SoF config compatibility aliases — SoF uses different names than Q2 */
+    Cmd_AddCommand("+jump", IN_MoveUpDown);
+    Cmd_AddCommand("-jump", IN_MoveUpUp);
+    Cmd_AddCommand("+crouch", IN_MoveDownDown);
+    Cmd_AddCommand("-crouch", IN_MoveDownUp);
+    Cmd_AddCommand("+duck", IN_MoveDownDown);
+    Cmd_AddCommand("-duck", IN_MoveDownUp);
+    Cmd_AddCommand("+strafe", IN_SpeedDown);
+    Cmd_AddCommand("-strafe", IN_SpeedUp);
+    Cmd_AddCommand("+mlook", IN_LookupDown);
+    Cmd_AddCommand("-mlook", IN_LookupUp);
+    Cmd_AddCommand("+klook", IN_LookupDown);
+    Cmd_AddCommand("-klook", IN_LookupUp);
 }

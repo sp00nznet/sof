@@ -1306,6 +1306,14 @@ void SV_SpawnMapEntities(const char *mapname, const char *entstring)
     memset(sv_configstrings, 0, sizeof(sv_configstrings));
 
     if (ge && ge->SpawnEntities) {
+        /* Connect and begin the local player (edict[1]) before spawning
+           entities, so info_player_start can position the player */
+        if (ge->ClientConnect && ge->ClientBegin && ge->edicts) {
+            edict_t *player = (edict_t *)((byte *)ge->edicts + ge->edict_size);
+            ge->ClientConnect(player, "\\name\\Player");
+            ge->ClientBegin(player);
+        }
+
         ge->SpawnEntities(mapname, entstring, "");
     }
 

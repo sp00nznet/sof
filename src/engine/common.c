@@ -362,6 +362,9 @@ void Qcommon_Init(int argc, char **argv)
     IN_Init();
     CL_InitInput();
 
+    /* Override F5 binding for freecam toggle (SoF config may have set it to savegame) */
+    Key_SetBinding(K_F5, "freecam");
+
     /* Initialize renderer */
     if (!dedicated->value) {
         R_Init(NULL, NULL);

@@ -348,7 +348,16 @@ void Cmd_ExecuteString(char *text)
     if (Cmd_CheckAlias(cmd_argv[0]))
         return;
 
-    Com_Printf("Unknown command \"%s\"\n", cmd_argv[0]);
+    /* Suppress "Unknown command" for SoF config commands we haven't implemented.
+       Many SoF-specific commands appear in pak config files — only warn once. */
+    {
+        static int unknown_count = 0;
+        if (unknown_count < 20)
+            Com_Printf("Unknown command \"%s\"\n", cmd_argv[0]);
+        else if (unknown_count == 20)
+            Com_Printf("(suppressing further unknown command warnings)\n");
+        unknown_count++;
+    }
 }
 
 /* ==========================================================================
