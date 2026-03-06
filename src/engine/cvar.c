@@ -256,10 +256,13 @@ static void Cvar_List_f(void)
 
 static void Cvar_Set_f(void)
 {
-    if (Cmd_Argc() != 3) {
-        Com_Printf("usage: set <variable> <value>\n");
+    if (Cmd_Argc() < 3) {
+        Com_Printf("usage: set <variable> <value> [flags]\n");
         return;
     }
+    /* SoF set command: set <var> <value> [flags]
+     * Flags (optional 4th arg): w=weapon, a=ammo, i=item, m=misc
+     * We ignore the flags for now. */
     Cvar_Set(Cmd_Argv(1), Cmd_Argv(2));
 }
 

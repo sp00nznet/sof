@@ -310,6 +310,11 @@ void Cmd_ExecuteString(char *text)
     cmd_function_t  *cmd;
     cvar_t          *v;
 
+    /* Skip comment lines */
+    while (*text == ' ' || *text == '\t') text++;
+    if (text[0] == '/' && text[1] == '/')
+        return;
+
     Cmd_TokenizeString(text, qtrue);
 
     if (!Cmd_Argc())
@@ -338,6 +343,10 @@ void Cmd_ExecuteString(char *text)
         }
         return;
     }
+
+    /* Check aliases before giving up */
+    if (Cmd_CheckAlias(cmd_argv[0]))
+        return;
 
     Com_Printf("Unknown command \"%s\"\n", cmd_argv[0]);
 }
@@ -387,9 +396,85 @@ static void Cmd_Echo_f(void)
     Com_Printf("\n");
 }
 
+/* ==========================================================================
+   Alias System
+   ========================================================================== */
+
+#define MAX_ALIASES     128
+
+typedef struct {
+    char    name[32];
+    char    command[256];
+} cmd_alias_t;
+
+static cmd_alias_t  cmd_aliases[MAX_ALIASES];
+static int          num_aliases;
+
+static void Cmd_Alias_f(void)
+{
+    const char *name;
+    int i;
+
+    if (Cmd_Argc() < 2) {
+        Com_Printf("alias <name> <command>\n");
+        for (i = 0; i < num_aliases; i++)
+            Com_Printf("  %s: %s\n", cmd_aliases[i].name, cmd_aliases[i].command);
+        return;
+    }
+
+    name = Cmd_Argv(1);
+
+    if (Cmd_Argc() == 2) {
+        /* Print alias value */
+        for (i = 0; i < num_aliases; i++) {
+            if (!Q_stricmp(cmd_aliases[i].name, name)) {
+                Com_Printf("%s = \"%s\"\n", name, cmd_aliases[i].command);
+                return;
+            }
+        }
+        Com_Printf("alias \"%s\" not found\n", name);
+        return;
+    }
+
+    /* Find existing or allocate new */
+    for (i = 0; i < num_aliases; i++) {
+        if (!Q_stricmp(cmd_aliases[i].name, name))
+            break;
+    }
+    if (i == num_aliases) {
+        if (num_aliases >= MAX_ALIASES) {
+            Com_Printf("MAX_ALIASES exceeded\n");
+            return;
+        }
+        num_aliases++;
+    }
+
+    Q_strncpyz(cmd_aliases[i].name, name, sizeof(cmd_aliases[i].name));
+    Q_strncpyz(cmd_aliases[i].command, Cmd_Args() + (int)strlen(name) + 1,
+               sizeof(cmd_aliases[i].command));
+}
+
+/*
+ * Cmd_CheckAlias — Check if a command is an alias and execute it.
+ * Returns qtrue if the command was an alias.
+ */
+qboolean Cmd_CheckAlias(const char *name)
+{
+    int i;
+    for (i = 0; i < num_aliases; i++) {
+        if (!Q_stricmp(cmd_aliases[i].name, name)) {
+            Cbuf_AddText(cmd_aliases[i].command);
+            Cbuf_AddText("\n");
+            return qtrue;
+        }
+    }
+    return qfalse;
+}
+
 void Cmd_Init(void)
 {
     Cmd_AddCommand("cmdlist", Cmd_List_f);
     Cmd_AddCommand("exec", Cmd_Exec_f);
     Cmd_AddCommand("echo", Cmd_Echo_f);
+    Cmd_AddCommand("alias", Cmd_Alias_f);
 }

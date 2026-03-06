@@ -336,6 +336,8 @@ static void InitGame(void)
     gi.dprintf("  maxclients: %d\n", game_maxclients);
     gi.dprintf("  maxentities: %d\n", globals.max_edicts);
     gi.dprintf("  edict_size: %d bytes\n", (int)sizeof(edict_t));
+    G_ScriptInit();
+
     gi.dprintf("==== InitGame Complete ====\n");
 }
 
@@ -347,6 +349,7 @@ static void InitGame(void)
 static void ShutdownGame(void)
 {
     gi.dprintf("==== ShutdownGame ====\n");
+    G_ScriptShutdown();
     gi.FreeTags(Z_TAG_GAME);
 }
 
@@ -493,6 +496,9 @@ static void RunFrame(void)
 
     level.framenum++;
     level.time = level.framenum * level.frametime;
+
+    /* Execute scripts */
+    G_ScriptRunFrame(level.time);
 
     /* Run think functions for all active entities */
     for (i = 0; i < globals.max_edicts; i++) {

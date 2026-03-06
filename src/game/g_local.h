@@ -787,4 +787,10 @@ edict_t *G_AllocEdict(void);
 /* Entity physics (g_phys.c) */
 void G_RunEntity(edict_t *ent);
 
+/* Script system (g_script.c) */
+void G_ScriptInit(void);
+void G_ScriptShutdown(void);
+void G_ScriptLoad(const char *scriptname, edict_t *owner);
+void G_ScriptRunFrame(float level_time);
+
 #endif /* G_LOCAL_H */

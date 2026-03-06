@@ -17,6 +17,7 @@
 
 #include "r_local.h"
 #include "../game/g_local.h"
+#include "../ghoul/ghoul.h"
 
 /* ==========================================================================
    GL State
@@ -676,6 +677,83 @@ static void R_DrawHumanoid(vec3_t origin, float yaw, float r, float g, float b,
     qglColor4f(1, 1, 1, 1);
 }
 
+/*
+ * R_DrawGhoulModel — Render a GHOUL skeletal model
+ *
+ * Currently draws an improved humanoid approximation using the model's
+ * bounding radius. When GHB mesh parsing is complete, this will draw
+ * actual mesh geometry.
+ */
+void R_DrawGhoulModel(struct ghoul_model_s *ghoul, vec3_t origin,
+                       vec3_t angles, float r, float g, float b)
+{
+    float radius, height;
+    vec3_t lightcolor;
+    vec3_t bmin, bmax;
+
+    if (!ghoul || !ghoul->loaded)
+        return;
+
+    radius = ghoul->bounding_radius;
+    if (radius <= 0) radius = 100.0f;
+
+    /* Scale humanoid proportions to model bounding radius */
+    height = radius * 0.6f;  /* approximate standing height */
+    if (height < 30.0f) height = 30.0f;
+    if (height > 80.0f) height = 80.0f;
+
+    /* Light the model from the world lightmap */
+    R_LightPoint(origin, lightcolor);
+    r *= lightcolor[0];
+    g *= lightcolor[1];
+    b *= lightcolor[2];
+
+    qglDisable(GL_TEXTURE_2D);
+    qglEnable(GL_BLEND);
+    qglBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    qglEnable(GL_DEPTH_TEST);
+
+    qglPushMatrix();
+    qglTranslatef(origin[0], origin[1], origin[2]);
+    qglRotatef(angles[1], 0, 0, 1);
+
+    {
+        float s = height / 58.0f;  /* scale factor relative to default humanoid */
+
+        /* Torso */
+        VectorSet(bmin, -6*s, -4*s, 24*s);
+        VectorSet(bmax, 6*s, 4*s, 48*s);
+        R_DrawSolidBox(bmin, bmax, r, g, b, 0.9f);
+
+        /* Head */
+        VectorSet(bmin, -4*s, -4*s, 48*s);
+        VectorSet(bmax, 4*s, 4*s, 58*s);
+        R_DrawSolidBox(bmin, bmax, r*0.9f, g*0.9f+0.1f, b*0.9f+0.1f, 0.9f);
+
+        /* Arms */
+        VectorSet(bmin, -9*s, -2*s, 28*s);
+        VectorSet(bmax, -6*s, 2*s, 48*s);
+        R_DrawSolidBox(bmin, bmax, r*0.8f, g*0.8f, b*0.8f, 0.9f);
+        VectorSet(bmin, 6*s, -2*s, 28*s);
+        VectorSet(bmax, 9*s, 2*s, 48*s);
+        R_DrawSolidBox(bmin, bmax, r*0.8f, g*0.8f, b*0.8f, 0.9f);
+
+        /* Legs */
+        VectorSet(bmin, -5*s, -3*s, 0);
+        VectorSet(bmax, -1*s, 3*s, 24*s);
+        R_DrawSolidBox(bmin, bmax, r*0.7f, g*0.7f, b*0.7f, 0.9f);
+        VectorSet(bmin, 1*s, -3*s, 0);
+        VectorSet(bmax, 5*s, 3*s, 24*s);
+        R_DrawSolidBox(bmin, bmax, r*0.7f, g*0.7f, b*0.7f, 0.9f);
+    }
+
+    qglPopMatrix();
+
+    qglDisable(GL_BLEND);
+    qglEnable(GL_TEXTURE_2D);
+    qglColor4f(1, 1, 1, 1);
+}
+
 /* ==========================================================================
    Entity Interpolation
 
@@ -834,9 +912,17 @@ static void R_DrawBrushEntities(void)
                 R_DrawBrushModel(atoi(model_name + 1), render_origin, render_angles);
                 continue;
             }
-            /* Check for loaded MD2 model */
+            /* Check for loaded model */
             if (model_name && model_name[0]) {
                 model_t *mod = R_FindModel(model_name);
+                if (mod && mod->ghoul) {
+                    /* GHOUL skeletal model */
+                    float r_c = 0.8f, g_c = 0.8f, b_c = 0.8f;
+                    R_DrawGhoulModel(mod->ghoul, render_origin, render_angles,
+                                     r_c, g_c, b_c);
+                    R_DrawBlobShadow(render_origin, 16.0f);
+                    continue;
+                }
                 if (mod && mod->md2) {
                     float r_c = 0.8f, g_c = 0.8f, b_c = 0.8f;
                     int oldframe;
@@ -2643,8 +2729,10 @@ struct model_s *R_RegisterModel(const char *name)
         mod->bsp_submodel = atoi(name + 1);
     } else if (strstr(name, ".sp2") || strstr(name, ".SP2")) {
         mod->type = mod_sprite;
-    } else if (strstr(name, ".ghoul") || strstr(name, ".glm")) {
+    } else if (strstr(name, ".ghoul") || strstr(name, ".glm") ||
+               strstr(name, ".ghb")) {
         mod->type = mod_ghoul;
+        mod->ghoul = GHOUL_LoadGHB(name);
     } else if (strstr(name, ".md2") || strstr(name, ".mdx")) {
         mod->type = mod_alias;
         /* Attempt to load MD2 mesh data */

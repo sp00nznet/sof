@@ -80,6 +80,12 @@ static keyname_t keynames[] = {
     {"PAUSE", K_PAUSE},
     {"JOY1", K_JOY1}, {"JOY2", K_JOY2}, {"JOY3", K_JOY3}, {"JOY4", K_JOY4},
     {"SEMICOLON", ';'},     /* because a raw ; is a command separator */
+    /* SoF config aliases for left/right modifiers */
+    {"LCTRL", K_CTRL}, {"RCTRL", K_CTRL},
+    {"LSHIFT", K_SHIFT}, {"RSHIFT", K_SHIFT},
+    {"LALT", K_ALT}, {"RALT", K_ALT},
+    {"CAPS", 220},
+    {"CAPSLOCK", 220},
     {NULL, 0}
 };
 
@@ -339,6 +345,13 @@ static void Key_Unbind_f(void)
     Key_SetBinding(key, "");
 }
 
+static void Key_Unbindall_f(void)
+{
+    int i;
+    for (i = 0; i < MAX_KEYS; i++)
+        Key_SetBinding(i, "");
+}
+
 static void Key_Bindlist_f(void)
 {
     int i;
@@ -352,9 +365,15 @@ static void Key_Bindlist_f(void)
    Key_Init
    ========================================================================== */
 
+static qboolean keys_initialized = qfalse;
+
 void Key_Init(void)
 {
     int i;
+
+    if (keys_initialized)
+        return;
+    keys_initialized = qtrue;
 
     for (i = 0; i < MAX_KEYS; i++) {
         key_down[i] = qfalse;
@@ -364,6 +383,7 @@ void Key_Init(void)
 
     Cmd_AddCommand("bind", Key_Bind_f);
     Cmd_AddCommand("unbind", Key_Unbind_f);
+    Cmd_AddCommand("unbindall", Key_Unbindall_f);
     Cmd_AddCommand("bindlist", Key_Bindlist_f);
 
     /* Default FPS bindings (matching SoF defaults) */

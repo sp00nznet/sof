@@ -346,6 +346,7 @@ static void SP_trigger_oil_slick(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_chain_winch(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_steam_pipe(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_trigger_gas_leak(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_script_runner(edict_t *ent, epair_t *pairs, int num_pairs);
 static void explosive_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
                            int damage, vec3_t point);
 
@@ -962,6 +963,9 @@ static spawn_func_t spawn_funcs[] = {
     { "trigger_gas_leak",           SP_trigger_gas_leak },
     { "trigger_gas",                SP_trigger_gas_leak },
 
+    /* Script runner */
+    { "script_runner",              SP_script_runner },
+
     /* Sentinel */
     { NULL, NULL }
 };
@@ -1165,6 +1169,13 @@ static void SP_worldspawn(edict_t *ent, epair_t *pairs, int num_pairs)
         level.weather_density = (float)atof(val);
         if (level.weather_density < 0.1f) level.weather_density = 0.1f;
         if (level.weather_density > 3.0f) level.weather_density = 3.0f;
+    }
+
+    /* Load level script (.os bytecode) */
+    val = ED_FindValue(pairs, num_pairs, "script");
+    if (val) {
+        gi.dprintf("Script: %s\n", val);
+        G_ScriptLoad(val, ent);
     }
 
     /* Precache common sounds */
@@ -12557,6 +12568,37 @@ static void SP_trigger_gas_leak(edict_t *ent, epair_t *pairs, int num_pairs)
     gi.dprintf("  trigger_gas_leak at (%.0f %.0f %.0f) dmg=%d explode=%d\n",
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
                ent->dmg, ent->dmg * 10);
+}
+
+/* ==========================================================================
+   Script Runner — Runs .os script when triggered by targetname
+   ========================================================================== */
+
+static void script_runner_use(edict_t *self, edict_t *other, edict_t *activator)
+{
+    (void)other; (void)activator;
+    if (self->message) {
+        G_ScriptLoad(self->message, self);
+    }
+}
+
+static void SP_script_runner(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *val;
+
+    val = ED_FindValue(pairs, num_pairs, "script");
+    if (!val) val = ED_FindValue(pairs, num_pairs, "scriptname");
+    if (val) {
+        int slen = (int)strlen(val) + 1;
+        ent->message = (char *)gi.TagMalloc(slen, Z_TAG_GAME);
+        memcpy(ent->message, val, slen);
+    }
+
+    ent->use = script_runner_use;
+    ent->solid = SOLID_NOT;
+    ent->movetype = MOVETYPE_NONE;
+
+    gi.dprintf("  script_runner: %s\n", ent->message ? ent->message : "(none)");
 }
 
 /* ==========================================================================

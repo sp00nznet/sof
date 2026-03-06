@@ -346,6 +346,9 @@ struct model_s {
 
     /* For alias (MD2) models */
     md2_mesh_t  *md2;           /* NULL if not loaded */
+
+    /* For GHOUL skeletal models */
+    struct ghoul_model_s *ghoul; /* NULL if not loaded */
 };
 
 typedef struct model_s model_t;
@@ -356,6 +359,10 @@ void        R_FreeMD2(model_t *mod);
 void        R_DrawAliasModel(model_t *mod, vec3_t origin, vec3_t angles,
                              int frame, int oldframe, float backlerp,
                              float r, float g, float b);
+
+/* GHOUL model rendering (r_main.c) */
+void        R_DrawGhoulModel(struct ghoul_model_s *ghoul, vec3_t origin,
+                              vec3_t angles, float r, float g, float b);
 
 /* Entity interpolation (r_main.c) */
 void        R_SetInterpFraction(float frac);

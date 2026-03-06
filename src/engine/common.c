@@ -317,6 +317,9 @@ void Qcommon_Init(int argc, char **argv)
     /* Initialize filesystem */
     FS_InitFilesystem();
 
+    /* Register key bindings before executing configs */
+    Key_Init();
+
     /* Execute default config */
     Cbuf_AddText("exec default.cfg\n");
     Cbuf_AddText("exec config.cfg\n");
