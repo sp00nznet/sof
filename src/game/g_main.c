@@ -6504,8 +6504,8 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
             ent->maxs[2] = 16;  /* reduced bbox height */
         }
     } else {
-        if (client->viewheight < 22) {
-            client->viewheight = 22;  /* standing eye height */
+        if (client->viewheight < 26) {
+            client->viewheight = 26;  /* SoF standing eye height */
             ent->maxs[2] = 32;  /* full bbox height */
         }
         /* Decay prone transition */

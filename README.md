@@ -12,7 +12,7 @@ A static recompilation project to bring **Soldier of Fortune** (2000) back to li
 
 *NYC1 map rendering — rooftop warehouse area with correct BSP geometry, M32 textures, lightmaps, skybox, and HUD.*
 
-The engine boots, loads PAK archives, parses SoF's BSP v46 format, and renders full 3D levels with textured geometry. 40+ source files, 53,000+ lines of code across all subsystems.
+The engine boots, loads PAK archives, parses SoF's BSP v46 format, and renders full 3D levels with textured geometry. 40+ source files, 54,000+ lines of code across all subsystems.
 
 ### Working Subsystems
 
@@ -31,6 +31,8 @@ The engine boots, loads PAK archives, parses SoF's BSP v46 format, and renders f
 | GHOUL init | Gore zone system initialized (model rendering is placeholder) |
 | .os Scripts | Bytecode interpreter loads and parses scripts from PAK |
 | Game entities | 70+ entity types (triggers, movers, hazards, items) |
+| FOV calculation | Dynamic aspect-ratio-correct vertical FOV |
+| Player camera | SoF-accurate viewheight (26 units, confirmed from original DLL) |
 
 ## What Is This?
 

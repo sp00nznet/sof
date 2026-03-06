@@ -384,7 +384,7 @@ void R_BeginFrame(float camera_separation)
         rd.width = g_display.width;
         rd.height = g_display.height;
         rd.fov_x = 90.0f;
-        rd.fov_y = 73.74f;  /* CalcFovY(90, 1024, 768) */
+        rd.fov_y = (float)(atan(tan(90.0 * 3.14159265 / 360.0) * (double)g_display.height / (double)g_display.width) * 360.0 / 3.14159265);
         VectorCopy(cam_org, rd.vieworg);
         VectorCopy(cam_ang, rd.viewangles);
 

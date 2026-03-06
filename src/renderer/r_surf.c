@@ -120,7 +120,7 @@ void R_LoadWorldMap(const char *name)
                                        &r_camera_origin[0],
                                        &r_camera_origin[1],
                                        &r_camera_origin[2]);
-                                r_camera_origin[2] += 22; /* viewheight */
+                                r_camera_origin[2] += 26; /* SoF viewheight (original gamex86.dll) */
                             }
                             break;
                         }
@@ -627,8 +627,11 @@ void R_RenderWorldView(void)
     if (!r_worldloaded)
         return;
 
-    /* Set up 3D projection */
-    R_SetupProjection(90.0f, 73.74f, 4.0f, 8192.0f);
+    /* Set up 3D projection — compute FOV_Y from aspect ratio */
+    {
+        float fov_y = (float)(atan(tan(90.0 * 3.14159265 / 360.0) * (double)g_display.height / (double)g_display.width) * 360.0 / 3.14159265);
+        R_SetupProjection(90.0f, fov_y, 4.0f, 8192.0f);
+    }
     R_SetupCamera();
 
     /* Clear depth buffer */

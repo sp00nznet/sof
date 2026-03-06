@@ -287,6 +287,7 @@ static void SP_func_vent(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_laser_trip(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_floor_break(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_wall_break(edict_t *ent, epair_t *pairs, int num_pairs);
+static void SP_func_breakable_brush(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_func_drawbridge(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_misc_sea_mine(edict_t *ent, epair_t *pairs, int num_pairs);
 static void SP_trigger_quicksand(edict_t *ent, epair_t *pairs, int num_pairs);
@@ -681,6 +682,7 @@ static spawn_func_t spawn_funcs[] = {
     /* Destructible wall */
     { "func_wall_break",            SP_func_wall_break },
     { "func_breakable_wall",        SP_func_wall_break },
+    { "func_breakable_brush",       SP_func_breakable_brush },
 
     /* Drawbridge */
     { "func_drawbridge",            SP_func_drawbridge },
@@ -7967,6 +7969,80 @@ static void SP_func_wall_break(edict_t *ent, epair_t *pairs, int num_pairs)
     gi.dprintf("  func_wall_break at (%.0f %.0f %.0f) health=%d\n",
                ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
                ent->health);
+}
+
+/* ==========================================================================
+   func_breakable_brush — Generic destructible BSP brush (crates, etc.)
+   Similar to func_wall_break but used for arbitrary brush shapes.
+   Spawnflags: 1 = start inactive (invisible until triggered)
+   Keys: "health" = damage to break (default 200), "material" = surface type
+   ========================================================================== */
+
+static void breakable_brush_die(edict_t *self, edict_t *inflictor, edict_t *attacker,
+                                 int damage, vec3_t point)
+{
+    (void)inflictor; (void)damage; (void)point;
+
+    {
+        vec3_t center, spray;
+        center[0] = (self->mins[0] + self->maxs[0]) * 0.5f;
+        center[1] = (self->mins[1] + self->maxs[1]) * 0.5f;
+        center[2] = (self->mins[2] + self->maxs[2]) * 0.5f;
+        VectorSet(spray, 0, 0, 1);
+        R_ParticleEffect(center, spray, 0, 32);
+    }
+
+    {
+        int snd = gi.soundindex("world/wall_break.wav");
+        if (snd)
+            gi.sound(self, CHAN_BODY, snd, 1.0f, ATTN_NORM, 0);
+    }
+
+    if (self->target)
+        G_UseTargets(self, self->target);
+
+    self->solid = SOLID_NOT;
+    self->takedamage = DAMAGE_NO;
+    self->svflags |= SVF_NOCLIENT;
+    gi.unlinkentity(self);
+}
+
+static void breakable_brush_use(edict_t *self, edict_t *other, edict_t *activator)
+{
+    (void)other; (void)activator;
+
+    if (self->svflags & SVF_NOCLIENT) {
+        /* Activate */
+        self->solid = SOLID_BSP;
+        self->svflags &= ~SVF_NOCLIENT;
+        gi.linkentity(self);
+    }
+}
+
+static void SP_func_breakable_brush(edict_t *ent, epair_t *pairs, int num_pairs)
+{
+    const char *v;
+    int sf;
+
+    v = ED_FindValue(pairs, num_pairs, "spawnflags");
+    sf = v ? atoi(v) : 0;
+
+    v = ED_FindValue(pairs, num_pairs, "health");
+    ent->health = v ? atoi(v) : 200;
+    ent->max_health = ent->health;
+
+    ent->solid = SOLID_BSP;
+    ent->movetype = MOVETYPE_PUSH;
+    ent->takedamage = DAMAGE_YES;
+    ent->die = breakable_brush_die;
+
+    if (sf & 1) {
+        ent->solid = SOLID_NOT;
+        ent->svflags |= SVF_NOCLIENT;
+        ent->use = breakable_brush_use;
+    }
+
+    gi.linkentity(ent);
 }
 
 /* ==========================================================================

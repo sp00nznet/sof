@@ -23,6 +23,21 @@
 #define _USE_MATH_DEFINES
 #include <math.h>
 
+/*
+ * CalcFovY — Compute vertical FOV from horizontal FOV and aspect ratio.
+ * Q2's hardcoded 73.74 is only correct for 4:3. Widescreen displays need
+ * a narrower vertical FOV to avoid compressing the vertical axis, which
+ * makes the floor appear too high and objects look like they sink in.
+ */
+static float CalcFovY(float fov_x, int width, int height)
+{
+    float x;
+    if (width <= 0 || height <= 0)
+        return 73.74f;  /* fallback */
+    x = (float)tan(fov_x * (M_PI / 360.0));
+    return (float)(atan(x * (double)height / (double)width) * (360.0 / M_PI));
+}
+
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
@@ -758,7 +773,7 @@ void CL_Frame(int msec)
             cl_refdef.width = g_display.width;
             cl_refdef.height = g_display.height;
             cl_refdef.fov_x = 90.0f;
-            cl_refdef.fov_y = 73.74f;
+            cl_refdef.fov_y = CalcFovY(90.0f, g_display.width, g_display.height);
             cl_refdef.time = cl_time;
             VectorCopy(org, cl_refdef.vieworg);
             VectorCopy(ang, cl_refdef.viewangles);
@@ -948,14 +963,14 @@ void CL_Frame(int msec)
                 cl_refdef.width = g_display.width;
                 cl_refdef.height = g_display.height;
                 cl_refdef.fov_x = 90.0f;
-                cl_refdef.fov_y = 73.74f;
+                cl_refdef.fov_y = CalcFovY(90.0f, g_display.width, g_display.height);
 
                 /* Apply zoom FOV if scoped */
                 {
                     float zoom_fov;
                     if (SV_GetPlayerZoom(&zoom_fov) && zoom_fov > 0) {
                         cl_refdef.fov_x = zoom_fov;
-                        cl_refdef.fov_y = zoom_fov * 0.75f;
+                        cl_refdef.fov_y = CalcFovY(zoom_fov, g_display.width, g_display.height);
                     }
                 }
 
@@ -964,7 +979,7 @@ void CL_Frame(int msec)
                     extern qboolean SV_IsPlayerSprinting(void);
                     if (SV_IsPlayerSprinting()) {
                         cl_refdef.fov_x = 100.0f;
-                        cl_refdef.fov_y = 82.0f;
+                        cl_refdef.fov_y = CalcFovY(100.0f, g_display.width, g_display.height);
                     }
                 }
 

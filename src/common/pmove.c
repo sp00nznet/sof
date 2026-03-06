@@ -480,7 +480,7 @@ void Pmove(pmove_t *pmove)
     } else {
         pm->mins[2] = -24;
         pm->maxs[2] = 32;
-        pm->viewheight = 22;
+        pm->viewheight = 26;  /* SoF uses 26 (Q2 was 22) — confirmed in original gamex86.dll */
     }
 
     /* Compute view angles and direction vectors */
