@@ -177,6 +177,8 @@ qboolean BSP_Load(const char *name, bsp_world_t *world)
                world->vis_size);
     }
 
+
+
     world->loaded = qtrue;
     pvs_cached_cluster = -1;  /* Reset PVS cache for new map */
 

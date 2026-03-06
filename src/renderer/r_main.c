@@ -873,6 +873,10 @@ static void R_DrawBrushEntities(void)
         if (ent->s.renderfx & RF_VIEWERMODEL)
             continue;
 
+        /* Skip local player entity (edict[1]) — we're looking through their eyes */
+        if (i == 1 && ent->client)
+            continue;
+
         /* Get interpolated position if available, otherwise use current */
         if (!R_GetInterpOrigin(i, render_origin, ent->s.origin,
                                render_angles, ent->s.angles)) {

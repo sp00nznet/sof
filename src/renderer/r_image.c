@@ -290,9 +290,21 @@ static image_t *R_LoadM32(const char *name, byte *raw, int rawlen)
     img->height = height;
     img->type = it_wall;
 
-    /* M32 stores RGBA directly */
-    img->texnum = R_UploadTexture(raw + data_offset, width, height, qtrue, qtrue);
-    img->has_alpha = qtrue;
+    /* M32 stores RGBA directly — check if actually has transparent pixels */
+    {
+        byte *pixels = raw + data_offset;
+        int npix = width * height;
+        int j;
+        qboolean real_alpha = qfalse;
+        for (j = 0; j < npix; j++) {
+            if (pixels[j * 4 + 3] < 255) {
+                real_alpha = qtrue;
+                break;
+            }
+        }
+        img->texnum = R_UploadTexture(pixels, width, height, qtrue, real_alpha);
+        img->has_alpha = real_alpha;
+    }
 
     return img;
 }

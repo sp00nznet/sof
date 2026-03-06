@@ -87,6 +87,7 @@ void R_LoadWorldMap(const char *name)
         R_ImageEndRegistration();
         Com_Printf("Textures: %d loaded, %d missing (of %d texinfo)\n",
                    loaded, missed, r_worldmodel.num_texinfo);
+
     }
 
     /* Build lightmap atlas textures */
@@ -99,29 +100,47 @@ void R_LoadWorldMap(const char *name)
     /* Try to find a player start from entity string */
     if (r_worldmodel.entity_string) {
         const char *p = r_worldmodel.entity_string;
-        /* Simple scan for info_player_start origin */
-        while (*p) {
-            if (strstr(p, "info_player_start")) {
-                /* Look for origin in this entity block */
-                const char *orig = strstr(p, "\"origin\"");
-                if (orig) {
-                    orig = strchr(orig + 8, '"');
-                    if (orig) {
-                        orig++;
-                        sscanf(orig, "%f %f %f",
-                               &r_camera_origin[0],
-                               &r_camera_origin[1],
-                               &r_camera_origin[2]);
-                        r_camera_origin[2] += 56;  /* eye height */
-                        Com_Printf("Camera at player start: %.0f %.0f %.0f\n",
-                                   r_camera_origin[0], r_camera_origin[1],
-                                   r_camera_origin[2]);
+        /* Find info_player_start entity and extract origin + angle */
+        {
+            const char *ent = strstr(p, "info_player_start");
+            if (ent) {
+                /* Search backward for opening brace */
+                const char *brace = ent;
+                while (brace > p && *brace != '{') brace--;
+                /* Search forward for closing brace */
+                const char *end = strchr(ent, '}');
+                if (end) {
+                    const char *s;
+                    /* Extract origin */
+                    for (s = brace; s < end; s++) {
+                        if (s[0] == '"' && strncmp(s, "\"origin\"", 8) == 0) {
+                            s = strchr(s + 8, '"');
+                            if (s && s < end) {
+                                sscanf(s + 1, "%f %f %f",
+                                       &r_camera_origin[0],
+                                       &r_camera_origin[1],
+                                       &r_camera_origin[2]);
+                                r_camera_origin[2] += 56;
+                            }
+                            break;
+                        }
+                    }
+                    /* Extract angle */
+                    for (s = brace; s < end; s++) {
+                        if (s[0] == '"' && strncmp(s, "\"angle\"", 7) == 0) {
+                            s = strchr(s + 7, '"');
+                            if (s && s < end) {
+                                r_camera_angles[1] = (float)atof(s + 1);
+                            }
+                            break;
+                        }
                     }
                 }
-                break;
             }
-            p++;
         }
+        Com_Printf("Camera at player start: %.0f %.0f %.0f (yaw %.0f)\n",
+                   r_camera_origin[0], r_camera_origin[1],
+                   r_camera_origin[2], r_camera_angles[1]);
     }
 }
 
@@ -475,7 +494,7 @@ void R_DrawWorld(void)
     qglEnable(GL_DEPTH_TEST);
     qglDepthFunc(GL_LEQUAL);
     qglDepthMask(GL_TRUE);
-    qglEnable(GL_CULL_FACE);
+    qglDisable(GL_CULL_FACE);   /* Q2 BSP doesn't use GL culling */
     qglEnable(GL_TEXTURE_2D);
 
     /* PVS culling: find camera leaf/cluster */
@@ -549,6 +568,7 @@ void R_DrawWorld(void)
     }
 
     qglDisable(GL_CULL_FACE);
+
 }
 
 /*

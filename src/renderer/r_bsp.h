@@ -88,7 +88,7 @@ typedef struct {
     int     nexttexinfo;    /* for animations, -1 = end of chain */
 } bsp_texinfo_t;
 
-/* Faces (surfaces) */
+/* Faces (surfaces) — SoF v46: 44 bytes (Q2 v38 was 20 bytes) */
 typedef struct {
     unsigned short  planenum;
     short           side;
@@ -97,6 +97,7 @@ typedef struct {
     short           texinfo;
     byte            styles[4];      /* lightmap styles */
     int             lightofs;       /* offset into lightmap lump, -1 = no lightmap */
+    byte            sof_extra[24];  /* SoF v46 extension data (unknown purpose) */
 } bsp_face_t;
 
 /* BSP Nodes */
@@ -109,15 +110,17 @@ typedef struct {
     unsigned short  numfaces;
 } bsp_node_t;
 
-/* BSP Leafs */
+/* BSP Leafs — SoF v46: 32 bytes (Q2 v38 was 28 bytes) */
 typedef struct {
     int             contents;
     short           cluster;        /* PVS cluster index */
     short           area;
+    byte            sof_bbox[12];   /* SoF v46 bounding box data (12 bytes) */
     unsigned short  firstleafface;
     unsigned short  numleaffaces;
     unsigned short  firstleafbrush;
     unsigned short  numleafbrushes;
+    int             sof_extra;      /* SoF v46 extension (4 bytes padding) */
 } bsp_leaf_t;
 
 /* Inline models (doors, platforms, etc.) */

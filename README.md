@@ -6,6 +6,32 @@
 
 A static recompilation project to bring **Soldier of Fortune** (2000) back to life on modern systems. Because no one should be denied the experience of watching a guy's arm fly off in 26 individually modeled zones of dismemberment.
 
+## Current Progress
+
+![NYC1 - Rooftop warehouse area](docs/screenshot_nyc1.png)
+
+*NYC1 map rendering — rooftop warehouse area with correct BSP geometry, M32 textures, lightmaps, skybox, and HUD.*
+
+The engine boots, loads PAK archives, parses SoF's BSP v46 format, and renders full 3D levels with textured geometry. 40+ source files, 53,000+ lines of code across all subsystems.
+
+### Working Subsystems
+
+| Subsystem | Status |
+|-----------|--------|
+| PAK filesystem | Fully working — reads pak0.pak (9728 files) + pak1.pak |
+| BSP v46 renderer | Working — correct face (44-byte) and leaf (32-byte) structs |
+| M32/WAL textures | Working — 7363 textures loaded with correct alpha handling |
+| Lightmaps | Working — atlas-based multitexture lightmapping |
+| Skybox | Working — TGA skybox rendering |
+| Entity spawning | Working — 906 entities parsed on NYC1 |
+| Console/Cvars | Working — full command system with config file loading |
+| Key bindings | Working — SoF config compatibility |
+| HUD | Working — health, minimap, weapon display, compass |
+| Sound | SDL2 audio initialized |
+| GHOUL init | Gore zone system initialized (model rendering is placeholder) |
+| .os Scripts | Bytecode interpreter loads and parses scripts from PAK |
+| Game entities | 70+ entity types (triggers, movers, hazards, items) |
+
 ## What Is This?
 
 Soldier of Fortune was developed by **Raven Software** and published by **Activision** in 2000. Built on a heavily modified **id Tech 2 (Quake II) engine**, it featured the revolutionary **GHOUL** damage model system — a technology so gratuitously detailed in its depiction of bodily harm that it got the game banned in several countries and slapped with an **ESRB Mature 17+** rating that they probably wished went higher.
@@ -76,23 +102,24 @@ sof/
 ### Prerequisites
 
 - CMake 3.20+
-- A C/C++ compiler with C17/C++20 support (MSVC, GCC, or Clang)
-- Vulkan SDK (optional, for Vulkan renderer)
-- Python 3.10+ (for analysis tools)
-- A legal copy of Soldier of Fortune
+- MSVC (Visual Studio 2022) or compatible C compiler
+- vcpkg with SDL2 installed
+- A legal copy of Soldier of Fortune (pak0.pak, pak1.pak)
 
 ### Build
 
 ```bash
-cmake -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build
+cd build
+cmake .. -DCMAKE_TOOLCHAIN_FILE=/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake
+cmake --build . --config Release
 ```
 
 ### Running
 
 ```bash
-# Point to your SoF installation directory
-./build/sof --basedir "C:/Games/Soldier of Fortune"
+# Copy pak0.pak and pak1.pak into build/bin/Release/base/
+cd build/bin/Release
+./sof.exe +map nyc1
 ```
 
 ## Game Compatibility
