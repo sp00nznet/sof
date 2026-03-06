@@ -29,7 +29,7 @@
 
 #define LM_BLOCK_WIDTH      512
 #define LM_BLOCK_HEIGHT     512
-#define MAX_LIGHTMAPS       64
+#define MAX_LIGHTMAPS       1024
 
 /* Per-face lightmap info */
 typedef struct {
@@ -112,7 +112,7 @@ static void LM_UploadBlock(void)
     GLuint tex;
 
     if (lm_num_textures >= MAX_LIGHTMAPS) {
-        Com_Printf("WARNING: MAX_LIGHTMAPS exceeded\n");
+        /* Already at max — silently stop uploading new lightmaps */
         return;
     }
 
@@ -148,8 +148,10 @@ static void R_CalcFaceLightmapExtents(bsp_world_t *world, int face_idx,
     float mins[2], maxs[2];
     int i, bmins[2], bmaxs[2];
 
-    if (face->texinfo < 0 || face->texinfo >= world->num_texinfo)
+    if (face->texinfo < 0 || face->texinfo >= world->num_texinfo) {
+        *s_min = 0; *t_min = 0; *lm_w = 1; *lm_h = 1;
         return;
+    }
 
     ti = &world->texinfo[face->texinfo];
     mins[0] = mins[1] = 999999;
@@ -157,13 +159,21 @@ static void R_CalcFaceLightmapExtents(bsp_world_t *world, int face_idx,
 
     /* Project all face vertices onto texture axes */
     for (i = 0; i < face->numedges; i++) {
-        int edge_idx = world->surfedges[face->firstedge + i];
+        int se_idx = face->firstedge + i;
+        int edge_idx;
         float *v;
 
-        if (edge_idx >= 0)
+        if (se_idx < 0 || se_idx >= world->num_surfedges)
+            continue;
+        edge_idx = world->surfedges[se_idx];
+
+        if (edge_idx >= 0) {
+            if (edge_idx >= world->num_edges) continue;
             v = world->vertexes[world->edges[edge_idx].v[0]].point;
-        else
+        } else {
+            if (-edge_idx >= world->num_edges) continue;
             v = world->vertexes[world->edges[-edge_idx].v[1]].point;
+        }
 
         {
             float s = DotProduct(v, ti->vecs[0]) + ti->vecs[0][3];
@@ -276,6 +286,7 @@ void R_BuildLightmaps(bsp_world_t *world)
                     for (x = 0; x < lm_w; x++) {
                         int dst_ofs = ((ay + y) * LM_BLOCK_WIDTH + (ax + x)) * 3;
                         int src_ofs = (y * lm_w + x) * 3;
+                        if (dst_ofs + 2 >= (int)sizeof(lm_buffer)) continue;
                         /* Apply overbright (Q2 style: lightmap * 2) */
                         int r = src[src_ofs + 0] * 2;
                         int g = src[src_ofs + 1] * 2;
@@ -291,7 +302,9 @@ void R_BuildLightmaps(bsp_world_t *world)
                     for (x = 0; x < lm_w; x++) {
                         int dst_ofs = ((ay + y) * LM_BLOCK_WIDTH + (ax + x)) * 3;
                         int src_ofs = y * lm_w + x;
-                        byte val = src[src_ofs];
+                        byte val;
+                        if (dst_ofs + 2 >= (int)sizeof(lm_buffer)) continue;
+                        val = src[src_ofs];
                         int lit = val * 2;
                         if (lit > 255) lit = 255;
                         lm_buffer[dst_ofs + 0] = (byte)lit;

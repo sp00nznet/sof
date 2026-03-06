@@ -1,8 +1,8 @@
 /*
  * r_bsp.h - Quake II BSP file format definitions
  *
- * SoF uses standard Quake II BSP format (IBSP version 38) with
- * minor extensions for the ArghRad! enhanced lighting system.
+ * SoF uses a modified Quake II BSP format (IBSP version 46) with
+ * 22 lumps (vs Q2's 19). Core geometry structures are identical to Q2.
  *
  * BSP files contain all level geometry, collision hulls, PVS data,
  * lightmaps, and entity descriptions.
@@ -20,9 +20,9 @@
    ========================================================================== */
 
 #define BSP_MAGIC       (('P'<<24)+('S'<<16)+('B'<<8)+'I')  /* "IBSP" */
-#define BSP_VERSION     38      /* Quake II BSP version */
+#define BSP_VERSION     46      /* SoF BSP version (Q2 was 38) */
 
-/* Lump indices */
+/* Lump indices — same as Q2 with 3 SoF-specific extensions */
 #define LUMP_ENTITIES       0
 #define LUMP_PLANES         1
 #define LUMP_VERTEXES       2
@@ -42,7 +42,10 @@
 #define LUMP_POP            16
 #define LUMP_AREAS          17
 #define LUMP_AREAPORTALS    18
-#define HEADER_LUMPS        19
+#define LUMP_SOF_19         19  /* SoF-specific (unknown purpose) */
+#define LUMP_SOF_20         20  /* SoF-specific (unknown purpose) */
+#define LUMP_SOF_21         21  /* SoF-specific (unknown purpose) */
+#define HEADER_LUMPS        22
 
 typedef struct {
     int     offset;

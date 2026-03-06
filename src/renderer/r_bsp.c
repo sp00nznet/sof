@@ -8,6 +8,12 @@
 #include "r_bsp.h"
 #include "../common/qcommon.h"
 
+#include <string.h>
+
+/* PVS decompression cache (used by BSP_ClusterVisible) */
+static byte     pvs_buffer[8192];
+static int      pvs_cached_cluster = -1;
+
 /* ==========================================================================
    Lump Loading Helpers
    ========================================================================== */
@@ -172,6 +178,7 @@ qboolean BSP_Load(const char *name, bsp_world_t *world)
     }
 
     world->loaded = qtrue;
+    pvs_cached_cluster = -1;  /* Reset PVS cache for new map */
 
     /* Done with raw file */
     FS_FreeFile(raw);
@@ -239,12 +246,37 @@ int BSP_PointLeaf(bsp_world_t *world, vec3_t p)
     return -(num + 1);  /* Convert to leaf index */
 }
 
+/*
+ * BSP_DecompressVis — Decompress Q2 RLE-encoded PVS data
+ *
+ * Q2 PVS uses simple RLE: non-zero bytes are literal bit masks,
+ * zero bytes are followed by a count byte (N zero bytes to emit).
+ */
+static void BSP_DecompressVis(byte *in, byte *out, int row)
+{
+    int     c;
+    byte    *out_end = out + row;
+
+    while (out < out_end) {
+        if (*in) {
+            *out++ = *in++;
+            continue;
+        }
+        /* Zero byte: next byte is repeat count */
+        in++;
+        c = *in++;
+        if (out + c > out_end)
+            c = (int)(out_end - out);
+        memset(out, 0, c);
+        out += c;
+    }
+}
+
 qboolean BSP_ClusterVisible(bsp_world_t *world, int cluster1, int cluster2)
 {
-    byte *vis_data;
-    int  ofs;
     int  numclusters;
     int  *bitofs_array;
+    int  ofs, row;
 
     if (!world->vis || cluster1 < 0 || cluster2 < 0)
         return qtrue;   /* No PVS = everything visible */
@@ -253,14 +285,24 @@ qboolean BSP_ClusterVisible(bsp_world_t *world, int cluster1, int cluster2)
     if (cluster1 >= numclusters || cluster2 >= numclusters)
         return qtrue;
 
-    /* bitofs is a variable-length array: int[numclusters][2]
-     * Starts at offset 4 in the vis structure (after numclusters) */
-    bitofs_array = (int *)((byte *)world->vis + 4);
-    ofs = LittleLong(bitofs_array[cluster1 * 2 + 0]); /* [0] = PVS offset */
-    vis_data = (byte *)world->vis + ofs;
+    row = (numclusters + 7) >> 3;
+    if (row > (int)sizeof(pvs_buffer))
+        return qtrue;   /* Too many clusters */
 
-    /* Check if cluster2's bit is set */
-    if (vis_data[cluster2 >> 3] & (1 << (cluster2 & 7)))
+    /* Decompress PVS for cluster1 (cache to avoid re-decompressing per leaf) */
+    if (cluster1 != pvs_cached_cluster) {
+        bitofs_array = (int *)((byte *)world->vis + 4);
+        ofs = LittleLong(bitofs_array[cluster1 * 2 + 0]);
+
+        if (ofs <= 0 || ofs >= world->vis_size)
+            return qtrue;
+
+        BSP_DecompressVis((byte *)world->vis + ofs, pvs_buffer, row);
+        pvs_cached_cluster = cluster1;
+    }
+
+    /* Check if cluster2's bit is set in decompressed PVS */
+    if (pvs_buffer[cluster2 >> 3] & (1 << (cluster2 & 7)))
         return qtrue;
 
     return qfalse;

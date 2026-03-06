@@ -237,14 +237,22 @@ static image_t *R_LoadWAL(const char *name, byte *raw, int rawlen)
    M32 Texture Loader (SoF MIP32 enhanced)
    ========================================================================== */
 
-typedef struct {
-    int     version;        /* +0x00 */
-    int     width;          /* +0x04 */
-    int     height;         /* +0x08 */
-    int     mip_offsets[4]; /* +0x0C */
-    char    name[32];       /* +0x1C */
-    /* ... extended header fields follow */
-} m32_header_t;
+/*
+ * M32 format (SoF MIP32):
+ *   +0x000: version (uint32) = 4
+ *   +0x004: name (128 bytes, null-terminated)
+ *   +0x084: padding (384 bytes of zeros)
+ *   +0x204: mip_widths[16] (uint32 each) — descending: 256,128,64,...
+ *   +0x244: mip_heights[16] (uint32 each)
+ *   +0x284: mip_offsets[16] (uint32 each) — byte offsets into file
+ *   +0x2C4: additional header (flags, anim name, etc.)
+ *   +0x3C8: pixel data starts (mip 0) — RGBA8888
+ * Header is always 968 bytes; mip 0 data at mip_offsets[0] (typically 968).
+ */
+#define M32_MIP_WIDTHS_OFS    0x204
+#define M32_MIP_HEIGHTS_OFS   0x244
+#define M32_MIP_OFFSETS_OFS   0x284
+#define M32_HEADER_SIZE       968
 
 static image_t *R_LoadM32(const char *name, byte *raw, int rawlen)
 {
@@ -253,26 +261,25 @@ static image_t *R_LoadM32(const char *name, byte *raw, int rawlen)
     int         data_offset;
     int         size;
 
-    if (rawlen < 0x28)
+    if (rawlen < M32_HEADER_SIZE + 4)
         return NULL;
 
-    width = *(int *)(raw + 4);
-    height = *(int *)(raw + 8);
+    width = LittleLong(*(int *)(raw + M32_MIP_WIDTHS_OFS));
+    height = LittleLong(*(int *)(raw + M32_MIP_HEIGHTS_OFS));
 
     if (width <= 0 || height <= 0 || width > 2048 || height > 2048)
         return NULL;
 
-    size = width * height * 4;  /* RGBA */
+    data_offset = LittleLong(*(int *)(raw + M32_MIP_OFFSETS_OFS));
+    if (data_offset <= 0 || data_offset >= rawlen)
+        data_offset = M32_HEADER_SIZE;
 
-    /* M32 files have pixel data at different offsets depending on version */
-    data_offset = 0x28;     /* Standard header size */
+    size = width * height * 4;  /* RGBA8888 */
+
     if (data_offset + size > rawlen) {
-        data_offset = 0xA0;    /* Extended header */
-        if (data_offset + size > rawlen) {
-            Com_DPrintf("R_LoadM32: %s data doesn't fit (w=%d h=%d len=%d)\n",
-                       name, width, height, rawlen);
-            return NULL;
-        }
+        Com_DPrintf("R_LoadM32: %s data doesn't fit (w=%d h=%d ofs=%d len=%d)\n",
+                   name, width, height, data_offset, rawlen);
+        return NULL;
     }
 
     /* Find or create image slot */

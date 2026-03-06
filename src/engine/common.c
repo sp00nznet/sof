@@ -322,18 +322,20 @@ void Qcommon_Init(int argc, char **argv)
     Cbuf_AddText("exec config.cfg\n");
     Cbuf_Execute();
 
-    /* Parse command line arguments */
+    /* Parse early command line args (+set only — for basedir, game, etc.) */
     {
         int i;
         for (i = 1; i < argc; i++) {
             if (argv[i][0] == '+') {
-                Cbuf_AddText(va("%s ", argv[i] + 1));
-                /* Add remaining args until next + command */
-                while (i + 1 < argc && argv[i + 1][0] != '+') {
-                    i++;
-                    Cbuf_AddText(va("%s ", argv[i]));
+                /* Only process +set commands now, defer others */
+                if (Q_stricmp(argv[i] + 1, "set") == 0 && i + 2 < argc) {
+                    Cbuf_AddText(va("set %s %s\n", argv[i + 1], argv[i + 2]));
+                    i += 2;
+                } else {
+                    /* Skip this command and its args */
+                    while (i + 1 < argc && argv[i + 1][0] != '+')
+                        i++;
                 }
-                Cbuf_AddText("\n");
             }
         }
         Cbuf_Execute();
@@ -364,6 +366,26 @@ void Qcommon_Init(int argc, char **argv)
 
     /* Initialize sound (replaces Defsnd.dll/EAXSnd.dll/A3Dsnd.dll) */
     S_Init();
+
+    /* Now process deferred command line args (+map, etc.) */
+    {
+        int i;
+        for (i = 1; i < argc; i++) {
+            if (argv[i][0] == '+') {
+                if (Q_stricmp(argv[i] + 1, "set") == 0 && i + 2 < argc) {
+                    i += 2;  /* Already processed above */
+                } else {
+                    Cbuf_AddText(va("%s ", argv[i] + 1));
+                    while (i + 1 < argc && argv[i + 1][0] != '+') {
+                        i++;
+                        Cbuf_AddText(va("%s ", argv[i]));
+                    }
+                    Cbuf_AddText("\n");
+                }
+            }
+        }
+        Cbuf_Execute();
+    }
 }
 
 /* ==========================================================================
@@ -1002,19 +1024,33 @@ static const char *menu_labels[MENU_ITEMS] = {
     "NEW GAME", "LOAD GAME", "OPTIONS", "CREDITS", "QUIT"
 };
 
-#define MAP_COUNT  8
+#define MAP_COUNT  30
 static const char *map_names[MAP_COUNT] = {
-    "sof1", "sof2", "sof3", "sof4", "sof5", "sof6", "sof7", "sof8"
+    /* Campaign order */
+    "nyc1", "nyc2", "nyc3",                    /* New York */
+    "trn1",                                     /* Train */
+    "irq1a", "irq1b", "irq2a", "irq2b",        /* Iraq */
+    "irq3a", "irq3b",
+    "jpn1", "jpn2", "jpn3",                     /* Japan */
+    "kos1", "kos2", "kos3",                     /* Kosovo */
+    "sud1", "sud2", "sud3",                     /* Sudan */
+    "sib1", "sib2", "sib3",                     /* Siberia */
+    "ger1", "ger2", "ger3", "ger4",             /* Germany */
+    "arm1", "arm2", "arm3",                     /* Armory */
+    "tut1",                                     /* Tutorial */
 };
 static const char *map_titles[MAP_COUNT] = {
-    "New York - Subway",
-    "New York - Streets",
-    "Iraq - Village",
-    "Iraq - Compound",
-    "Siberia - Train Yard",
-    "Siberia - Base",
-    "Tokyo - Rooftops",
-    "Tokyo - Tower"
+    "New York - Subway", "New York - Warehouses", "New York - Rooftops",
+    "Train",
+    "Iraq - Village A", "Iraq - Village B", "Iraq - Compound A", "Iraq - Compound B",
+    "Iraq - Ruins A", "Iraq - Ruins B",
+    "Japan - Streets", "Japan - Rooftops", "Japan - Tower",
+    "Kosovo - Village", "Kosovo - Church", "Kosovo - Bunker",
+    "Sudan - Market", "Sudan - Fortress", "Sudan - Palace",
+    "Siberia - Rail Yard", "Siberia - Base", "Siberia - Reactor",
+    "Germany - Castle A", "Germany - Castle B", "Germany - Castle C", "Germany - Finale",
+    "Armory 1", "Armory 2", "Armory 3",
+    "Tutorial",
 };
 
 static int  menu_active = 0;    /* 0=hidden, 1=main, 2=options, 3=map select */

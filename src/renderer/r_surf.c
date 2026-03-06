@@ -35,7 +35,7 @@ static int  c_brush_polys;
 static int  c_visible_faces;
 
 /* Per-texinfo cached texture lookups (populated on map load) */
-#define MAX_TEXINFO_CACHE   4096
+#define MAX_TEXINFO_CACHE   8192
 static image_t  *r_texinfo_images[MAX_TEXINFO_CACHE];
 
 /* ==========================================================================
@@ -232,13 +232,20 @@ static void R_DrawFace(bsp_world_t *world, bsp_face_t *face,
     qglBegin(GL_TRIANGLE_FAN);
 
     for (i = 0; i < face->numedges; i++) {
-        edge_idx = world->surfedges[face->firstedge + i];
+        int se_idx = face->firstedge + i;
+        if (se_idx < 0 || se_idx >= world->num_surfedges)
+            continue;
+        edge_idx = world->surfedges[se_idx];
 
         if (edge_idx >= 0) {
+            if (edge_idx >= world->num_edges) continue;
             edge = &world->edges[edge_idx];
+            if (edge->v[0] >= (unsigned short)world->num_vertexes) continue;
             v = world->vertexes[edge->v[0]].point;
         } else {
+            if (-edge_idx >= world->num_edges) continue;
             edge = &world->edges[-edge_idx];
+            if (edge->v[1] >= (unsigned short)world->num_vertexes) continue;
             v = world->vertexes[edge->v[1]].point;
         }
 
@@ -686,18 +693,23 @@ static void Cmd_Map_f(void)
 
 static void Cmd_Maplist_f(void)
 {
-    Com_Printf("Known SoF SP maps:\n");
-    Com_Printf("  sof1sp1  - Gold: New York Streets\n");
-    Com_Printf("  sof1sp2  - Gold: Subway Station\n");
-    Com_Printf("  sof1sp3  - Gold: Meat Packing Plant\n");
-    Com_Printf("  sof2sp1  - Silver: Iraqi Facility\n");
-    Com_Printf("  sof3sp1  - Bronze: Siberian Outpost\n");
-    Com_Printf("  sof4sp1  - Iron: Sudan Village\n");
-    Com_Printf("  sof5sp1  - Lead: Japan Compound\n");
-    Com_Printf("  sofend   - Final: Kosovo Nuke Base\n");
-    Com_Printf("\nKnown MP maps:\n");
-    Com_Printf("  dm_packing  dm_depot  dm_baths\n");
-    Com_Printf("  dm_train    dm_yard   dm_subway\n");
+    Com_Printf("Campaign maps:\n");
+    Com_Printf("  nyc1 nyc2 nyc3           - New York\n");
+    Com_Printf("  trn1                     - Train\n");
+    Com_Printf("  irq1a irq1b irq2a irq2b  - Iraq\n");
+    Com_Printf("  irq3a irq3b\n");
+    Com_Printf("  jpn1 jpn2 jpn3           - Japan\n");
+    Com_Printf("  kos1 kos2 kos3           - Kosovo\n");
+    Com_Printf("  sud1 sud2 sud3           - Sudan\n");
+    Com_Printf("  sib1 sib2 sib3           - Siberia\n");
+    Com_Printf("  ger1 ger2 ger3 ger4      - Germany\n");
+    Com_Printf("  arm1 arm2 arm3           - Armory\n");
+    Com_Printf("  tut1                     - Tutorial\n");
+    Com_Printf("  tsr1 tsr2                - Other\n");
+    Com_Printf("\nDeathmatch maps:\n");
+    Com_Printf("  nycdm1-5 irqdm1-2 jpndm2 suddm1-3 kosdm1\n");
+    Com_Printf("  nycctf1 irqctf1 jpnctf1 sudctf1-2 sibctf1 gerctf1\n");
+    Com_Printf("  raven\n");
     Com_Printf("\nUsage: map <name>\n");
 }
 

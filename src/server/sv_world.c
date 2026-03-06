@@ -218,7 +218,7 @@ static void SV_AreaEdicts_r(int node_idx, areaparms_t *ap)
             continue;
 
         if (ap->count >= ap->maxcount) {
-            Com_Printf("SV_AreaEdicts: maxcount exceeded\n");
+            Com_DPrintf("SV_AreaEdicts: maxcount exceeded\n");
             return;
         }
 
@@ -283,7 +283,8 @@ trace_t SV_Trace(vec3_t start, vec3_t mins, vec3_t maxs,
 
     /* Trace against solid entities */
     {
-        edict_t *touch[64];
+#define MAX_TOUCH 256
+        edict_t *touch[MAX_TOUCH];
         int num_touch, i;
         vec3_t trace_mins, trace_maxs;
 
@@ -297,7 +298,7 @@ trace_t SV_Trace(vec3_t start, vec3_t mins, vec3_t maxs,
             }
         }
 
-        num_touch = SV_AreaEdicts(trace_mins, trace_maxs, touch, 64, AREA_SOLID);
+        num_touch = SV_AreaEdicts(trace_mins, trace_maxs, touch, MAX_TOUCH, AREA_SOLID);
 
         for (i = 0; i < num_touch; i++) {
             edict_t *ent = touch[i];
