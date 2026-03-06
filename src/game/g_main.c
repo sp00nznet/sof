@@ -7287,21 +7287,30 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
         gi.linkentity(obj);
     }
 
-    /* Use interaction — short-range trace to find usable entities */
-    if (ucmd->buttons & BUTTON_USE) {
-        vec3_t use_start, use_end, use_fwd, use_rt, use_up;
-        trace_t use_tr;
+    /* Use interaction — short-range trace to find usable entities
+     * Only triggers on initial press, not while held */
+    {
+        static short old_use_buttons;
+        short use_pressed = (ucmd->buttons & BUTTON_USE) && !(old_use_buttons & BUTTON_USE);
+        old_use_buttons = ucmd->buttons;
 
-        VectorCopy(ent->s.origin, use_start);
-        use_start[2] += client->viewheight;
-        G_AngleVectors(client->viewangles, use_fwd, use_rt, use_up);
-        VectorMA(use_start, 96, use_fwd, use_end);  /* 96 unit range */
+        if (use_pressed) {
+            vec3_t use_start, use_end, use_fwd, use_rt, use_up;
+            trace_t use_tr;
 
-        use_tr = gi.trace(use_start, NULL, NULL, use_end, ent, MASK_SHOT);
-        if (use_tr.fraction < 1.0f && use_tr.ent) {
-            edict_t *target = use_tr.ent;
-            if (target->use)
-                target->use(target, ent, ent);
+            VectorCopy(ent->s.origin, use_start);
+            use_start[2] += client->viewheight;
+            G_AngleVectors(client->viewangles, use_fwd, use_rt, use_up);
+            VectorMA(use_start, 96, use_fwd, use_end);  /* 96 unit range */
+
+            use_tr = gi.trace(use_start, NULL, NULL, use_end, ent, MASK_SHOT);
+            if (use_tr.fraction < 1.0f && use_tr.ent) {
+                edict_t *target = use_tr.ent;
+                if (target->use)
+                    target->use(target, ent, ent);
+                else if (target->touch)
+                    target->touch(target, ent, NULL, NULL);
+            }
         }
     }
 
@@ -7824,6 +7833,29 @@ static void ClientThink(edict_t *ent, usercmd_t *ucmd)
             client->blend[1] = 0.3f;
             client->blend[2] = 0.0f;
             client->blend[3] = 0.08f;
+        }
+    }
+
+    /* Touch triggers — test player bbox against SOLID_TRIGGER entities */
+    {
+        edict_t *touch[32];
+        int num_touch, ti;
+        vec3_t pmins, pmaxs;
+
+        VectorAdd(ent->s.origin, ent->mins, pmins);
+        VectorAdd(ent->s.origin, ent->maxs, pmaxs);
+
+        num_touch = gi.BoxEdicts(pmins, pmaxs, touch, 32, AREA_TRIGGERS);
+        for (ti = 0; ti < num_touch; ti++) {
+            edict_t *hit = touch[ti];
+            if (!hit || !hit->inuse || !hit->touch)
+                continue;
+            if (hit == ent)
+                continue;
+            /* Only fire touch on trigger entities, not solid brushes */
+            if (hit->solid != SOLID_TRIGGER)
+                continue;
+            hit->touch(hit, ent, NULL, NULL);
         }
     }
 

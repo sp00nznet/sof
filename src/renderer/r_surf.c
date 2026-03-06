@@ -120,7 +120,7 @@ void R_LoadWorldMap(const char *name)
                                        &r_camera_origin[0],
                                        &r_camera_origin[1],
                                        &r_camera_origin[2]);
-                                r_camera_origin[2] += 56;
+                                r_camera_origin[2] += 22; /* viewheight */
                             }
                             break;
                         }

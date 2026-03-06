@@ -192,6 +192,8 @@ qboolean BSP_Load(const char *name, bsp_world_t *world)
         world->num_nodes, world->num_leafs, world->num_models);
     Com_Printf("  %d brushes, %d texinfo\n",
         world->num_brushes, world->num_texinfo);
+    Com_Printf("  %d leaffaces, %d leafbrushes, %d brushsides\n",
+        world->num_leaffaces, world->num_leafbrushes, world->num_brushsides);
     if (world->lightdata)
         Com_Printf("  Lightmap: %d KB\n", world->lightdata_size / 1024);
     if (world->vis)

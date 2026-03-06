@@ -328,9 +328,9 @@ static void CM_RecursiveTrace(trace_work_t *tw, int num,
  * This is the function behind game_import_t.trace (95 xrefs).
  * Returns the first collision along the ray.
  */
-trace_t CM_BoxTrace(bsp_world_t *world,
-                    vec3_t start, vec3_t mins, vec3_t maxs,
-                    vec3_t end, int brushmask)
+static trace_t CM_BoxTraceNode(bsp_world_t *world,
+                               vec3_t start, vec3_t mins, vec3_t maxs,
+                               vec3_t end, int brushmask, int headnode)
 {
     trace_work_t tw;
     int i;
@@ -387,9 +387,9 @@ trace_t CM_BoxTrace(bsp_world_t *world,
         }
     }
 
-    /* Trace through BSP tree */
+    /* Trace through BSP tree starting from headnode */
     cm_checkcount++;
-    CM_RecursiveTrace(&tw, 0, 0, 1, start, end);
+    CM_RecursiveTrace(&tw, headnode, 0, 1, start, end);
 
     /* Calculate final endpoint */
     if (tw.trace.fraction == 1.0f) {
@@ -402,6 +402,13 @@ trace_t CM_BoxTrace(bsp_world_t *world,
     }
 
     return tw.trace;
+}
+
+trace_t CM_BoxTrace(bsp_world_t *world,
+                    vec3_t start, vec3_t mins, vec3_t maxs,
+                    vec3_t end, int brushmask)
+{
+    return CM_BoxTraceNode(world, start, mins, maxs, end, brushmask, 0);
 }
 
 /*
@@ -423,6 +430,7 @@ int CM_PointContents(bsp_world_t *world, vec3_t p)
         return 0;
 
     leaf = &world->leafs[leafnum];
+
     return leaf->contents;
 }
 
@@ -487,8 +495,6 @@ trace_t CM_TransformedBoxTrace(bsp_world_t *world,
     vec3_t  start_l, end_l;
     qboolean rotated;
 
-    (void)headnode;
-
     /* Translate into model space */
     VectorSubtract(start, origin, start_l);
     VectorSubtract(end, origin, end_l);
@@ -502,8 +508,8 @@ trace_t CM_TransformedBoxTrace(bsp_world_t *world,
         CM_RotatePoint(end_l, angles, qtrue);
     }
 
-    /* Trace in local space */
-    tr = CM_BoxTrace(world, start_l, mins, maxs, end_l, brushmask);
+    /* Trace in model-local space against the submodel's BSP subtree */
+    tr = CM_BoxTraceNode(world, start_l, mins, maxs, end_l, brushmask, headnode);
 
     if (rotated && tr.fraction < 1.0f) {
         /* Rotate the hit normal back to world space */

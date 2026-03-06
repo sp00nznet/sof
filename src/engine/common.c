@@ -362,7 +362,19 @@ void Qcommon_Init(int argc, char **argv)
     IN_Init();
     CL_InitInput();
 
-    /* Override F5 binding for freecam toggle (SoF config may have set it to savegame) */
+    /* Re-apply essential bindings after config loading.
+       SoF's default_keys.cfg does unbindall then rebinds with SoF-specific
+       commands, wiping our WASD/mouse bindings. Force them back. */
+    Key_SetBinding('w', "+forward");
+    Key_SetBinding('s', "+back");
+    Key_SetBinding('a', "+moveleft");
+    Key_SetBinding('d', "+moveright");
+    Key_SetBinding(K_SPACE, "+moveup");
+    Key_SetBinding(K_MOUSE1, "+attack");
+    Key_SetBinding(K_MOUSE2, "+attack2");
+    Key_SetBinding('e', "+use");
+    Key_SetBinding(K_CTRL, "+movedown");
+    Key_SetBinding(K_SHIFT, "+speed");
     Key_SetBinding(K_F5, "freecam");
 
     /* Initialize renderer */

@@ -382,6 +382,7 @@ static spawn_func_t spawn_funcs[] = {
     /* Brush entities */
     { "func_door",                  SP_func_door },
     { "func_door_rotating",         SP_func_door_rotating },
+    { "func_door_rotating_smart",   SP_func_door_rotating },
     { "func_plat",                  SP_func_plat },
     { "func_rotating",              SP_func_rotating },
     { "func_button",                SP_func_button },
@@ -1197,9 +1198,13 @@ static void SP_info_player_start(edict_t *ent, epair_t *pairs, int num_pairs)
     if (player->inuse && player->client) {
         VectorCopy(ent->s.origin, player->s.origin);
         VectorCopy(ent->s.angles, player->s.angles);
-        player->client->ps.origin[0] = ent->s.origin[0];
-        player->client->ps.origin[1] = ent->s.origin[1];
-        player->client->ps.origin[2] = ent->s.origin[2];
+        /* BSP origin already accounts for player bbox — origin is 24 units
+         * above the floor (mins[2]=-24). Add +1 to avoid starting exactly
+         * on the brush boundary (Q2 convention). */
+        player->s.origin[2] += 1;
+        player->client->ps.origin[0] = player->s.origin[0];
+        player->client->ps.origin[1] = player->s.origin[1];
+        player->client->ps.origin[2] = player->s.origin[2];
         player->client->ps.pm_type = PM_NORMAL;
         player->health = player->client->pers_health;
         player->max_health = player->client->pers_max_health;
@@ -1948,7 +1953,7 @@ static void rot_door_think(edict_t *self)
     VectorSubtract(self->moveinfo.end_angles, self->s.angles, delta);
     remaining = VectorLength(delta);
 
-    if (remaining < 1.0f) {
+    if (remaining < self->moveinfo.speed * level.frametime + 1.0f) {
         /* Arrived at target angle */
         VectorCopy(self->moveinfo.end_angles, self->s.angles);
         VectorClear(self->avelocity);
@@ -1984,7 +1989,7 @@ static void rot_door_hit_closed(edict_t *self)
 static void rot_door_go_open(edict_t *self)
 {
     vec3_t delta;
-    float dist, time;
+    float dist;
 
     if (self->moveinfo.state == MSTATE_UP || self->moveinfo.state == MSTATE_TOP)
         return;
@@ -2000,20 +2005,20 @@ static void rot_door_go_open(edict_t *self)
     dist = VectorLength(delta);
     if (dist < 0.1f) { rot_door_hit_open(self); return; }
 
-    time = dist / self->moveinfo.speed;
-    VectorScale(delta, 1.0f / time, self->avelocity);
+    VectorScale(delta, self->moveinfo.speed / dist, self->avelocity);
 
     if (snd_door_start)
         gi.sound(self, CHAN_AUTO, snd_door_start, 1.0f, 1, 0);
 
-    self->nextthink = level.time + time;
+    /* Check every frame to prevent overshoot */
+    self->nextthink = level.time + level.frametime;
     self->think = rot_door_think;
 }
 
 static void rot_door_go_close(edict_t *self)
 {
     vec3_t delta;
-    float dist, time;
+    float dist;
 
     if (self->moveinfo.state == MSTATE_DOWN || self->moveinfo.state == MSTATE_BOTTOM)
         return;
@@ -2028,13 +2033,13 @@ static void rot_door_go_close(edict_t *self)
     dist = VectorLength(delta);
     if (dist < 0.1f) { rot_door_hit_closed(self); return; }
 
-    time = dist / self->moveinfo.speed;
-    VectorScale(delta, 1.0f / time, self->avelocity);
+    VectorScale(delta, self->moveinfo.speed / dist, self->avelocity);
 
     if (snd_door_start)
         gi.sound(self, CHAN_AUTO, snd_door_start, 1.0f, 1, 0);
 
-    self->nextthink = level.time + time;
+    /* Check every frame to prevent overshoot */
+    self->nextthink = level.time + level.frametime;
     self->think = rot_door_think;
 }
 
@@ -12660,6 +12665,13 @@ void G_SpawnEntities(const char *mapname, const char *entstring,
 
             /* Set common fields */
             ED_SetCommonFields(ent, pairs, num_pairs);
+
+            /* Set brush model for inline BSP entities (*1, *2, etc.)
+             * This sets s.modelindex and mins/maxs from the BSP submodel,
+             * which is required for collision with doors, platforms, etc. */
+            if (ent->model && ent->model[0] == '*') {
+                gi.setmodel(ent, ent->model);
+            }
 
             /* Find and call spawn function */
             found = qfalse;

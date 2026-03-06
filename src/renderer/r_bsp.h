@@ -110,17 +110,20 @@ typedef struct {
     unsigned short  numfaces;
 } bsp_node_t;
 
-/* BSP Leafs — SoF v46: 32 bytes (Q2 v38 was 28 bytes) */
+/* BSP Leafs — SoF v46: 32 bytes (Q2 v38 was 28 bytes)
+ * Field layout determined by scanning all leafs for valid index ranges.
+ * SoF adds 4 extra bytes: 2 in the bbox area and 2 at the end.
+ */
 typedef struct {
     int             contents;
     short           cluster;        /* PVS cluster index */
     short           area;
-    byte            sof_bbox[12];   /* SoF v46 bounding box data (12 bytes) */
+    byte            sof_extra1[14]; /* SoF v46 extended data (mins/maxs + extra) */
     unsigned short  firstleafface;
     unsigned short  numleaffaces;
     unsigned short  firstleafbrush;
     unsigned short  numleafbrushes;
-    int             sof_extra;      /* SoF v46 extension (4 bytes padding) */
+    unsigned short  sof_extra2;     /* SoF v46 padding */
 } bsp_leaf_t;
 
 /* Inline models (doors, platforms, etc.) */

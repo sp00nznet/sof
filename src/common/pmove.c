@@ -22,14 +22,14 @@
 #define PM_MAXSPEED         300.0f
 #define PM_DUCKSPEED        100.0f
 #define PM_ACCELERATE       10.0f
-#define PM_AIRACCELERATE    0.0f
+#define PM_AIRACCELERATE    1.0f
 #define PM_WATERACCELERATE  10.0f
 #define PM_FRICTION         6.0f
 #define PM_WATERFRICTION    1.0f
 #define PM_WATERSPEED       400.0f
 #define PM_STOPSPEED        100.0f
 #define PM_JUMPSPEED        270.0f
-#define PM_STEPSIZE         18.0f
+#define PM_STEPSIZE         22.0f
 #define PM_MAXVELOCITY      2000.0f
 
 #define MIN_STEP_NORMAL     0.7f    /* can't step on steep slopes */
@@ -135,7 +135,7 @@ static void PM_CategorizePosition(void)
         }
     }
 
-    /* Check for ground */
+    /* Check for ground — standard Q2 approach: trace 0.25 units down */
     point[0] = pml_origin[0];
     point[1] = pml_origin[1];
     point[2] = pml_origin[2] - 0.25f;
@@ -143,20 +143,27 @@ static void PM_CategorizePosition(void)
     if (pm->trace) {
         trace = pm->trace(pml_origin, pm->mins, pm->maxs, point);
 
-        if (trace.fraction == 1.0f || trace.plane.normal[2] < MIN_STEP_NORMAL) {
+        if (trace.allsolid) {
+            pm->s.pm_flags |= PMF_ON_GROUND;
+            pm->groundentity = (struct edict_s *)1; /* world */
+        } else if (trace.fraction == 1.0f || trace.plane.normal[2] < MIN_STEP_NORMAL) {
             pm->groundentity = NULL;
             pm->s.pm_flags &= ~PMF_ON_GROUND;
         } else {
             pm->groundentity = trace.ent;
             pm->s.pm_flags |= PMF_ON_GROUND;
-
-            /* Landing event detection */
-            if (!(pm->s.pm_flags & PMF_ON_GROUND)) {
-                /* Just landed */
+            /* Record ground entity as touched */
+            if (trace.ent && pm->numtouch < 32) {
+                int t;
+                qboolean dup = qfalse;
+                for (t = 0; t < pm->numtouch; t++) {
+                    if (pm->touchents[t] == trace.ent) { dup = qtrue; break; }
+                }
+                if (!dup)
+                    pm->touchents[pm->numtouch++] = trace.ent;
             }
         }
     } else {
-        /* No trace function — assume on ground */
         pm->s.pm_flags |= PMF_ON_GROUND;
     }
 }
@@ -280,6 +287,17 @@ static void PM_StepSlideMove(void)
         if (trace.fraction > 0) {
             /* Move to trace endpoint */
             VectorCopy(trace.endpos, pml_origin);
+        }
+
+        /* Record touched entity for game-side touch callbacks */
+        if (trace.ent && pm->numtouch < 32) {
+            int t;
+            qboolean dup = qfalse;
+            for (t = 0; t < pm->numtouch; t++) {
+                if (pm->touchents[t] == trace.ent) { dup = qtrue; break; }
+            }
+            if (!dup)
+                pm->touchents[pm->numtouch++] = trace.ent;
         }
 
         if (trace.fraction == 1)

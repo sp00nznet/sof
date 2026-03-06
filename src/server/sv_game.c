@@ -262,81 +262,113 @@ static void GI_setmodel(edict_t *ent, const char *name)
             bsp_model_t *mod = &world->models[submodel];
             VectorCopy(mod->mins, ent->mins);
             VectorCopy(mod->maxs, ent->maxs);
-            ent->solid = SOLID_BSP;
+            VectorSubtract(ent->maxs, ent->mins, ent->size);
+            /* Don't force SOLID_BSP here — spawn functions set solid type.
+             * Only link to update absmin/absmax from mins/maxs. */
             SV_LinkEdict(ent);
         }
     }
 }
 
 /*
- * SV_ClipTraceToEntity — Clip a trace against a single entity's AABB
- * Returns qtrue if the entity was closer than the current trace.
+ * SV_ClipTraceToEntity — Clip a trace against a single entity
+ *
+ * For SOLID_BSP entities (doors, platforms, etc.), uses CM_TransformedBoxTrace
+ * against the entity's BSP submodel for accurate brush collision.
+ * For SOLID_BBOX entities, uses AABB slab test.
  */
 static qboolean SV_ClipTraceToEntity(trace_t *tr, vec3_t start, vec3_t mins, vec3_t maxs,
-                                     vec3_t end, edict_t *ent)
+                                     vec3_t end, edict_t *ent, int contentmask)
 {
-    vec3_t ent_mins, ent_maxs;
-    float t_entry, t_exit;
-    int i;
-    vec3_t dir, inv_dir;
-    vec3_t expanded_mins, expanded_maxs;
+    trace_t clip;
+    int headnode;
+    bsp_world_t *world;
 
-    /* Expand entity bounds by trace AABB */
-    for (i = 0; i < 3; i++) {
-        expanded_mins[i] = ent->absmin[i] - (maxs ? maxs[i] : 0);
-        expanded_maxs[i] = ent->absmax[i] - (mins ? mins[i] : 0);
-    }
+    /* SOLID_BSP: trace against the entity's brush model */
+    if (ent->solid == SOLID_BSP) {
+        int submodel;
+        world = R_GetWorldModel();
+        if (!world || !world->loaded)
+            return qfalse;
 
-    VectorSubtract(end, start, dir);
+        /* Get submodel number from the model name (*1, *2, etc.) */
+        if (!ent->model || ent->model[0] != '*')
+            return qfalse;
 
-    t_entry = 0.0f;
-    t_exit = 1.0f;
+        submodel = atoi(ent->model + 1);
+        if (submodel <= 0 || submodel >= world->num_models)
+            return qfalse;
+        headnode = world->models[submodel].headnode;
 
-    for (i = 0; i < 3; i++) {
-        if (dir[i] == 0.0f) {
-            /* Ray parallel to slab */
-            if (start[i] < expanded_mins[i] || start[i] > expanded_maxs[i])
-                return qfalse;
-        } else {
-            float t1 = (expanded_mins[i] - start[i]) / dir[i];
-            float t2 = (expanded_maxs[i] - start[i]) / dir[i];
+        clip = CM_TransformedBoxTrace(world, start, mins, maxs, end,
+                                       headnode, contentmask,
+                                       ent->s.origin, ent->s.angles);
 
-            if (t1 > t2) { float tmp = t1; t1 = t2; t2 = tmp; }
-            if (t1 > t_entry) t_entry = t1;
-            if (t2 < t_exit) t_exit = t2;
-
-            if (t_entry > t_exit)
-                return qfalse;
-        }
-    }
-
-    /* Hit - check if closer than current trace */
-    if (t_entry >= 0.0f && t_entry < tr->fraction) {
-        tr->fraction = t_entry;
-        for (i = 0; i < 3; i++)
-            tr->endpos[i] = start[i] + dir[i] * t_entry;
-        tr->ent = ent;
-
-        /* Approximate normal from entry axis */
-        memset(&tr->plane, 0, sizeof(tr->plane));
-        {
-            float best = -1;
-            int best_axis = 0;
-            for (i = 0; i < 3; i++) {
-                float d1 = (float)fabs(tr->endpos[i] - expanded_mins[i]);
-                float d2 = (float)fabs(tr->endpos[i] - expanded_maxs[i]);
-                float d = d1 < d2 ? d1 : d2;
-                if (best < 0 || d < best) {
-                    best = d;
-                    best_axis = i;
-                }
+        if (clip.allsolid || clip.startsolid || clip.fraction < tr->fraction) {
+            clip.ent = ent;
+            if (tr->startsolid) {
+                *tr = clip;
+                tr->startsolid = qtrue;
+            } else {
+                *tr = clip;
             }
-            tr->plane.normal[best_axis] = dir[best_axis] > 0 ? -1.0f : 1.0f;
+            return qtrue;
         }
-        return qtrue;
+        return qfalse;
     }
 
-    return qfalse;
+    /* SOLID_BBOX: AABB slab test */
+    {
+        vec3_t expanded_mins, expanded_maxs, dir;
+        float t_entry = 0.0f, t_exit = 1.0f;
+        int i;
+
+        for (i = 0; i < 3; i++) {
+            expanded_mins[i] = ent->absmin[i] - (maxs ? maxs[i] : 0);
+            expanded_maxs[i] = ent->absmax[i] - (mins ? mins[i] : 0);
+        }
+
+        VectorSubtract(end, start, dir);
+
+        for (i = 0; i < 3; i++) {
+            if (dir[i] == 0.0f) {
+                if (start[i] < expanded_mins[i] || start[i] > expanded_maxs[i])
+                    return qfalse;
+            } else {
+                float t1 = (expanded_mins[i] - start[i]) / dir[i];
+                float t2 = (expanded_maxs[i] - start[i]) / dir[i];
+                if (t1 > t2) { float tmp = t1; t1 = t2; t2 = tmp; }
+                if (t1 > t_entry) t_entry = t1;
+                if (t2 < t_exit) t_exit = t2;
+                if (t_entry > t_exit) return qfalse;
+            }
+        }
+
+        if (t_entry >= 0.0f && t_entry < tr->fraction) {
+            tr->fraction = t_entry;
+            for (i = 0; i < 3; i++)
+                tr->endpos[i] = start[i] + dir[i] * t_entry;
+            tr->ent = ent;
+
+            memset(&tr->plane, 0, sizeof(tr->plane));
+            {
+                float best = -1;
+                int best_axis = 0;
+                for (i = 0; i < 3; i++) {
+                    float d1 = (float)fabs(tr->endpos[i] - expanded_mins[i]);
+                    float d2 = (float)fabs(tr->endpos[i] - expanded_maxs[i]);
+                    float d = d1 < d2 ? d1 : d2;
+                    if (best < 0 || d < best) {
+                        best = d;
+                        best_axis = i;
+                    }
+                }
+                tr->plane.normal[best_axis] = dir[best_axis] > 0 ? -1.0f : 1.0f;
+            }
+            return qtrue;
+        }
+        return qfalse;
+    }
 }
 
 static trace_t GI_trace(vec3_t start, vec3_t mins, vec3_t maxs,
@@ -387,7 +419,7 @@ static trace_t GI_trace(vec3_t start, vec3_t mins, vec3_t maxs,
             if (passent && ent->owner == passent)
                 continue;
 
-            SV_ClipTraceToEntity(&tr, start, mins, maxs, end, ent);
+            SV_ClipTraceToEntity(&tr, start, mins, maxs, end, ent, contentmask);
         }
     }
 
